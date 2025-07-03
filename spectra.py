@@ -1855,96 +1855,682 @@ def get_ssl_info(hostname, port=443):
 
 # --- MÓDULO 11: DETECÇÃO DE TECNOLOGIAS ---
 
-def detect_technologies(url, return_findings=False):
-    """Analisa uma URL para detectar tecnologias web, CMS, frameworks, e infere a base de dados."""
-    if not return_findings:
-        console.print("-" * 60)
-        console.print(f"[*] Detectando tecnologias em: [bold cyan]{url}[/bold cyan]")
-        console.print("-" * 60)
+# --- MÓDULO 11: DETECÇÃO AVANÇADA DE TECNOLOGIAS WEB ---
 
-    findings = {
-        "Servidor Web": set(), "CMS / Frameworks": set(), "Linguagem de Backend": set(),
-        "Bibliotecas JavaScript": set(), "Ferramentas de Análise": set(), "Base de Dados": set()
-    }
+class AdvancedTechnologyDetector:
+    def __init__(self, url, timeout=10, retries=3):
+        self.url = url
+        self.timeout = timeout
+        self.retries = retries
+        self.session = requests.Session()
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        })
+        
+        # Resultados estruturados com confiança
+        self.detections = {
+            'web_servers': [],
+            'frontend_frameworks': [],
+            'backend_technologies': [],
+            'cms_platforms': [],
+            'javascript_libraries': [],
+            'css_frameworks': [],
+            'cdn_services': [],
+            'security_technologies': [],
+            'analytics_tools': [],
+            'development_tools': [],
+            'databases': [],
+            'cloud_services': []
+        }
+        
+        # Database extenso de tecnologias
+        self._init_technology_database()
     
-    try:
-        if not return_findings:
-            with console.status("[bold green]Analisando a página e cabeçalhos...[/bold green]", spinner="dots"):
-                response = requests.get(url, timeout=10, headers={'User-Agent': 'Mozilla/5.0'}, allow_redirects=True, verify=False)
-        else:
-            response = requests.get(url, timeout=10, headers={'User-Agent': 'Mozilla/5.0'}, allow_redirects=True, verify=False)
-
-        final_url = response.url
-        if response.history and not return_findings:
-            console.print(f"[yellow][*] Requisição redirecionada. Analisando URL final:[bold cyan] {final_url}[/bold cyan][/yellow]")
+    def _init_technology_database(self):
+        """Inicializa database completo de tecnologias."""
+        self.tech_database = {
+            'headers': {
+                # Web Servers
+                'Server': {
+                    'nginx': {'name': 'Nginx', 'category': 'web_servers', 'version_regex': r'nginx/(\d+\.\d+\.\d+)'},
+                    'apache': {'name': 'Apache HTTP Server', 'category': 'web_servers', 'version_regex': r'Apache/(\d+\.\d+\.\d+)'},
+                    'microsoft-iis': {'name': 'Microsoft IIS', 'category': 'web_servers', 'version_regex': r'Microsoft-IIS/(\d+\.\d+)'},
+                    'litespeed': {'name': 'LiteSpeed', 'category': 'web_servers', 'version_regex': r'LiteSpeed/(\d+\.\d+\.\d+)'},
+                    'caddy': {'name': 'Caddy', 'category': 'web_servers', 'version_regex': r'Caddy/(\d+\.\d+\.\d+)'},
+                    'gunicorn': {'name': 'Gunicorn', 'category': 'web_servers', 'version_regex': r'gunicorn/(\d+\.\d+\.\d+)'},
+                    'werkzeug': {'name': 'Werkzeug', 'category': 'development_tools', 'version_regex': r'Werkzeug/(\d+\.\d+\.\d+)'},
+                    'cloudflare': {'name': 'Cloudflare', 'category': 'cdn_services', 'version_regex': None}
+                },
+                'X-Powered-By': {
+                    'php': {'name': 'PHP', 'category': 'backend_technologies', 'version_regex': r'PHP/(\d+\.\d+\.\d+)'},
+                    'asp.net': {'name': 'ASP.NET', 'category': 'backend_technologies', 'version_regex': r'ASP\.NET Version (\d+\.\d+\.\d+)'},
+                    'express': {'name': 'Express.js', 'category': 'backend_technologies', 'version_regex': r'Express/(\d+\.\d+\.\d+)'},
+                    'django': {'name': 'Django', 'category': 'backend_technologies', 'version_regex': r'Django/(\d+\.\d+\.\d+)'},
+                    'rails': {'name': 'Ruby on Rails', 'category': 'backend_technologies', 'version_regex': r'Rails (\d+\.\d+\.\d+)'},
+                    'laravel': {'name': 'Laravel', 'category': 'backend_technologies', 'version_regex': r'Laravel/(\d+\.\d+\.\d+)'},
+                    'next.js': {'name': 'Next.js', 'category': 'frontend_frameworks', 'version_regex': r'Next\.js/(\d+\.\d+\.\d+)'}
+                },
+                'X-Generator': {
+                    'drupal': {'name': 'Drupal', 'category': 'cms_platforms', 'version_regex': r'Drupal (\d+\.\d+)'},
+                    'joomla': {'name': 'Joomla', 'category': 'cms_platforms', 'version_regex': r'Joomla! (\d+\.\d+\.\d+)'},
+                    'gatsby': {'name': 'Gatsby', 'category': 'frontend_frameworks', 'version_regex': r'Gatsby (\d+\.\d+\.\d+)'}
+                },
+                'X-Drupal-Cache': {
+                    'hit': {'name': 'Drupal', 'category': 'cms_platforms', 'version_regex': None},
+                    'miss': {'name': 'Drupal', 'category': 'cms_platforms', 'version_regex': None}
+                },
+                'X-Shopify-Stage': {
+                    'production': {'name': 'Shopify', 'category': 'cms_platforms', 'version_regex': None}
+                },
+                'cf-ray': {
+                    '*': {'name': 'Cloudflare', 'category': 'cdn_services', 'version_regex': None}
+                },
+                'x-amz-cf-id': {
+                    '*': {'name': 'Amazon CloudFront', 'category': 'cdn_services', 'version_regex': None}
+                }
+            },
+            
+            'html_patterns': {
+                # Meta tags
+                'generator': {
+                    r'wordpress (\d+\.\d+\.\d+)': {'name': 'WordPress', 'category': 'cms_platforms'},
+                    r'drupal (\d+)': {'name': 'Drupal', 'category': 'cms_platforms'},
+                    r'joomla! (\d+\.\d+\.\d+)': {'name': 'Joomla', 'category': 'cms_platforms'},
+                    r'gatsby (\d+\.\d+\.\d+)': {'name': 'Gatsby', 'category': 'frontend_frameworks'},
+                    r'hugo (\d+\.\d+\.\d+)': {'name': 'Hugo', 'category': 'development_tools'},
+                    r'jekyll (\d+\.\d+\.\d+)': {'name': 'Jekyll', 'category': 'development_tools'}
+                },
+                
+                # Script sources
+                'script_src': {
+                    r'jquery[.-](\d+\.\d+\.\d+)': {'name': 'jQuery', 'category': 'javascript_libraries'},
+                    r'react[.-](\d+\.\d+\.\d+)': {'name': 'React', 'category': 'frontend_frameworks'},
+                    r'vue[.-](\d+\.\d+\.\d+)': {'name': 'Vue.js', 'category': 'frontend_frameworks'},
+                    r'angular[.-](\d+\.\d+\.\d+)': {'name': 'Angular', 'category': 'frontend_frameworks'},
+                    r'bootstrap[.-](\d+\.\d+\.\d+)': {'name': 'Bootstrap', 'category': 'css_frameworks'},
+                    r'lodash[.-](\d+\.\d+\.\d+)': {'name': 'Lodash', 'category': 'javascript_libraries'},
+                    r'moment[.-](\d+\.\d+\.\d+)': {'name': 'Moment.js', 'category': 'javascript_libraries'},
+                    r'd3[.-](\d+\.\d+\.\d+)': {'name': 'D3.js', 'category': 'javascript_libraries'},
+                    r'chart[.-]js[.-](\d+\.\d+\.\d+)': {'name': 'Chart.js', 'category': 'javascript_libraries'},
+                    r'three[.-](\d+\.\d+\.\d+)': {'name': 'Three.js', 'category': 'javascript_libraries'},
+                    r'next[.-](\d+\.\d+\.\d+)': {'name': 'Next.js', 'category': 'frontend_frameworks'},
+                    r'nuxt[.-](\d+\.\d+\.\d+)': {'name': 'Nuxt.js', 'category': 'frontend_frameworks'},
+                    r'svelte[.-](\d+\.\d+\.\d+)': {'name': 'Svelte', 'category': 'frontend_frameworks'},
+                    r'tailwindcss[.-](\d+\.\d+\.\d+)': {'name': 'Tailwind CSS', 'category': 'css_frameworks'},
+                    r'bulma[.-](\d+\.\d+\.\d+)': {'name': 'Bulma', 'category': 'css_frameworks'},
+                    r'material-ui[.-](\d+\.\d+\.\d+)': {'name': 'Material-UI', 'category': 'css_frameworks'},
+                    r'ant-design[.-](\d+\.\d+\.\d+)': {'name': 'Ant Design', 'category': 'css_frameworks'}
+                },
+                
+                # URL patterns
+                'url_patterns': {
+                    r'/wp-content/': {'name': 'WordPress', 'category': 'cms_platforms'},
+                    r'/wp-admin/': {'name': 'WordPress', 'category': 'cms_platforms'},
+                    r'/wp-includes/': {'name': 'WordPress', 'category': 'cms_platforms'},
+                    r'/sites/default/files/': {'name': 'Drupal', 'category': 'cms_platforms'},
+                    r'/modules/': {'name': 'Drupal', 'category': 'cms_platforms'},
+                    r'/media/joomla/': {'name': 'Joomla', 'category': 'cms_platforms'},
+                    r'/administrator/': {'name': 'Joomla', 'category': 'cms_platforms'},
+                    r'/_next/': {'name': 'Next.js', 'category': 'frontend_frameworks'},
+                    r'/_nuxt/': {'name': 'Nuxt.js', 'category': 'frontend_frameworks'},
+                    r'/static/': {'name': 'Static Site Generator', 'category': 'development_tools'},
+                    r'/assets/': {'name': 'Static Assets', 'category': 'development_tools'}
+                },
+                
+                # Content patterns
+                'content_patterns': {
+                    r'<html[^>]+ng-app': {'name': 'AngularJS', 'category': 'frontend_frameworks'},
+                    r'data-react-helmet': {'name': 'React Helmet', 'category': 'frontend_frameworks'},
+                    r'__NEXT_DATA__': {'name': 'Next.js', 'category': 'frontend_frameworks'},
+                    r'__NUXT__': {'name': 'Nuxt.js', 'category': 'frontend_frameworks'},
+                    r'wp-emoji': {'name': 'WordPress', 'category': 'cms_platforms'},
+                    r'Drupal\.settings': {'name': 'Drupal', 'category': 'cms_platforms'},
+                    r'window\.Joomla': {'name': 'Joomla', 'category': 'cms_platforms'}
+                }
+            },
+            
+            'cookies': {
+                'PHPSESSID': {'name': 'PHP', 'category': 'backend_technologies'},
+                'JSESSIONID': {'name': 'Java/JSP', 'category': 'backend_technologies'},
+                'ASP.NET_SessionId': {'name': 'ASP.NET', 'category': 'backend_technologies'},
+                'CFID': {'name': 'ColdFusion', 'category': 'backend_technologies'},
+                'wp-settings': {'name': 'WordPress', 'category': 'cms_platforms'},
+                '_ga': {'name': 'Google Analytics', 'category': 'analytics_tools'},
+                '_gtm': {'name': 'Google Tag Manager', 'category': 'analytics_tools'},
+                'fbp': {'name': 'Facebook Pixel', 'category': 'analytics_tools'},
+                '__cf_bm': {'name': 'Cloudflare Bot Management', 'category': 'security_technologies'},
+                '_shopify_s': {'name': 'Shopify', 'category': 'cms_platforms'},
+                'connect.sid': {'name': 'Express.js', 'category': 'backend_technologies'}
+            },
+            
+            'javascript_globals': {
+                'jQuery': {'name': 'jQuery', 'category': 'javascript_libraries'},
+                'React': {'name': 'React', 'category': 'frontend_frameworks'},
+                'Vue': {'name': 'Vue.js', 'category': 'frontend_frameworks'},
+                'angular': {'name': 'Angular', 'category': 'frontend_frameworks'},
+                'Backbone': {'name': 'Backbone.js', 'category': 'frontend_frameworks'},
+                'Ember': {'name': 'Ember.js', 'category': 'frontend_frameworks'},
+                'ga': {'name': 'Google Analytics', 'category': 'analytics_tools'},
+                'gtag': {'name': 'Google Analytics 4', 'category': 'analytics_tools'},
+                'fbq': {'name': 'Facebook Pixel', 'category': 'analytics_tools'},
+                '_paq': {'name': 'Matomo', 'category': 'analytics_tools'},
+                'Shopify': {'name': 'Shopify', 'category': 'cms_platforms'},
+                'Drupal': {'name': 'Drupal', 'category': 'cms_platforms'},
+                'wp': {'name': 'WordPress', 'category': 'cms_platforms'}
+            },
+            
+            'css_patterns': {
+                r'\.wp-': {'name': 'WordPress', 'category': 'cms_platforms'},
+                r'\.drupal-': {'name': 'Drupal', 'category': 'cms_platforms'},
+                r'\.joomla-': {'name': 'Joomla', 'category': 'cms_platforms'},
+                r'\.bootstrap-': {'name': 'Bootstrap', 'category': 'css_frameworks'},
+                r'\.tailwind-': {'name': 'Tailwind CSS', 'category': 'css_frameworks'},
+                r'\.mui-': {'name': 'Material-UI', 'category': 'css_frameworks'},
+                r'\.ant-': {'name': 'Ant Design', 'category': 'css_frameworks'}
+            }
+        }
+    
+    def detect_all(self, verbose=False):
+        """Executa detecção completa de tecnologias."""
+        if verbose:
+            console.print("-" * 60)
+            console.print(f"[*] Detector Avançado de Tecnologias - Spectra v3.2.6")
+            console.print(f"[*] Analisando: [bold cyan]{self.url}[/bold cyan]")
+            console.print("-" * 60)
         
-        headers = response.headers
-        soup = BeautifulSoup(response.content, 'html.parser')
+        try:
+            # Faz requisição principal
+            response = self._make_request(self.url)
+            if not response:
+                return self.detections
+            
+            # Análises sequenciais
+            if verbose:
+                console.print("[*] Analisando headers HTTP...")
+            self._analyze_headers(response.headers, verbose)
+            
+            if verbose:
+                console.print("[*] Analisando HTML e meta tags...")
+            soup = BeautifulSoup(response.content, 'html.parser')
+            self._analyze_html(soup, verbose)
+            
+            if verbose:
+                console.print("[*] Analisando JavaScript e CSS...")
+            self._analyze_scripts_and_styles(soup, verbose)
+            
+            if verbose:
+                console.print("[*] Analisando cookies...")
+            self._analyze_cookies(response.cookies, verbose)
+            
+            if verbose:
+                console.print("[*] Detectando serviços de CDN e cloud...")
+            self._detect_cdn_and_cloud(response, verbose)
+            
+            if verbose:
+                console.print("[*] Analisando tecnologias de segurança...")
+            self._detect_security_technologies(response, verbose)
+            
+            # Detecção passiva adicional
+            self._passive_fingerprinting(response, verbose)
+            
+            if verbose:
+                self._display_results()
+                
+        except Exception as e:
+            if verbose:
+                console.print(f"[bold red][!] Erro durante detecção: {e}[/bold red]")
         
-        # Análise de Cabeçalhos e Cookies
-        if 'Server' in headers: findings["Servidor Web"].add(headers['Server'])
-        if 'X-Powered-By' in headers: findings["Linguagem de Backend"].add(headers['X-Powered-By'])
-        if 'Set-Cookie' in headers:
-            cookies = headers['Set-Cookie']
-            if 'wp-settings' in cookies: findings["CMS / Frameworks"].add('WordPress')
-            if 'joomla' in cookies: findings["CMS / Frameworks"].add('Joomla')
-            if 'PHPSESSID' in cookies: findings["Linguagem de Backend"].add('PHP')
-            if 'JSESSIONID' in cookies: findings["Linguagem de Backend"].add('Java/JSP')
-
-        # Análise de Conteúdo HTML
+        return self.detections
+    
+    def _make_request(self, url):
+        """Faz requisição HTTP com retry logic."""
+        for attempt in range(self.retries):
+            try:
+                response = self.session.get(url, timeout=self.timeout, verify=False, allow_redirects=True)
+                return response
+            except requests.RequestException as e:
+                if attempt == self.retries - 1:
+                    console.print(f"[bold red][!] Falha ao conectar após {self.retries} tentativas: {e}[/bold red]")
+                    return None
+                time.sleep(1)
+        return None
+    
+    def _analyze_headers(self, headers, verbose=False):
+        """Analisa headers HTTP para detecção de tecnologias."""
+        for header_name, header_patterns in self.tech_database['headers'].items():
+            if header_name.lower() in [h.lower() for h in headers.keys()]:
+                header_value = headers.get(header_name, '').lower()
+                
+                for pattern, tech_info in header_patterns.items():
+                    if pattern == '*' or pattern.lower() in header_value:
+                        # Detecta versão se disponível
+                        version = None
+                        if tech_info['version_regex']:
+                            version_match = re.search(tech_info['version_regex'], headers.get(header_name, ''), re.IGNORECASE)
+                            if version_match:
+                                version = version_match.group(1)
+                        
+                        detection = {
+                            'name': tech_info['name'],
+                            'version': version,
+                            'confidence': 0.9,
+                            'method': f'header_{header_name.lower()}',
+                            'evidence': f"{header_name}: {headers.get(header_name, '')}"
+                        }
+                        
+                        self._add_detection(tech_info['category'], detection)
+                        
+                        if verbose:
+                            version_str = f" v{version}" if version else ""
+                            console.print(f"[bold green][+] {tech_info['name']}{version_str}[/bold green] (via {header_name})")
+    
+    def _analyze_html(self, soup, verbose=False):
+        """Analisa conteúdo HTML para detecção de tecnologias."""
+        # Meta generator tag
         generator_tag = soup.find('meta', attrs={'name': 'generator'})
         if generator_tag and generator_tag.get('content'):
-            findings["CMS / Frameworks"].add(generator_tag.get('content'))
-
-        scripts_and_links = [s.get('src', '') for s in soup.find_all('script')] + [l.get('href', '') for l in soup.find_all('link')]
-        tech_signatures = {
-            "jQuery": "jquery", "React": "react", "Vue.js": "vue", "Angular": "angular",
-            "Bootstrap": "bootstrap", "WordPress": "/wp-content/", "Joomla": "/media/joomla/"
-        }
-        for tech, sig in tech_signatures.items():
-            if any(sig in s for s in scripts_and_links if s):
-                category = "Bibliotecas JavaScript" if tech in ["jQuery", "React", "Vue.js", "Angular", "Bootstrap"] else "CMS / Frameworks"
-                findings[category].add(tech)
+            content = generator_tag.get('content').lower()
+            
+            for pattern, tech_info in self.tech_database['html_patterns']['generator'].items():
+                match = re.search(pattern, content, re.IGNORECASE)
+                if match:
+                    version = match.group(1) if match.groups() else None
+                    
+                    detection = {
+                        'name': tech_info['name'],
+                        'version': version,
+                        'confidence': 0.85,
+                        'method': 'meta_generator',
+                        'evidence': f'<meta name="generator" content="{generator_tag.get("content")}">'
+                    }
+                    
+                    self._add_detection(tech_info['category'], detection)
+                    
+                    if verbose:
+                        version_str = f" v{version}" if version else ""
+                        console.print(f"[bold green][+] {tech_info['name']}{version_str}[/bold green] (via meta generator)")
         
-        # Inferência da Base de Dados
-        error_patterns = {
-            "MySQL": r"you have an error in your sql syntax|warning: mysql", "PostgreSQL": r"postgres[ql]? error",
-            "Microsoft SQL Server": r"unclosed quotation mark|incorrect syntax near", "Oracle": r"ora-[0-9][0-9][0-9][0-9]",
-        }
-        test_url_param = next((urljoin(final_url, a['href']) for a in soup.find_all('a', href=True) if '?' in a['href'] and '=' in a['href']), None)
-        if test_url_param:
-            parsed = urlparse(test_url_param)
-            params = parse_qs(parsed.query)
-            first_param = list(params.keys())[0]
-            params[first_param] = params[first_param][0] + "'"
-            try:
-                error_res = requests.get(urlunparse(parsed._replace(query=urlencode(params, doseq=True))), timeout=3, verify=False)
-                for db, pattern in error_patterns.items():
-                    if re.search(pattern, error_res.text, re.IGNORECASE):
-                        findings["Base de Dados"].add(db)
-                        break
-            except requests.RequestException: pass
-
-        if return_findings: return findings
-
-        table = Table(title=f"Tecnologias Detectadas em {final_url}")
-        table.add_column("Categoria", style="cyan")
-        table.add_column("Tecnologia(s) Identificada(s)", style="magenta")
-        has_findings = any(findings.values())
-        if has_findings:
-            for category, tech_set in findings.items():
-                if tech_set:
-                    table.add_row(category, ", ".join(sorted(list(tech_set))))
-            console.print(table)
-        else:
-            console.print("[bold yellow][-] Nenhuma tecnologia específica foi detectada com confiança.[/bold yellow]")
-
-    except requests.RequestException as e:
-        if not return_findings: console.print(f"[bold red][!] Erro ao obter a URL: {e}[/bold red]")
-    finally:
-        if not return_findings: console.print("-" * 60)
+        # Análise de conteúdo HTML
+        html_content = str(soup).lower()
+        for pattern, tech_info in self.tech_database['html_patterns']['content_patterns'].items():
+            if re.search(pattern, html_content, re.IGNORECASE):
+                detection = {
+                    'name': tech_info['name'],
+                    'version': None,
+                    'confidence': 0.7,
+                    'method': 'html_content',
+                    'evidence': f'Pattern: {pattern}'
+                }
+                
+                self._add_detection(tech_info['category'], detection)
+                
+                if verbose:
+                    console.print(f"[bold green][+] {tech_info['name']}[/bold green] (via HTML pattern)")
+        
+        # Análise de URLs nos links e scripts
+        all_urls = []
+        for tag in soup.find_all(['script', 'link', 'img', 'a']):
+            url = tag.get('src') or tag.get('href') or ''
+            if url:
+                all_urls.append(url.lower())
+        
+        for url in all_urls:
+            for pattern, tech_info in self.tech_database['html_patterns']['url_patterns'].items():
+                if re.search(pattern, url, re.IGNORECASE):
+                    detection = {
+                        'name': tech_info['name'],
+                        'version': None,
+                        'confidence': 0.8,
+                        'method': 'url_pattern',
+                        'evidence': f'URL: {url}'
+                    }
+                    
+                    self._add_detection(tech_info['category'], detection)
+                    
+                    if verbose:
+                        console.print(f"[bold green][+] {tech_info['name']}[/bold green] (via URL pattern)")
     
-    return findings if return_findings else None
+    def _analyze_scripts_and_styles(self, soup, verbose=False):
+        """Analisa scripts e estilos para detecção de tecnologias."""
+        # Análise de scripts
+        for script in soup.find_all('script'):
+            src = script.get('src', '').lower()
+            content = script.string or ''
+            
+            # Análise de src
+            if src:
+                for pattern, tech_info in self.tech_database['html_patterns']['script_src'].items():
+                    match = re.search(pattern, src, re.IGNORECASE)
+                    if match:
+                        version = match.group(1) if match.groups() else None
+                        
+                        detection = {
+                            'name': tech_info['name'],
+                            'version': version,
+                            'confidence': 0.8,
+                            'method': 'script_src',
+                            'evidence': f'Script src: {src}'
+                        }
+                        
+                        self._add_detection(tech_info['category'], detection)
+                        
+                        if verbose:
+                            version_str = f" v{version}" if version else ""
+                            console.print(f"[bold green][+] {tech_info['name']}{version_str}[/bold green] (via script src)")
+            
+            # Análise de conteúdo JavaScript
+            if content:
+                for js_global, tech_info in self.tech_database['javascript_globals'].items():
+                    if re.search(rf'\b{re.escape(js_global)}\b', content, re.IGNORECASE):
+                        detection = {
+                            'name': tech_info['name'],
+                            'version': None,
+                            'confidence': 0.6,
+                            'method': 'javascript_global',
+                            'evidence': f'JS Global: {js_global}'
+                        }
+                        
+                        self._add_detection(tech_info['category'], detection)
+                        
+                        if verbose:
+                            console.print(f"[bold green][+] {tech_info['name']}[/bold green] (via JS global)")
+        
+        # Análise de CSS
+        for style in soup.find_all(['link', 'style']):
+            href = style.get('href', '').lower()
+            content = style.string or ''
+            
+            css_content = href + ' ' + content
+            for pattern, tech_info in self.tech_database['css_patterns'].items():
+                if re.search(pattern, css_content, re.IGNORECASE):
+                    detection = {
+                        'name': tech_info['name'],
+                        'version': None,
+                        'confidence': 0.6,
+                        'method': 'css_pattern',
+                        'evidence': f'CSS pattern: {pattern}'
+                    }
+                    
+                    self._add_detection(tech_info['category'], detection)
+                    
+                    if verbose:
+                        console.print(f"[bold green][+] {tech_info['name']}[/bold green] (via CSS pattern)")
+    
+    def _analyze_cookies(self, cookies, verbose=False):
+        """Analisa cookies para detecção de tecnologias."""
+        for cookie_name, tech_info in self.tech_database['cookies'].items():
+            if cookie_name in cookies:
+                detection = {
+                    'name': tech_info['name'],
+                    'version': None,
+                    'confidence': 0.8,
+                    'method': 'cookie',
+                    'evidence': f'Cookie: {cookie_name}'
+                }
+                
+                self._add_detection(tech_info['category'], detection)
+                
+                if verbose:
+                    console.print(f"[bold green][+] {tech_info['name']}[/bold green] (via cookie)")
+    
+    def _detect_cdn_and_cloud(self, response, verbose=False):
+        """Detecta serviços de CDN e cloud."""
+        headers = response.headers
+        
+        # Cloudflare
+        if any(h.lower().startswith('cf-') for h in headers.keys()):
+            detection = {
+                'name': 'Cloudflare',
+                'version': None,
+                'confidence': 0.95,
+                'method': 'cf_headers',
+                'evidence': 'CF-* headers presente'
+            }
+            self._add_detection('cdn_services', detection)
+            
+            if verbose:
+                console.print(f"[bold green][+] Cloudflare[/bold green] (via CF headers)")
+        
+        # Amazon CloudFront
+        if 'x-amz-cf-id' in headers:
+            detection = {
+                'name': 'Amazon CloudFront',
+                'version': None,
+                'confidence': 0.95,
+                'method': 'aws_headers',
+                'evidence': 'X-Amz-Cf-Id header'
+            }
+            self._add_detection('cdn_services', detection)
+            
+            if verbose:
+                console.print(f"[bold green][+] Amazon CloudFront[/bold green] (via AWS headers)")
+        
+        # Akamai
+        if any('akamai' in h.lower() for h in headers.values()):
+            detection = {
+                'name': 'Akamai',
+                'version': None,
+                'confidence': 0.9,
+                'method': 'akamai_headers',
+                'evidence': 'Akamai in headers'
+            }
+            self._add_detection('cdn_services', detection)
+            
+            if verbose:
+                console.print(f"[bold green][+] Akamai[/bold green] (via headers)")
+    
+    def _detect_security_technologies(self, response, verbose=False):
+        """Detecta tecnologias de segurança."""
+        headers = response.headers
+        
+        # WAF Detection
+        waf_indicators = {
+            'cloudflare': 'Cloudflare WAF',
+            'incapsula': 'Incapsula WAF',
+            'sucuri': 'Sucuri WAF',
+            'modsecurity': 'ModSecurity',
+            'akamai': 'Akamai WAF'
+        }
+        
+        for indicator, waf_name in waf_indicators.items():
+            if any(indicator in str(v).lower() for v in headers.values()):
+                detection = {
+                    'name': waf_name,
+                    'version': None,
+                    'confidence': 0.8,
+                    'method': 'waf_headers',
+                    'evidence': f'{indicator} in headers'
+                }
+                self._add_detection('security_technologies', detection)
+                
+                if verbose:
+                    console.print(f"[bold green][+] {waf_name}[/bold green] (via headers)")
+        
+        # Security Headers
+        security_headers = {
+            'content-security-policy': 'Content Security Policy',
+            'strict-transport-security': 'HTTP Strict Transport Security',
+            'x-frame-options': 'X-Frame-Options Protection',
+            'x-content-type-options': 'X-Content-Type-Options',
+            'x-xss-protection': 'X-XSS-Protection'
+        }
+        
+        for header, protection_name in security_headers.items():
+            if header in [h.lower() for h in headers.keys()]:
+                detection = {
+                    'name': protection_name,
+                    'version': None,
+                    'confidence': 0.9,
+                    'method': 'security_header',
+                    'evidence': f'{header} header present'
+                }
+                self._add_detection('security_technologies', detection)
+    
+    def _passive_fingerprinting(self, response, verbose=False):
+        """Fingerprinting passivo baseado em características da resposta."""
+        # Análise de timing (placeholder para implementação futura)
+        # Análise de tamanho de resposta
+        # Análise de padrões de erro
+        pass
+    
+    def _add_detection(self, category, detection):
+        """Adiciona detecção evitando duplicatas."""
+        # Verifica se já existe detecção similar
+        for existing in self.detections[category]:
+            if existing['name'] == detection['name']:
+                # Atualiza se confidence for maior
+                if detection['confidence'] > existing['confidence']:
+                    existing.update(detection)
+                return
+        
+        # Adiciona nova detecção
+        self.detections[category].append(detection)
+    
+    def _display_results(self):
+        """Exibe resultados em formato tabular."""
+        console.print("-" * 60)
+        
+        # Conta total de tecnologias detectadas
+        total_detected = sum(len(techs) for techs in self.detections.values())
+        
+        if total_detected == 0:
+            console.print("[bold yellow][-] Nenhuma tecnologia específica foi detectada.[/bold yellow]")
+            console.print("-" * 60)
+            return
+        
+        # Tabela principal
+        table = Table(title=f"Tecnologias Detectadas - {self.url}")
+        table.add_column("Categoria", style="cyan", width=20)
+        table.add_column("Tecnologia", style="magenta", width=25)
+        table.add_column("Versão", style="yellow", width=12)
+        table.add_column("Confiança", justify="center", style="green", width=10)
+        table.add_column("Método", style="dim", width=15)
+        
+        category_names = {
+            'web_servers': 'Servidores Web',
+            'frontend_frameworks': 'Frameworks Frontend',
+            'backend_technologies': 'Tecnologias Backend',
+            'cms_platforms': 'CMS / Plataformas',
+            'javascript_libraries': 'Bibliotecas JavaScript',
+            'css_frameworks': 'Frameworks CSS',
+            'cdn_services': 'Serviços CDN',
+            'security_technologies': 'Tecnologias Segurança',
+            'analytics_tools': 'Ferramentas Analytics',
+            'development_tools': 'Ferramentas Desenvolvimento',
+            'databases': 'Bancos de Dados',
+            'cloud_services': 'Serviços Cloud'
+        }
+        
+        for category, techs in self.detections.items():
+            if techs:
+                category_display = category_names.get(category, category.replace('_', ' ').title())
+                
+                for i, tech in enumerate(sorted(techs, key=lambda x: x['confidence'], reverse=True)):
+                    version = tech['version'] or 'N/A'
+                    confidence = f"{tech['confidence']:.0%}"
+                    method = tech['method'].replace('_', ' ').title()
+                    
+                    # Primeira linha da categoria
+                    if i == 0:
+                        table.add_row(category_display, tech['name'], version, confidence, method)
+                    else:
+                        table.add_row("", tech['name'], version, confidence, method)
+        
+        console.print(table)
+        
+        # Estatísticas
+        console.print(f"\n[*] Total de tecnologias detectadas: [bold cyan]{total_detected}[/bold cyan]")
+        
+        # Top categories
+        top_categories = sorted(
+            [(cat, len(techs)) for cat, techs in self.detections.items() if techs],
+            key=lambda x: x[1], reverse=True
+        )[:3]
+        
+        if top_categories:
+            console.print("[*] Principais categorias:")
+            for category, count in top_categories:
+                display_name = category_names.get(category, category.replace('_', ' ').title())
+                console.print(f"    • {display_name}: {count} tecnologia(s)")
+        
+        console.print("-" * 60)
+    
+    def export_results(self, format_type='json'):
+        """Exporta resultados em diferentes formatos."""
+        if format_type == 'json':
+            return json.dumps(self.detections, indent=2, default=str)
+        elif format_type == 'xml':
+            return self._generate_xml()
+        else:
+            return self.detections
+    
+    def _generate_xml(self):
+        """Gera output em formato XML."""
+        xml_lines = ['<?xml version="1.0" encoding="UTF-8"?>']
+        xml_lines.append('<technology_detection>')
+        xml_lines.append(f'  <target>{self.url}</target>')
+        
+        for category, techs in self.detections.items():
+            if techs:
+                xml_lines.append(f'  <category name="{category}">')
+                for tech in techs:
+                    xml_lines.append('    <technology>')
+                    xml_lines.append(f'      <name>{tech["name"]}</name>')
+                    xml_lines.append(f'      <version>{tech["version"] or "unknown"}</version>')
+                    xml_lines.append(f'      <confidence>{tech["confidence"]}</confidence>')
+                    xml_lines.append(f'      <method>{tech["method"]}</method>')
+                    xml_lines.append('    </technology>')
+                xml_lines.append('  </category>')
+        
+        xml_lines.append('</technology_detection>')
+        return '\n'.join(xml_lines)
+
+def detect_technologies(url, return_findings=False, verbose=False, output_format='table'):
+    """Interface para detecção avançada de tecnologias."""
+    detector = AdvancedTechnologyDetector(url)
+    results = detector.detect_all(verbose=verbose if not return_findings else False)
+    
+    if return_findings:
+        # Converte para formato legacy se necessário
+        if output_format == 'legacy':
+            legacy_format = {
+                "Servidor Web": set(),
+                "CMS / Frameworks": set(),
+                "Linguagem de Backend": set(),
+                "Bibliotecas JavaScript": set(),
+                "Ferramentas de Análise": set(),
+                "Base de Dados": set()
+            }
+            
+            # Mapeia resultados para formato legacy
+            category_mapping = {
+                'web_servers': 'Servidor Web',
+                'cms_platforms': 'CMS / Frameworks',
+                'backend_technologies': 'Linguagem de Backend',
+                'javascript_libraries': 'Bibliotecas JavaScript',
+                'analytics_tools': 'Ferramentas de Análise',
+                'databases': 'Base de Dados'
+            }
+            
+            for new_cat, old_cat in category_mapping.items():
+                for tech in results.get(new_cat, []):
+                    version_str = f" {tech['version']}" if tech['version'] else ""
+                    legacy_format[old_cat].add(f"{tech['name']}{version_str}")
+            
+            return legacy_format
+        else:
+            return results
+    
+    # Para output direto
+    if output_format == 'json':
+        print(detector.export_results('json'))
+    elif output_format == 'xml':
+        print(detector.export_results('xml'))
+    else:
+        # Já foi exibido em detector.detect_all()
+        pass
+    
+    return results
 
 # --- MÓDULO 12: DETECÇÃO DE WAF ---
 
