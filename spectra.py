@@ -1899,7 +1899,10 @@ class AdvancedTechnologyDetector:
                     'caddy': {'name': 'Caddy', 'category': 'web_servers', 'version_regex': r'Caddy/(\d+\.\d+\.\d+)'},
                     'gunicorn': {'name': 'Gunicorn', 'category': 'web_servers', 'version_regex': r'gunicorn/(\d+\.\d+\.\d+)'},
                     'werkzeug': {'name': 'Werkzeug', 'category': 'development_tools', 'version_regex': r'Werkzeug/(\d+\.\d+\.\d+)'},
-                    'cloudflare': {'name': 'Cloudflare', 'category': 'cdn_services', 'version_regex': None}
+                    'cloudflare': {'name': 'Cloudflare', 'category': 'cdn_services', 'version_regex': None},
+                    'openresty': {'name': 'OpenResty', 'category': 'web_servers', 'version_regex': r'openresty/(\d+\.\d+\.\d+)'},
+                    'lighttpd': {'name': 'lighttpd', 'category': 'web_servers', 'version_regex': r'lighttpd/(\d+\.\d+\.\d+)'},
+                    'envoy': {'name': 'Envoy', 'category': 'web_servers', 'version_regex': None}
                 },
                 'X-Powered-By': {
                     'php': {'name': 'PHP', 'category': 'backend_technologies', 'version_regex': r'PHP/(\d+\.\d+\.\d+)'},
@@ -1908,12 +1911,22 @@ class AdvancedTechnologyDetector:
                     'django': {'name': 'Django', 'category': 'backend_technologies', 'version_regex': r'Django/(\d+\.\d+\.\d+)'},
                     'rails': {'name': 'Ruby on Rails', 'category': 'backend_technologies', 'version_regex': r'Rails (\d+\.\d+\.\d+)'},
                     'laravel': {'name': 'Laravel', 'category': 'backend_technologies', 'version_regex': r'Laravel/(\d+\.\d+\.\d+)'},
-                    'next.js': {'name': 'Next.js', 'category': 'frontend_frameworks', 'version_regex': r'Next\.js/(\d+\.\d+\.\d+)'}
+                    'next.js': {'name': 'Next.js', 'category': 'frontend_frameworks', 'version_regex': r'Next\.js/(\d+\.\d+\.\d+)'},
+                    'fastapi': {'name': 'FastAPI', 'category': 'backend_technologies', 'version_regex': None},
+                    'flask': {'name': 'Flask', 'category': 'backend_technologies', 'version_regex': None},
+                    'symfony': {'name': 'Symfony', 'category': 'backend_technologies', 'version_regex': None},
+                    'rubyonrails': {'name': 'Ruby on Rails', 'category': 'backend_technologies', 'version_regex': None},
+                    'aspnet': {'name': 'ASP.NET', 'category': 'backend_technologies', 'version_regex': None}
                 },
                 'X-Generator': {
                     'drupal': {'name': 'Drupal', 'category': 'cms_platforms', 'version_regex': r'Drupal (\d+\.\d+)'},
                     'joomla': {'name': 'Joomla', 'category': 'cms_platforms', 'version_regex': r'Joomla! (\d+\.\d+\.\d+)'},
-                    'gatsby': {'name': 'Gatsby', 'category': 'frontend_frameworks', 'version_regex': r'Gatsby (\d+\.\d+\.\d+)'}
+                    'gatsby': {'name': 'Gatsby', 'category': 'frontend_frameworks', 'version_regex': r'Gatsby (\d+\.\d+\.\d+)'},
+                    'shopify': {'name': 'Shopify', 'category': 'cms_platforms', 'version_regex': None},
+                    'squarespace': {'name': 'Squarespace', 'category': 'cms_platforms', 'version_regex': None},
+                    'wix': {'name': 'Wix', 'category': 'cms_platforms', 'version_regex': None},
+                    'ghost': {'name': 'Ghost', 'category': 'cms_platforms', 'version_regex': r'Ghost/(\d+\.\d+)'},
+                    'magento': {'name': 'Magento', 'category': 'cms_platforms', 'version_regex': r'Magento/(\d+\.\d+)'}
                 },
                 'X-Drupal-Cache': {
                     'hit': {'name': 'Drupal', 'category': 'cms_platforms', 'version_regex': None},
@@ -1927,6 +1940,15 @@ class AdvancedTechnologyDetector:
                 },
                 'x-amz-cf-id': {
                     '*': {'name': 'Amazon CloudFront', 'category': 'cdn_services', 'version_regex': None}
+                },
+                'x-goog-server': {
+                    '*': {'name': 'Google Cloud', 'category': 'cloud_services', 'version_regex': None}
+                },
+                'x-azure-ref': {
+                    '*': {'name': 'Microsoft Azure', 'category': 'cloud_services', 'version_regex': None}
+                },
+                'via': {
+                    'heroku': {'name': 'Heroku', 'category': 'cloud_services', 'version_regex': None}
                 }
             },
             
@@ -1938,7 +1960,11 @@ class AdvancedTechnologyDetector:
                     r'joomla! (\d+\.\d+\.\d+)': {'name': 'Joomla', 'category': 'cms_platforms'},
                     r'gatsby (\d+\.\d+\.\d+)': {'name': 'Gatsby', 'category': 'frontend_frameworks'},
                     r'hugo (\d+\.\d+\.\d+)': {'name': 'Hugo', 'category': 'development_tools'},
-                    r'jekyll (\d+\.\d+\.\d+)': {'name': 'Jekyll', 'category': 'development_tools'}
+                    r'jekyll (\d+\.\d+\.\d+)': {'name': 'Jekyll', 'category': 'development_tools'},
+                    r'ghost (\d+\.\d+)': {'name': 'Ghost', 'category': 'cms_platforms'},
+                    r'squarespace': {'name': 'Squarespace', 'category': 'cms_platforms'},
+                    r'wix': {'name': 'Wix', 'category': 'cms_platforms'},
+                    r'magento (\d+\.\d+)': {'name': 'Magento', 'category': 'cms_platforms'}
                 },
                 
                 # Script sources
@@ -1959,7 +1985,14 @@ class AdvancedTechnologyDetector:
                     r'tailwindcss[.-](\d+\.\d+\.\d+)': {'name': 'Tailwind CSS', 'category': 'css_frameworks'},
                     r'bulma[.-](\d+\.\d+\.\d+)': {'name': 'Bulma', 'category': 'css_frameworks'},
                     r'material-ui[.-](\d+\.\d+\.\d+)': {'name': 'Material-UI', 'category': 'css_frameworks'},
-                    r'ant-design[.-](\d+\.\d+\.\d+)': {'name': 'Ant Design', 'category': 'css_frameworks'}
+                    r'ant-design[.-](\d+\.\d+\.\d+)': {'name': 'Ant Design', 'category': 'css_frameworks'},
+                    r'underscore[.-](\d+\.\d+\.\d+)': {'name': 'Underscore.js', 'category': 'javascript_libraries'},
+                    r'backbone[.-](\d+\.\d+\.\d+)': {'name': 'Backbone.js', 'category': 'javascript_libraries'},
+                    r'ember[.-](\d+\.\d+\.\d+)': {'name': 'Ember.js', 'category': 'frontend_frameworks'},
+                    r'alpine[.-](\d+\.\d+\.\d+)': {'name': 'Alpine.js', 'category': 'frontend_frameworks'},
+                    r'foundation[.-](\d+\.\d+\.\d+)': {'name': 'Foundation', 'category': 'css_frameworks'},
+                    r'semantic-ui[.-](\d+\.\d+\.\d+)': {'name': 'Semantic UI', 'category': 'css_frameworks'},
+                    r'uikit[.-](\d+\.\d+\.\d+)': {'name': 'UIkit', 'category': 'css_frameworks'}
                 },
                 
                 # URL patterns
@@ -1974,7 +2007,12 @@ class AdvancedTechnologyDetector:
                     r'/_next/': {'name': 'Next.js', 'category': 'frontend_frameworks'},
                     r'/_nuxt/': {'name': 'Nuxt.js', 'category': 'frontend_frameworks'},
                     r'/static/': {'name': 'Static Site Generator', 'category': 'development_tools'},
-                    r'/assets/': {'name': 'Static Assets', 'category': 'development_tools'}
+                    r'/assets/': {'name': 'Static Assets', 'category': 'development_tools'},
+                    r'/sites/all/modules/': {'name': 'Drupal', 'category': 'cms_platforms'},
+                    r'/skin/frontend/': {'name': 'Magento', 'category': 'cms_platforms'},
+                    r'/js/mage/': {'name': 'Magento', 'category': 'cms_platforms'},
+                    r'/content/ghost/': {'name': 'Ghost', 'category': 'cms_platforms'},
+                    r'cdn\.shopify\.com': {'name': 'Shopify', 'category': 'cms_platforms'}
                 },
                 
                 # Content patterns
@@ -1985,7 +2023,17 @@ class AdvancedTechnologyDetector:
                     r'__NUXT__': {'name': 'Nuxt.js', 'category': 'frontend_frameworks'},
                     r'wp-emoji': {'name': 'WordPress', 'category': 'cms_platforms'},
                     r'Drupal\.settings': {'name': 'Drupal', 'category': 'cms_platforms'},
-                    r'window\.Joomla': {'name': 'Joomla', 'category': 'cms_platforms'}
+                    r'window\.Joomla': {'name': 'Joomla', 'category': 'cms_platforms'},
+                    r'Mage\.Cookies': {'name': 'Magento', 'category': 'cms_platforms'},
+                    r'Shopify\.theme': {'name': 'Shopify', 'category': 'cms_platforms'},
+                    r'Squarespace\.Constants': {'name': 'Squarespace', 'category': 'cms_platforms'},
+                    r'Wix\.Utils': {'name': 'Wix', 'category': 'cms_platforms'},
+                    r'ghost\.url': {'name': 'Ghost', 'category': 'cms_platforms'},
+                    r'<!-- This is a WordPress theme -->': {'name': 'WordPress', 'category': 'cms_platforms'},
+                    r'<!-- Powered by Drupal -->': {'name': 'Drupal', 'category': 'cms_platforms'},
+                    r'<!-- Powered by Joomla! -->': {'name': 'Joomla', 'category': 'cms_platforms'},
+                    r'<!-- Powered by Magento -->': {'name': 'Magento', 'category': 'cms_platforms'},
+                    r'<!-- Powered by Ghost -->': {'name': 'Ghost', 'category': 'cms_platforms'}
                 }
             },
             
@@ -1998,6 +2046,36 @@ class AdvancedTechnologyDetector:
                 '_ga': {'name': 'Google Analytics', 'category': 'analytics_tools'},
                 '_gtm': {'name': 'Google Tag Manager', 'category': 'analytics_tools'},
                 'fbp': {'name': 'Facebook Pixel', 'category': 'analytics_tools'},
+                '_pk_id': {'name': 'Matomo', 'category': 'analytics_tools'},
+                '_hjIncludedInSample': {'name': 'Hotjar', 'category': 'analytics_tools'},
+                'ajs_user_id': {'name': 'Segment', 'category': 'analytics_tools'},
+                'laravel_session': {'name': 'Laravel', 'category': 'backend_technologies'},
+                'ci_session': {'name': 'CodeIgniter', 'category': 'backend_technologies'},
+                'CAKEPHP': {'name': 'CakePHP', 'category': 'backend_technologies'},
+                'connect.sid': {'name': 'Express.js', 'category': 'backend_technologies'},
+                'csrftoken': {'name': 'Django', 'category': 'backend_technologies'},
+                '_rails_session': {'name': 'Ruby on Rails', 'category': 'backend_technologies'},
+                'sucuri_cloudproxy_uuid': {'name': 'Sucuri', 'category': 'security_technologies'},
+                'wf_loginalerted': {'name': 'Wordfence', 'category': 'security_technologies'},
+                'incap_ses': {'name': 'Imperva', 'category': 'security_technologies'}
+            },
+
+            'dns_records': {
+                'CNAME': {
+                    'sites.squarespace.com': {'name': 'Squarespace', 'category': 'cms_platforms'},
+                    'shops.myshopify.com': {'name': 'Shopify', 'category': 'cms_platforms'},
+                    'ghs.googlehosted.com': {'name': 'Google Cloud', 'category': 'cloud_services'},
+                    'azurewebsites.net': {'name': 'Microsoft Azure', 'category': 'cloud_services'},
+                    'herokuapp.com': {'name': 'Heroku', 'category': 'cloud_services'}
+                },
+                'TXT': {
+                    'google-site-verification': {'name': 'Google Search Console', 'category': 'development_tools'},
+                    'facebook-domain-verification': {'name': 'Facebook', 'category': 'analytics_tools'},
+                    'v=spf1 include:spf.protection.outlook.com': {'name': 'Microsoft Office 365', 'category': 'cloud_services'},
+                    'v=spf1 include:_spf.google.com': {'name': 'Google Workspace', 'category': 'cloud_services'}
+                }
+            }
+        }
                 '__cf_bm': {'name': 'Cloudflare Bot Management', 'category': 'security_technologies'},
                 '_shopify_s': {'name': 'Shopify', 'category': 'cms_platforms'},
                 'connect.sid': {'name': 'Express.js', 'category': 'backend_technologies'}
@@ -2034,7 +2112,6 @@ class AdvancedTechnologyDetector:
         """Executa detecção completa de tecnologias."""
         if verbose:
             console.print("-" * 60)
-            console.print(f"[*] Detector Avançado de Tecnologias - Spectra v3.2.6")
             console.print(f"[*] Analisando: [bold cyan]{self.url}[/bold cyan]")
             console.print("-" * 60)
         
