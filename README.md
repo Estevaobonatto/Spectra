@@ -1,0 +1,118 @@
+# Spectra - Web Security Suite
+
+```bash
+    
+ ░▒▓███████▓▒░▒▓███████▓▒░░▒▓████████▓▒░▒▓██████▓▒░▒▓████████▓▒░▒▓███████▓▒░ ░▒▓██████▓▒░  
+░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░     ░▒▓█▓▒░░▒▓█▓▒░ ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░ 
+░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░     ░▒▓█▓▒░        ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░ 
+ ░▒▓██████▓▒░░▒▓███████▓▒░░▒▓██████▓▒░░▒▓█▓▒░        ░▒▓█▓▒░   ░▒▓███████▓▒░░▒▓████████▓▒░ 
+       ░▒▓█▓▒░▒▓█▓▒░      ░▒▓█▓▒░     ░▒▓█▓▒░        ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░ 
+       ░▒▓█▓▒░▒▓█▓▒░      ░▒▓█▓▒░     ░▒▓█▓▒░░▒▓█▓▒░ ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░ 
+░▒▓███████▓▒░░▒▓█▓▒░      ░▒▓████████▓▒░▒▓██████▓▒░  ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░ 
+                                
+```
+
+**Spectra** é uma suite de ferramentas de linha de comando, escrita em Python, para auxiliar em tarefas de hacking ético e testes de penetração. O script é modular e inclui uma vasta gama de scanners para reconhecimento, enumeração e deteção de vulnerabilidades web comuns.
+
+> **Aviso Legal:** Este script foi criado para fins estritamente educacionais. O autor não se responsabiliza pelo mau uso desta ferramenta. Use-o apenas em sistemas e redes para os quais você tenha permissão explícita para testar. O acesso não autorizado a sistemas de computador é ilegal.
+
+## Funcionalidades
+
+A Spectra está organizada em módulos que cobrem diferentes fases de uma análise de segurança:
+
+#### Análise Completa
+* **`full-scan`**: Executa todos os módulos de scanning de vulnerabilidades de forma sequencial e gera um **relatório unificado**, que pode ser exibido na consola ou exportado para um ficheiro **HTML** profissional.
+
+#### Scanning de Vulnerabilidades
+* **SQL Injection (`sql-scan`)**: Deteta falhas de injeção de SQL usando técnicas baseadas em **erros**, **booleanos** e **tempo (blind)**. Suporta alvos GET e POST.
+* **Cross-Site Scripting (`xss-scan`)**: Procura por vulnerabilidades de XSS refletido em parâmetros de URL e formulários.
+* **Injeção de Comandos (`cmd-scan`)**: Tenta executar comandos do sistema operativo no servidor alvo através de pontos de entrada vulneráveis.
+* **Local File Inclusion (`lfi-scan`)**: Tenta ler ficheiros locais no servidor (ex: `/etc/passwd`) através de falhas de inclusão de ficheiros.
+* **Server-Side Request Forgery (`ssrf-scan`)**: Procura por falhas que forcem o servidor a fazer pedidos para recursos internos (ex: `localhost`).
+* **Open Redirect (`open-redirect-scan`)**: Deteta redirecionamentos abertos que podem ser usados em ataques de phishing.
+* **Configurações de Segurança (`vuln-scan`)**: Analisa a falta de cabeçalhos de segurança, cookies inseguros e outras más configurações básicas.
+* **Análise de CVEs Conhecidas (`cve-scan`)**: Procura por vulnerabilidades (CVEs) publicamente conhecidas para um software específico.
+
+#### Reconhecimento e Enumeração
+* **Deteção de Tecnologias (`tech-detect`)**: Identifica o servidor web, a linguagem de backend, frameworks (ex: WordPress, Joomla), bibliotecas JavaScript e a **base de dados** em uso.
+* **Descoberta de Diretórios (`discover`)**: Usa uma wordlist para encontrar diretórios e ficheiros ocultos.
+* **Scanner de Subdomínios (`subdomain`)**: Encontra subdomínios de um domínio alvo.
+* **Scanner de Portas (`scan`)**: Verifica portas abertas num host e tenta capturar o banner do serviço.
+* **Web Crawler (`crawl`)**: Extrai todos os links e recursos de um site.
+* **Consulta de DNS (`dns`)**: Obtém registos DNS (A, MX, TXT, etc.) de um domínio.
+* **Consulta WHOIS (`whois`)**: Obtém informações de registo de um domínio.
+* **Deteção de WAF (`waf-detect`)**: Tenta identificar a presença de um Web Application Firewall.
+
+#### Utilitários
+* **Análise de Cabeçalhos (`headers`)**: Exibe e analisa os cabeçalhos de resposta HTTP.
+* **Análise de SSL (`ssl-info`)**: Mostra detalhes do certificado SSL/TLS de um host.
+* **Extrator de Metadados (`meta`)**: Extrai metadados EXIF de uma imagem a partir de um URL.
+* **Visualizador de Arquivos (`view`)**: Baixa e exibe o conteúdo de um arquivo a partir de um URL.
+
+#### Ataques
+* **Força Bruta de Login (`bruteforce`)**: Realiza ataques de força bruta em formulários de login.
+
+## Instalação
+
+1.  **Pré-requisitos**: Certifique-se de ter o Python 3 instalado em seu sistema.
+
+2.  **Arquivos**: Coloque os arquivos `custom.py` e `requirements.txt` no mesmo diretório.
+
+3.  **Instalar Dependências**: Abra um terminal nesse diretório e instale as bibliotecas Python necessárias com o seguinte comando:
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+## Uso
+
+A ferramenta é operada através de subcomandos. Para uma visão geral de todos os comandos, use `python spectra.py --help`.
+
+### Exemplos de Uso
+
+#### Análise Completa
+
+A forma mais recomendada de usar a Spectra é com o comando `full-scan`.
+
+```bash
+# Executa todos os scanners e gera um relatório HTML completo
+python spectra.py full-scan -u '[http://testphp.vulnweb.com/](http://testphp.vulnweb.com/)' -o relatorio_seguranca.html
+
+# Executa todos os scanners e exibe o relatório na consola
+python spectra.py full-scan -u '[http://testphp.vulnweb.com/](http://testphp.vulnweb.com/)'
+```
+
+#### Comandos Individuais
+
+Pode também executar cada módulo de forma independente.
+
+```bash
+# [SCAN] Testar SQL Injection numa página específica
+python spectra.py sql-scan -u '[http://testphp.vulnweb.com/listproducts.php?cat=1](http://testphp.vulnweb.com/listproducts.php?cat=1)'
+
+# [SCAN] Testar XSS num formulário
+python spectra.py xss-scan -u '[http://testphp.vulnweb.com/guestbook.php](http://testphp.vulnweb.com/guestbook.php)'
+
+# [SCAN] Testar Local File Inclusion (LFI)
+python spectra.py lfi-scan -u '[http://testphp.vulnweb.com/showimage.php?file=logo.gif](http://testphp.vulnweb.com/showimage.php?file=logo.gif)'
+
+# [RECON] Detetar tecnologias (servidor, linguagem, BD, etc.)
+python spectra.py tech-detect -u '[http://testphp.vulnweb.com/](http://testphp.vulnweb.com/)'
+
+# [RECON] Descobrir diretórios e ficheiros de forma recursiva
+python spectra.py discover -u '[http://testphp.vulnweb.com/](http://testphp.vulnweb.com/)' -w wordlist.txt --recursive
+
+# [RECON] Escanear as portas mais comuns de um alvo
+python spectra.py scan -t scanme.nmap.org -p 21,22,80,443,8080
+
+#### Utilitários Adicionais
+
+```bash
+# [UTIL] Visualizar o conteúdo de um arquivo via URL
+python spectra.py view -u 'http://example.com/robots.txt'
+
+#### Ataques
+
+```bash
+# [ATAQUE] Realizar força bruta em um formulário de login
+python spectra.py bruteforce -u 'http://testphp.vulnweb.com/login.php' --user-field 'username' --pass-field 'password' --username 'test' -w bruteforce.txt --failure-string 'Login failed'
+```
