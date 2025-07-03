@@ -1917,7 +1917,9 @@ class AdvancedTechnologyDetector:
                     'flask': {'name': 'Flask', 'category': 'backend_technologies', 'version_regex': None},
                     'symfony': {'name': 'Symfony', 'category': 'backend_technologies', 'version_regex': None},
                     'rubyonrails': {'name': 'Ruby on Rails', 'category': 'backend_technologies', 'version_regex': None},
-                    'aspnet': {'name': 'ASP.NET', 'category': 'backend_technologies', 'version_regex': None}
+                    'aspnet': {'name': 'ASP.NET', 'category': 'backend_technologies', 'version_regex': None},
+                    'spring': {'name': 'Spring Boot', 'category': 'backend_technologies', 'version_regex': None},
+                    'rails': {'name': 'Ruby on Rails', 'category': 'backend_technologies', 'version_regex': None}
                 },
                 'X-Generator': {
                     'drupal': {'name': 'Drupal', 'category': 'cms_platforms', 'version_regex': r'Drupal (\d+\.\d+)'},
@@ -1950,6 +1952,18 @@ class AdvancedTechnologyDetector:
                 },
                 'via': {
                     'heroku': {'name': 'Heroku', 'category': 'cloud_services', 'version_regex': None}
+                },
+                'x-vercel-id': {
+                    '*': {'name': 'Vercel', 'category': 'cloud_services', 'version_regex': None}
+                },
+                'x-nf-request-id': {
+                    '*': {'name': 'Netlify', 'category': 'cloud_services', 'version_regex': None}
+                },
+                'x-amz-bucket-region': {
+                    '*': {'name': 'AWS S3', 'category': 'cloud_services', 'version_regex': None}
+                },
+                'x-cache': {
+                    'cloudfront': {'name': 'AWS CloudFront', 'category': 'cdn_services', 'version_regex': None}
                 }
             },
             
@@ -1993,7 +2007,13 @@ class AdvancedTechnologyDetector:
                     r'alpine[.-](\d+\.\d+\.\d+)': {'name': 'Alpine.js', 'category': 'frontend_frameworks'},
                     r'foundation[.-](\d+\.\d+\.\d+)': {'name': 'Foundation', 'category': 'css_frameworks'},
                     r'semantic-ui[.-](\d+\.\d+\.\d+)': {'name': 'Semantic UI', 'category': 'css_frameworks'},
-                    r'uikit[.-](\d+\.\d+\.\d+)': {'name': 'UIkit', 'category': 'css_frameworks'}
+                    r'uikit[.-](\d+\.\d+\.\d+)': {'name': 'UIkit', 'category': 'css_frameworks'},
+                    r'vue[.-](\d+\.\d+\.\d+)': {'name': 'Vue.js', 'category': 'frontend_frameworks'},
+                    r'angular[.-](\d+\.\d+\.\d+)': {'name': 'Angular', 'category': 'frontend_frameworks'},
+                    r'alpine[.-](\d+\.\d+\.\d+)': {'name': 'Alpine.js', 'category': 'frontend_frameworks'},
+                    r'tailwind[.-](\d+\.\d+\.\d+)': {'name': 'Tailwind CSS', 'category': 'css_frameworks'},
+                    r'material-ui[.-](\d+\.\d+\.\d+)': {'name': 'Material-UI', 'category': 'css_frameworks'},
+                    r'ant-design[.-](\d+\.\d+\.\d+)': {'name': 'Ant Design', 'category': 'css_frameworks'}
                 },
                 
                 # URL patterns
@@ -2013,7 +2033,10 @@ class AdvancedTechnologyDetector:
                     r'/skin/frontend/': {'name': 'Magento', 'category': 'cms_platforms'},
                     r'/js/mage/': {'name': 'Magento', 'category': 'cms_platforms'},
                     r'/content/ghost/': {'name': 'Ghost', 'category': 'cms_platforms'},
-                    r'cdn\.shopify\.com': {'name': 'Shopify', 'category': 'cms_platforms'}
+                    r'cdn\.shopify\.com': {'name': 'Shopify', 'category': 'cms_platforms'},
+                    r'/_app/': {'name': 'SvelteKit', 'category': 'frontend_frameworks'},
+                    r'/graphql': {'name': 'GraphQL API', 'category': 'backend_technologies'},
+                    r'/api/v[0-9]+/': {'name': 'REST API', 'category': 'backend_technologies'}
                 },
                 
                 # Content patterns
@@ -2034,7 +2057,14 @@ class AdvancedTechnologyDetector:
                     r'<!-- Powered by Drupal -->': {'name': 'Drupal', 'category': 'cms_platforms'},
                     r'<!-- Powered by Joomla! -->': {'name': 'Joomla', 'category': 'cms_platforms'},
                     r'<!-- Powered by Magento -->': {'name': 'Magento', 'category': 'cms_platforms'},
-                    r'<!-- Powered by Ghost -->': {'name': 'Ghost', 'category': 'cms_platforms'}
+                    r'<!-- Powered by Ghost -->': {'name': 'Ghost', 'category': 'cms_platforms'},
+                    r'<div id="app" data-v-': {'name': 'Vue.js', 'category': 'frontend_frameworks'},
+                    r'<html[^>]+ng-app': {'name': 'AngularJS', 'category': 'frontend_frameworks'},
+                    r'<div[^>]+x-data': {'name': 'Alpine.js', 'category': 'frontend_frameworks'},
+                    r'<input type="hidden" name="csrfmiddlewaretoken"': {'name': 'Django', 'category': 'backend_technologies'},
+                    r'<form[^>]+action="/login"': {'name': 'Flask', 'category': 'backend_technologies'},
+                    r'<meta name="_csrf"': {'name': 'Spring Boot', 'category': 'backend_technologies'},
+                    r'<meta name="csrf-token" content="[^"]+"': {'name': 'Ruby on Rails', 'category': 'backend_technologies'}
                 }
             },
             
@@ -2098,7 +2128,9 @@ class AdvancedTechnologyDetector:
                 'wf_loginalerted': {'name': 'Wordfence', 'category': 'security_technologies'},
                 'incap_ses': {'name': 'Imperva', 'category': 'security_technologies'},
                 '__cf_bm': {'name': 'Cloudflare Bot Management', 'category': 'security_technologies'},
-                '_shopify_s': {'name': 'Shopify', 'category': 'cms_platforms'}
+                '_shopify_s': {'name': 'Shopify', 'category': 'cms_platforms'},
+                '_session': {'name': 'Generic Session', 'category': 'backend_technologies'},
+                '_csrf': {'name': 'CSRF Token', 'category': 'security_technologies'}
             },
 
             'javascript_globals': {
@@ -2114,7 +2146,10 @@ class AdvancedTechnologyDetector:
                 '_paq': {'name': 'Matomo', 'category': 'analytics_tools'},
                 'Shopify': {'name': 'Shopify', 'category': 'cms_platforms'},
                 'Drupal': {'name': 'Drupal', 'category': 'cms_platforms'},
-                'wp': {'name': 'WordPress', 'category': 'cms_platforms'}
+                'wp': {'name': 'WordPress', 'category': 'cms_platforms'},
+                'Vue': {'name': 'Vue.js', 'category': 'frontend_frameworks'},
+                'angular': {'name': 'Angular', 'category': 'frontend_frameworks'},
+                'Alpine': {'name': 'Alpine.js', 'category': 'frontend_frameworks'}
             },
             
             'css_patterns': {
@@ -2124,7 +2159,9 @@ class AdvancedTechnologyDetector:
                 r'\.bootstrap-': {'name': 'Bootstrap', 'category': 'css_frameworks'},
                 r'\.tailwind-': {'name': 'Tailwind CSS', 'category': 'css_frameworks'},
                 r'\.mui-': {'name': 'Material-UI', 'category': 'css_frameworks'},
-                r'\.ant-': {'name': 'Ant Design', 'category': 'css_frameworks'}
+                r'\.ant-': {'name': 'Ant Design', 'category': 'css_frameworks'},
+                r'\.tailwind-': {'name': 'Tailwind CSS', 'category': 'css_frameworks'},
+                r'\.Mui-': {'name': 'Material-UI', 'category': 'css_frameworks'}
             }
         }
     
