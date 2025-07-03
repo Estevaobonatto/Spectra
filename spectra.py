@@ -67,7 +67,7 @@ def display_banner():
 ░▒▓███████▓▒░░▒▓█▓▒░      ░▒▓████████▓▒░▒▓██████▓▒░  ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░ 
 
 """
-    version = "2.9" # Versão atualizada com melhorias no SQLi Scanner
+    version = "3.0" # Versão atualizada com melhorias no XSS Scanner
     console.print(f"[bold cyan]{banner}[/bold cyan]")
     console.print(f"[bold]Spectra - Web Security Suite v{version}[/bold]")
     console.print("[italic]Uma ferramenta de hacking ético para análise de segurança web.[/italic]")
@@ -1187,33 +1187,57 @@ class SQLiScanner:
 def sql_injection_scan(url, level=1, dbms=None):
     SQLiScanner(url, level=level, dbms=dbms).run_scan()
 
-# --- MÓDULO 15: SCANNER DE XSS (CROSS-SITE SCRIPTING) ---
+# --- MÓDULO 15: SCANNER DE XSS (CROSS-SITE SCRIPTING) MELHORADO ---
 
 class XSSScanner:
-    def __init__(self, base_url):
+    def __init__(self, base_url, custom_payloads_file=None):
         self.base_url = base_url
         self.session = requests.Session()
         self.session.headers.update({'User-Agent': 'Mozilla/5.0'})
         self.vulnerable_points = []
-        self.payload = "<script>alert('xss-test-spectra')</script>"
-        self.payload_encoded = "&lt;script&gt;alert('xss-test-spectra')&lt;/script&gt;"
+        self.payloads = self._load_payloads(custom_payloads_file)
 
+    def _load_payloads(self, custom_payloads_file):
+        """Carrega payloads de um ficheiro ou usa um payload padrão."""
+        default_payload = "<script>alert('xss-test-spectra')</script>"
+        if custom_payloads_file:
+            try:
+                with open(custom_payloads_file, 'r', errors='ignore') as f:
+                    payloads = [line.strip() for line in f if line.strip()]
+                    if not payloads:
+                        console.print(f"[bold yellow]Aviso: O ficheiro de payloads '{custom_payloads_file}' está vazio. Usando payload padrão.[/bold yellow]")
+                        return [default_payload]
+                    console.print(f"[*] Carregados [bold cyan]{len(payloads)}[/bold cyan] payloads de XSS de '{custom_payloads_file}'.")
+                    return payloads
+            except FileNotFoundError:
+                console.print(f"[bold red][!] Erro: O ficheiro de payloads '{custom_payloads_file}' não foi encontrado. Usando payload padrão.[/bold red]")
+                return [default_payload]
+        return [default_payload]
 
     def _scan_target(self, url, method, param, form_data=None):
-        test_data = {param: self.payload}
-        try:
-            if method.lower() == 'get': response = self.session.get(url, params=test_data, timeout=7, verify=False)
-            else:
-                post_payload = form_data.copy()
-                post_payload[param] = self.payload
-                response = self.session.post(url, data=post_payload, timeout=7, verify=False)
+        """Testa um ponto de entrada com múltiplos payloads de XSS."""
+        for payload in self.payloads:
+            test_data = {param: payload}
+            try:
+                if method.lower() == 'get':
+                    response = self.session.get(url, params=test_data, timeout=7, verify=False)
+                else:
+                    post_payload = (form_data or {}).copy()
+                    post_payload[param] = payload
+                    response = self.session.post(url, data=post_payload, timeout=7, verify=False)
 
-            if self.payload in response.text and self.payload_encoded not in response.text:
-                finding = {"Risco": "Médio", "Tipo": "Cross-Site Scripting (XSS)", "Detalhe": f"Parâmetro '{param}' em {url} ({method.upper()})", "Recomendação": f"Payload '{self.payload}' foi refletido sem sanitização. Validar e codificar o input do usuário."}
-                if finding not in self.vulnerable_points: self.vulnerable_points.append(finding)
-        except requests.RequestException: pass
+                # Verifica se o payload é refletido sem codificação HTML
+                if payload in response.text:
+                    finding = {"Risco": "Médio", "Tipo": "Cross-Site Scripting (XSS)", "Detalhe": f"Parâmetro '{param}' em {url} ({method.upper()})", "Recomendação": f"Payload '{payload}' foi refletido sem sanitização. Validar e codificar o input do usuário."}
+                    if finding not in self.vulnerable_points:
+                        self.vulnerable_points.append(finding)
+                        return # Se um payload funcionar, passa para o próximo parâmetro
+
+            except requests.RequestException:
+                pass
 
     def run_scan(self, return_findings=False):
+        """Executa o scan de XSS, descobrindo e testando pontos de entrada."""
         if not return_findings:
             console.print("-" * 60)
             console.print(f"[*] Executando scanner de XSS em: [bold cyan]{self.base_url}[/bold cyan]")
@@ -1254,6 +1278,7 @@ class XSSScanner:
         self._present_findings()
 
     def _present_findings(self):
+        """Apresenta os resultados do scan de XSS."""
         console.print("-" * 60)
         if not self.vulnerable_points:
             console.print("[bold green][+] Nenhuma vulnerabilidade de XSS Refletido foi encontrada.[/bold green]")
@@ -1265,8 +1290,8 @@ class XSSScanner:
             console.print(table)
         console.print("-" * 60)
 
-def xss_scan(url):
-    XSSScanner(url).run_scan()
+def xss_scan(url, custom_payloads_file=None):
+    XSSScanner(url, custom_payloads_file=custom_payloads_file).run_scan()
 
 # --- MÓDULO 16: SCANNER DE INJEÇÃO DE COMANDOS ---
 
@@ -2169,6 +2194,9 @@ Exemplos de Uso:
   # Procura por falhas de SQL Injection com nível de agressividade 3 e focado em MySQL
   python %(prog)s sql-scan -u "http://testphp.vulnweb.com/listproducts.php?cat=1" --level 3 --dbms mysql
 
+  # Procura por falhas de XSS usando uma lista de payloads personalizada
+  python %(prog)s xss-scan -u "http://testphp.vulnweb.com/guestbook.php" --custom-payloads payloads/xss.txt
+
   # Procura por CVEs para OpenSSL, ignorando o cache e filtrando por CVSS
   python %(prog)s cve-scan --product openssl --version 1.0.2 --min-cvss 7.0 --no-cache
 
@@ -2197,9 +2225,9 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     parser_sql.add_argument('--level', type=int, default=1, choices=range(1, 6), help='Nível de agressividade do scan (1-5, padrão: 1).')
     parser_sql.add_argument('--dbms', help='Força o uso de payloads para um DBMS específico (ex: mysql, mssql, oracle).')
 
-
     parser_xss = subparsers.add_parser('xss-scan', help='[Scan] Procura por falhas de Cross-Site Scripting (XSS).')
     parser_xss.add_argument('-u', '--url', required=True, help='URL base para iniciar a verificação.')
+    parser_xss.add_argument('--custom-payloads', help='Caminho para um ficheiro com payloads de XSS personalizados (um por linha).')
 
     parser_cmd = subparsers.add_parser('cmd-scan', help='[Scan] Procura por falhas de Injeção de Comandos.')
     parser_cmd.add_argument('-u', '--url', required=True, help='URL base para iniciar a verificação.')
@@ -2330,7 +2358,7 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     elif args.tool == 'sql-scan':
         sql_injection_scan(args.url, args.level, args.dbms)
     elif args.tool == 'xss-scan':
-        xss_scan(args.url)
+        xss_scan(args.url, args.custom_payloads)
     elif args.tool == 'cmd-scan':
         command_injection_scan(args.url)
     elif args.tool == 'lfi-scan':
