@@ -1217,14 +1217,25 @@ class XSSScanner:
         return [default_payload]
 
     def _add_finding(self, risk, v_type, detail, recommendation):
-        """Adiciona uma nova descoberta, evitando duplicados."""
-        finding = {"Risco": risk, "Tipo": v_type, "Detalhe": detail, "Recomendação": recommendation}
-        if finding not in self.vulnerable_points:
-            self.vulnerable_points.append(finding)
+        """Adiciona ou atualiza uma descoberta, priorizando XSS Armazenado."""
+        # Verifica se uma descoberta para este 'detalhe' já existe
+        for i, finding in enumerate(self.vulnerable_points):
+            if finding["Detalhe"] == detail:
+                # Se a nova descoberta for "Armazenado" e a existente não for, atualiza-a.
+                if v_type == "XSS Armazenado" and finding["Tipo"] != "XSS Armazenado":
+                    self.vulnerable_points[i].update({
+                        "Risco": "Alto",
+                        "Tipo": "XSS Armazenado",
+                        "Recomendação": recommendation
+                    })
+                return  # Evita adicionar uma duplicada
 
-    def _scan_reflected(self, tasks, progress, task_id):
+        # Se não houver correspondência, adiciona a nova descoberta
+        self.vulnerable_points.append({"Risco": risk, "Tipo": v_type, "Detalhe": detail, "Recomendação": recommendation})
+
+    def _scan_reflected(self, tasks, progress):
         """Executa o scan para XSS Refletido."""
-        progress.update(task_id, description="[green]Testando XSS Refletido...")
+        task_id = progress.add_task("[green]Testando XSS Refletido...", total=len(tasks))
         for method, url, param, form_data in tasks:
             progress.update(task_id, advance=1, description=f"[green]Testando [cyan]{param}[/cyan] (Refletido)...")
             for payload in self.payloads:
@@ -1232,46 +1243,56 @@ class XSSScanner:
                 try:
                     if method.lower() == 'get':
                         response = self.session.get(url, params=test_data, timeout=7, verify=False)
-                    else:
+                    else: # POST
                         post_payload = (form_data or {}).copy()
                         post_payload[param] = payload
                         response = self.session.post(url, data=post_payload, timeout=7, verify=False)
 
                     if payload in response.text:
-                        self._add_finding("Médio", "XSS Refletido", f"Parâmetro '{param}' em {url} ({method.upper()})", f"Payload '{payload}' foi refletido sem sanitização.")
-                        break # Próximo parâmetro
+                        detail = f"Parâmetro '{param}' em {url} ({method.upper()})"
+                        rec = f"Payload '{payload}' foi refletido sem sanitização."
+                        self._add_finding("Médio", "XSS Refletido", detail, rec)
+                        break  # Encontrado um payload funcional, passa para o próximo parâmetro
                 except requests.RequestException:
                     pass
+        progress.remove_task(task_id)
 
-    def _scan_stored(self, forms, progress):
-        """Executa o scan para XSS Armazenado."""
-        console.print("\\[*] [bold]Iniciando verificação de XSS Armazenado...[/bold]")
-        
-        # 1. Submeter payloads em todos os formulários
-        submission_task = progress.add_task("[green]Submetendo payloads...", total=len(forms) * len(self.payloads) * sum(len(i.find_all(['input', 'textarea'])) for i in forms))
+    def _inject_into_forms(self, forms, progress):
+        """Submete payloads em todos os formulários encontrados."""
+        num_fields = sum(len(form.find_all(['input', 'textarea'], {'name': True})) for form in forms)
+        if num_fields == 0:
+            return
+            
+        submission_task = progress.add_task("[green]Submetendo payloads (Stored XSS)...", total=num_fields * len(self.payloads))
         for form in forms:
             action = urljoin(self.base_url, form.get('action', ''))
             method = form.get('method', 'post').lower()
-            form_data = {i.get('name'): 'test' for i in form.find_all(['input', 'textarea']) if i.get('name')}
+            if method != 'post':
+                progress.update(submission_task, advance=len(self.payloads) * len(form.find_all(['input', 'textarea'], {'name': True})))
+                continue
+
+            form_fields = [i.get('name') for i in form.find_all(['input', 'textarea'], {'name': True})]
             
-            for field in form_data:
+            for field in form_fields:
                 for payload in self.payloads:
                     progress.update(submission_task, advance=1)
-                    submission_data = form_data.copy()
-                    submission_data[field] = payload
+                    # Cria um payload base com valores de teste para todos os campos
+                    base_data = {f: 'test' for f in form_fields}
+                    # Substitui o campo atual pelo payload
+                    base_data[field] = payload
                     try:
-                        self.session.post(action, data=submission_data, timeout=7, verify=False)
+                        self.session.post(action, data=base_data, timeout=7, verify=False)
                     except requests.RequestException:
                         continue
         progress.remove_task(submission_task)
-        console.print("\\[*] Submissão de payloads concluída.")
 
-        # 2. Rastear o site para encontrar os payloads refletidos
-        console.print("\\[*] Rasteando o site para verificar a persistência dos payloads...")
+    def _verify_storage(self, progress):
+        """Rasteia o site para verificar a persistência dos payloads."""
+        crawl_task = progress.add_task("[green]Verificando páginas para Stored XSS...", total=None)
+        
         to_visit = [self.base_url]
         visited = set()
         
-        crawl_task = progress.add_task("[green]Rasteando para encontrar XSS Armazenado...", total=None)
         while to_visit:
             current_url = to_visit.pop(0)
             if current_url in visited:
@@ -1281,22 +1302,32 @@ class XSSScanner:
 
             try:
                 response = self.session.get(current_url, timeout=7, verify=False)
-                # Verifica se algum dos nossos payloads está na página
+                # Usar BeautifulSoup para lidar melhor com diferentes codificações
+                soup = BeautifulSoup(response.content, 'html.parser', from_encoding=response.encoding)
+                page_text = soup.get_text()
+
                 for payload in self.payloads:
-                    if payload in response.text:
-                        self._add_finding("Alto", "XSS Armazenado", f"Payload encontrado em {current_url}", f"Payload '{payload}' foi submetido e persistiu na aplicação.")
-                
-                # Encontra novos links para visitar
-                soup = BeautifulSoup(response.content, 'html.parser')
+                    if payload in response.text or payload in page_text:
+                        # Se o payload for encontrado, tenta encontrar uma descoberta de XSS Refletido correspondente para atualizar
+                        # Esta é uma heurística; pode não identificar o parâmetro exato, mas atualiza o tipo de vulnerabilidade
+                        found_and_upgraded = False
+                        for finding in self.vulnerable_points:
+                            if payload in finding["Recomendação"]:
+                                self._add_finding("Alto", "XSS Armazenado", finding["Detalhe"], f"Payload '{payload}' foi submetido e persistiu na aplicação.")
+                                found_and_upgraded = True
+                        
+                        if not found_and_upgraded:
+                            detail = f"Payload persistiu e foi encontrado em {current_url}"
+                            self._add_finding("Alto", "XSS Armazenado", detail, f"Payload '{payload}' foi submetido e persistiu na aplicação.")
+
                 base_netloc = urlparse(self.base_url).netloc
                 for link_tag in soup.find_all('a', href=True):
                     link = urljoin(self.base_url, link_tag['href'])
                     if urlparse(link).netloc == base_netloc and link not in visited:
                         to_visit.append(link)
-            except requests.RequestException:
+            except (requests.RequestException, UnicodeDecodeError):
                 continue
         progress.remove_task(crawl_task)
-
 
     def run_scan(self, return_findings=False):
         """Orquestra os diferentes tipos de scans de XSS."""
@@ -1327,7 +1358,7 @@ class XSSScanner:
         for form in forms:
             action = urljoin(self.base_url, form.get('action', ''))
             method = form.get('method', 'post').lower()
-            data = {i.get('name'): 'test' for i in form.find_all(['input', 'textarea']) if i.get('name')}
+            data = {i.get('name'): 'test' for i in form.find_all(['input', 'textarea'], {'name': True})}
             for param in data: tasks.append((method, action, param, data))
         
         if not tasks and not forms:
@@ -1335,16 +1366,16 @@ class XSSScanner:
             return [] if return_findings else None
         
         # Execução dos scans
-        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TextColumn("[progress.percentage]{task.percentage:>3.0f}%"), TimeRemainingColumn(), console=console, transient=return_findings) as progress:
-            task_id = progress.add_task("[green]Testando XSS...", total=len(tasks))
-            
+        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console, transient=return_findings) as progress:
             # 1. Scan de XSS Refletido
-            self._scan_reflected(tasks, progress, task_id)
-            progress.remove_task(task_id)
+            self._scan_reflected(tasks, progress)
 
             # 2. Scan de XSS Armazenado (se ativado)
-            if self.scan_stored and forms:
-                self._scan_stored(forms, progress)
+            if self.scan_stored:
+                post_forms = [form for form in forms if form.get('method', 'get').lower() == 'post']
+                if post_forms:
+                    self._inject_into_forms(post_forms, progress)
+                    self._verify_storage(progress)
         
         if self.fuzz_dom:
             console.print("[yellow]Aviso: A análise de XSS baseado em DOM (`--fuzz-dom`) ainda não está implementada.[/yellow]")
