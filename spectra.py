@@ -687,21 +687,675 @@ def grab_banner(host, port):
         console.print(f"[bold red][!] Erro ao conectar na porta {port}: {e}[/bold red]")
     console.print("-" * 60)
 
-# --- MÓDULO 3: SCANNER DE DIRETÓRIOS WEB ---
+# --- MÓDULO 3: SCANNER DE DIRETÓRIOS WEB AVANÇADO ---
+
+import hashlib
+import uuid
+from collections import Counter
+
+class AdvancedDirectoryScanner:
+    def __init__(self, base_url, wordlist_path, workers=30, timeout=10, retries=3):
+        self.base_url = base_url.rstrip('/')
+        self.wordlist_path = wordlist_path
+        self.workers = workers
+        self.timeout = timeout
+        self.retries = retries
+        self.session = None
+        self.baseline_404 = None
+        self.waf_detected = False
+        self.detected_technologies = set()
+        self.results = []
+        self.errors = []
+        
+        # Configurações avançadas
+        self.smart_filtering = True
+        self.extension_fuzzing = True
+        self.recursive_enabled = False
+        self.max_depth = 3
+        self.stealth_mode = False
+        
+        # Estatísticas
+        self.requests_made = 0
+        self.false_positives_filtered = 0
+        
+    def _setup_session(self):
+        """Configura sessão HTTP otimizada para directory discovery."""
+        self.session = requests.Session()
+        
+        # Headers padrão para evasão
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1'
+        })
+        
+        # Headers para bypass de WAF se detectado
+        if self.waf_detected:
+            self.session.headers.update(self._get_waf_bypass_headers())
+        
+        # Configurações de adapter para pool de conexões
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=self.workers,
+            pool_maxsize=self.workers * 2,
+            max_retries=0  # Controlamos retry manualmente
+        )
+        self.session.mount('http://', adapter)
+        self.session.mount('https://', adapter)
+        
+    def _get_waf_bypass_headers(self):
+        """Headers para bypass de WAF."""
+        return {
+            'X-Forwarded-For': '127.0.0.1',
+            'X-Real-IP': '127.0.0.1',
+            'X-Originating-IP': '127.0.0.1',
+            'X-Remote-IP': '127.0.0.1',
+            'X-Remote-Addr': '127.0.0.1',
+            'X-Forwarded-Host': 'localhost',
+            'X-Forwarded-Proto': 'https'
+        }
+    
+    def _detect_baseline_404(self):
+        """Detecta características de páginas 404 customizadas."""
+        console.print("[*] Detectando baseline 404...")
+        
+        # Gera URLs aleatórias que certamente não existem
+        random_paths = [
+            f"/{uuid.uuid4().hex}",
+            f"/{uuid.uuid4().hex}.html",
+            f"/{uuid.uuid4().hex}.php",
+            f"/{uuid.uuid4().hex}.asp",
+            f"/test{uuid.uuid4().hex[:8]}"
+        ]
+        
+        baseline_responses = []
+        
+        for path in random_paths:
+            url = f"{self.base_url}{path}"
+            response = self._make_request(url)
+            
+            if response:
+                baseline_responses.append({
+                    'status': response.status_code,
+                    'length': len(response.content),
+                    'hash': hashlib.md5(response.content).hexdigest(),
+                    'headers': dict(response.headers),
+                    'content_preview': response.text[:500]
+                })
+        
+        # Analisa padrões comuns nas respostas 404
+        if baseline_responses:
+            status_codes = [r['status'] for r in baseline_responses]
+            content_lengths = [r['length'] for r in baseline_responses]
+            content_hashes = [r['hash'] for r in baseline_responses]
+            
+            # Determina padrão mais comum
+            most_common_status = Counter(status_codes).most_common(1)[0][0]
+            avg_length = sum(content_lengths) // len(content_lengths)
+            
+            self.baseline_404 = {
+                'status_codes': set(status_codes),
+                'avg_length': avg_length,
+                'length_variance': max(content_lengths) - min(content_lengths),
+                'content_hashes': set(content_hashes),
+                'common_status': most_common_status,
+                'samples': baseline_responses
+            }
+            
+            console.print(f"[*] Baseline 404 detectado: Status {most_common_status}, Length ~{avg_length}")
+        else:
+            console.print("[!] Falha ao detectar baseline 404 - usando detecção padrão")
+            self.baseline_404 = None
+    
+    def _detect_waf(self):
+        """Detecta presença de Web Application Firewall."""
+        console.print("[*] Verificando presença de WAF...")
+        
+        waf_payloads = [
+            "<script>alert(1)</script>",
+            "' OR '1'='1",
+            "../../../etc/passwd",
+            "<img src=x onerror=alert(1)>",
+            "UNION SELECT * FROM users--"
+        ]
+        
+        for payload in waf_payloads:
+            test_url = f"{self.base_url}?test={payload}"
+            response = self._make_request(test_url)
+            
+            if response and self._is_waf_response(response):
+                self.waf_detected = True
+                console.print("[!] WAF detectado - ativando modo evasão")
+                return True
+        
+        console.print("[*] Nenhum WAF detectado")
+        return False
+    
+    def _is_waf_response(self, response):
+        """Verifica se a resposta indica bloqueio por WAF."""
+        waf_indicators = [
+            # Status codes comuns de WAF
+            response.status_code in [403, 406, 429, 501, 503],
+            
+            # Headers de WAF
+            any(header.lower() in ['cloudflare', 'akamai', 'incapsula', 'sucuri', 'barracuda'] 
+                for header in response.headers.keys()),
+            
+            # Conteúdo de bloqueio
+            any(phrase in response.text.lower() for phrase in [
+                'blocked', 'forbidden', 'access denied', 'security',
+                'firewall', 'protection', 'cloudflare', 'ray id'
+            ])
+        ]
+        
+        return any(waf_indicators)
+    
+    def _make_request(self, url, method='GET'):
+        """Faz requisição com retry logic e error handling robusto."""
+        for attempt in range(self.retries):
+            try:
+                if self.stealth_mode and attempt > 0:
+                    time.sleep(0.5 * attempt)  # Delay progressivo em modo stealth
+                
+                if method == 'GET':
+                    response = self.session.get(url, timeout=self.timeout, 
+                                              allow_redirects=False, verify=False)
+                elif method == 'HEAD':
+                    response = self.session.head(url, timeout=self.timeout, 
+                                               allow_redirects=False, verify=False)
+                
+                self.requests_made += 1
+                return response
+                
+            except requests.exceptions.Timeout:
+                if attempt == self.retries - 1:
+                    self.errors.append(f"Timeout após {self.retries} tentativas: {url}")
+                continue
+                
+            except requests.exceptions.ConnectionError as e:
+                if "Max retries exceeded" in str(e) or "429" in str(e):
+                    self.errors.append(f"Rate limited: {url}")
+                    time.sleep(2 ** attempt)  # Backoff exponencial
+                    continue
+                if attempt == self.retries - 1:
+                    self.errors.append(f"Erro de conexão: {url}")
+                continue
+                
+            except requests.exceptions.RequestException as e:
+                self.errors.append(f"Erro de requisição: {url} - {e}")
+                break
+        
+        return None
+    
+    def _is_false_positive(self, response, url):
+        """Verifica se a resposta é um false positive baseado no baseline 404."""
+        if not self.baseline_404 or not response:
+            return response is None or response.status_code == 404
+        
+        content_length = len(response.content)
+        content_hash = hashlib.md5(response.content).hexdigest()
+        
+        # Verifica contra padrões conhecidos de 404
+        if (response.status_code in self.baseline_404['status_codes'] and
+            content_hash in self.baseline_404['content_hashes']):
+            self.false_positives_filtered += 1
+            return True
+        
+        # Verifica similaridade de tamanho (páginas 404 customizadas)
+        if (response.status_code == self.baseline_404['common_status'] and
+            abs(content_length - self.baseline_404['avg_length']) < 50):
+            
+            # Análise adicional de conteúdo para páginas similares
+            if self._content_similarity_check(response.text):
+                self.false_positives_filtered += 1
+                return True
+        
+        return False
+    
+    def _content_similarity_check(self, content):
+        """Verifica similaridade de conteúdo com amostras 404."""
+        if not self.baseline_404:
+            return False
+        
+        # Palavras-chave comuns em páginas 404
+        error_keywords = ['not found', '404', 'page not found', 'file not found', 
+                         'does not exist', 'cannot be found', 'error']
+        
+        content_lower = content.lower()
+        
+        # Se contém muitas palavras-chave de erro, provavelmente é 404
+        keyword_count = sum(1 for keyword in error_keywords if keyword in content_lower)
+        
+        return keyword_count >= 2
+    
+    def _analyze_response(self, response, url):
+        """Análise abrangente da resposta HTTP."""
+        if not response:
+            return None
+        
+        # Verifica se é false positive primeiro
+        if self._is_false_positive(response, url):
+            return None
+        
+        status = response.status_code
+        headers = response.headers
+        
+        result = {
+            'url': url,
+            'status': status,
+            'length': len(response.content),
+            'content_type': headers.get('Content-Type', ''),
+            'server': headers.get('Server', ''),
+            'redirect_location': '',
+            'directory_type': 'unknown',
+            'interesting_headers': {},
+            'notes': []
+        }
+        
+        # Análise específica por status code
+        if status == 200:
+            result.update(self._analyze_200_response(response, url))
+        elif status == 403:
+            result.update(self._analyze_403_response(response, url))
+        elif status in [301, 302, 303, 307, 308]:
+            result.update(self._analyze_redirect_response(response, url))
+        elif status == 401:
+            result.update(self._analyze_auth_required(response, url))
+        elif status == 405:
+            result.update(self._analyze_method_not_allowed(response, url))
+        elif status == 500:
+            result['notes'].append('Internal Server Error - possível vulnerabilidade')
+        
+        # Detecta headers interessantes
+        interesting_headers = {}
+        for header, value in headers.items():
+            if header.lower() in ['server', 'x-powered-by', 'x-generator', 'x-drupal-cache']:
+                interesting_headers[header] = value
+        
+        result['interesting_headers'] = interesting_headers
+        
+        return result
+    
+    def _analyze_200_response(self, response, url):
+        """Analisa resposta 200 OK."""
+        content = response.text.lower()
+        content_type = response.headers.get('Content-Type', '').lower()
+        
+        analysis = {
+            'directory_type': 'file',
+            'notes': []
+        }
+        
+        # Detecta se é um diretório baseado no conteúdo
+        if ('index of' in content or 
+            'directory listing' in content or
+            '<title>index of' in content):
+            analysis['directory_type'] = 'directory_listing'
+            analysis['notes'].append('Directory listing ativo')
+        
+        # Detecta tecnologias baseadas no conteúdo
+        if 'wp-content' in content or 'wordpress' in content:
+            self.detected_technologies.add('wordpress')
+            analysis['notes'].append('WordPress detectado')
+        elif 'drupal' in content:
+            self.detected_technologies.add('drupal')
+            analysis['notes'].append('Drupal detectado')
+        elif 'joomla' in content:
+            self.detected_technologies.add('joomla')
+            analysis['notes'].append('Joomla detectado')
+        
+        # Detecta arquivos sensíveis
+        sensitive_indicators = {
+            'config': 'Arquivo de configuração',
+            'database': 'Arquivo de database',
+            'backup': 'Arquivo de backup',
+            'admin': 'Painel administrativo',
+            'login': 'Página de login',
+            '.env': 'Arquivo de ambiente',
+            'robots.txt': 'Arquivo robots.txt'
+        }
+        
+        for keyword, description in sensitive_indicators.items():
+            if keyword in url.lower():
+                analysis['notes'].append(description)
+                break
+        
+        return analysis
+    
+    def _analyze_403_response(self, response, url):
+        """Analisa resposta 403 Forbidden."""
+        return {
+            'directory_type': 'directory_protected',
+            'notes': ['Diretório protegido - potencial interesse']
+        }
+    
+    def _analyze_redirect_response(self, response, url):
+        """Analisa respostas de redirecionamento."""
+        location = response.headers.get('Location', '')
+        
+        analysis = {
+            'redirect_location': location,
+            'directory_type': 'redirect',
+            'notes': [f'Redireciona para: {location}']
+        }
+        
+        # Se redireciona para URL com trailing slash, é provavelmente um diretório
+        if location.endswith('/') and not url.endswith('/'):
+            analysis['directory_type'] = 'directory'
+            analysis['notes'].append('Diretório confirmado pelo redirect')
+        
+        return analysis
+    
+    def _analyze_auth_required(self, response, url):
+        """Analisa resposta 401 Unauthorized."""
+        auth_type = response.headers.get('WWW-Authenticate', '')
+        
+        return {
+            'directory_type': 'auth_required',
+            'notes': [f'Autenticação requerida: {auth_type}']
+        }
+    
+    def _analyze_method_not_allowed(self, response, url):
+        """Analisa resposta 405 Method Not Allowed."""
+        allowed_methods = response.headers.get('Allow', '')
+        
+        return {
+            'directory_type': 'method_restricted',
+            'notes': [f'Métodos permitidos: {allowed_methods}']
+        }
+    
+    def _load_wordlist(self):
+        """Carrega e processa wordlist."""
+        if not self.wordlist_path:
+            return []
+        
+        try:
+            with open(self.wordlist_path, 'r', errors='ignore') as f:
+                words = [line.strip() for line in f 
+                        if line.strip() and not line.startswith('#')]
+            
+            # Remove duplicatas e ordena
+            words = list(set(words))
+            
+            # Adiciona extensões se habilitado
+            if self.extension_fuzzing:
+                words = self._add_file_extensions(words)
+            
+            return words
+            
+        except FileNotFoundError:
+            console.print(f"[bold red][!] Wordlist não encontrada: {self.wordlist_path}[/bold red]")
+            return []
+    
+    def _add_file_extensions(self, words):
+        """Adiciona extensões de arquivo baseadas nas tecnologias detectadas."""
+        extensions = ['.txt', '.html', '.php', '.asp', '.aspx', '.jsp', '.js', '.css']
+        
+        # Extensões específicas por tecnologia
+        if 'wordpress' in self.detected_technologies:
+            extensions.extend(['.php', '.inc', '.conf'])
+        if 'drupal' in self.detected_technologies:
+            extensions.extend(['.module', '.install', '.inc'])
+        if 'asp' in self.detected_technologies:
+            extensions.extend(['.asp', '.aspx', '.config'])
+        
+        extended_words = words.copy()
+        
+        # Adiciona extensões apenas para palavras sem extensão
+        for word in words:
+            if '.' not in word.split('/')[-1]:  # Se não tem extensão
+                for ext in extensions:
+                    extended_words.append(f"{word}{ext}")
+        
+        return extended_words
+    
+    def scan(self, recursive=False, max_depth=3, stealth=False, output_format='table'):
+        """Executa o scan principal de diretórios."""
+        self.recursive_enabled = recursive
+        self.max_depth = max_depth
+        self.stealth_mode = stealth
+        
+        console.print("-" * 60)
+        console.print(f"[*] Scanner Avançado de Diretórios - Spectra v3.2.6")
+        console.print(f"[*] Alvo: [bold cyan]{self.base_url}[/bold cyan]")
+        console.print(f"[*] Wordlist: [bold cyan]{self.wordlist_path}[/bold cyan]")
+        console.print(f"[*] Workers: [bold cyan]{self.workers}[/bold cyan]")
+        console.print(f"[*] Timeout: [bold cyan]{self.timeout}s[/bold cyan]")
+        
+        if recursive:
+            console.print(f"[*] Modo Recursivo: [bold green]Ativado[/bold green] (Máx: {max_depth})")
+        else:
+            console.print(f"[*] Modo Recursivo: [bold red]Desativado[/bold red]")
+        
+        if stealth:
+            console.print(f"[*] Modo Stealth: [bold yellow]Ativado[/bold yellow]")
+        
+        console.print("-" * 60)
+        
+        # Setup inicial
+        self._setup_session()
+        self._detect_waf()
+        self._detect_baseline_404()
+        
+        # Carrega wordlist
+        words = self._load_wordlist()
+        if not words:
+            console.print("[bold red][!] Nenhuma palavra encontrada na wordlist[/bold red]")
+            return []
+        
+        console.print(f"[*] Carregadas [bold cyan]{len(words)}[/bold cyan] palavras para teste")
+        
+        # Executa scan principal
+        self.results = self._scan_directory(self.base_url, words, depth=1)
+        
+        # Exibe resultados
+        self._display_results(output_format)
+        
+        # Estatísticas finais
+        console.print("-" * 60)
+        console.print(f"[*] Scan concluído:")
+        console.print(f"    • {len(self.results)} recursos encontrados")
+        console.print(f"    • {self.requests_made} requisições realizadas")
+        console.print(f"    • {self.false_positives_filtered} falsos positivos filtrados")
+        console.print(f"    • {len(self.errors)} erros encontrados")
+        
+        if self.errors:
+            console.print(f"[bold yellow][!] Primeiros 5 erros:[/bold yellow]")
+            for error in self.errors[:5]:
+                console.print(f"    [dim]{error}[/dim]")
+        
+        console.print("-" * 60)
+        
+        return self.results
+    
+    def _scan_directory(self, base_url, words, depth=1, visited=None):
+        """Executa scan de um diretório específico."""
+        if visited is None:
+            visited = set()
+        
+        if depth > self.max_depth:
+            return []
+        
+        results = []
+        
+        # Cria URLs para testar
+        urls_to_test = []
+        for word in words:
+            url = f"{base_url}/{word}"
+            if url not in visited:
+                urls_to_test.append(url)
+                visited.add(url)
+        
+        if not urls_to_test:
+            return results
+        
+        console.print(f"[*] Testando {len(urls_to_test)} URLs (profundidade {depth})...")
+        
+        # Executa requests em paralelo
+        with ThreadPoolExecutor(max_workers=self.workers) as executor:
+            future_to_url = {
+                executor.submit(self._make_request, url): url 
+                for url in urls_to_test
+            }
+            
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TimeRemainingColumn(),
+                console=console
+            ) as progress:
+                task = progress.add_task(f"[green]Scan profundidade {depth}...", total=len(future_to_url))
+                
+                directories_found = []
+                
+                for future in as_completed(future_to_url):
+                    url = future_to_url[future]
+                    response = future.result()
+                    
+                    # Analisa resposta
+                    analysis = self._analyze_response(response, url)
+                    
+                    if analysis:
+                        results.append(analysis)
+                        
+                        # Mostra resultado em tempo real
+                        status = analysis['status']
+                        notes = ' | '.join(analysis['notes']) if analysis['notes'] else ''
+                        
+                        if status == 200:
+                            color = "green"
+                        elif status == 403:
+                            color = "yellow"
+                        elif str(status).startswith('3'):
+                            color = "cyan"
+                        else:
+                            color = "white"
+                        
+                        console.print(f"[bold {color}][+] {url} ({status})[/bold {color}] {notes}")
+                        
+                        # Se é um diretório e modo recursivo está ativo
+                        if (self.recursive_enabled and 
+                            analysis['directory_type'] in ['directory', 'directory_listing'] and
+                            depth < self.max_depth):
+                            directories_found.append(url)
+                    
+                    progress.update(task, advance=1)
+                    
+                    if self.stealth_mode:
+                        time.sleep(0.1)  # Delay em modo stealth
+        
+        # Scan recursivo dos diretórios encontrados
+        if self.recursive_enabled and directories_found:
+            console.print(f"[*] Encontrados {len(directories_found)} diretórios para scan recursivo")
+            
+            for directory in directories_found:
+                recursive_results = self._scan_directory(directory, words, depth + 1, visited)
+                results.extend(recursive_results)
+        
+        return results
+    
+    def _display_results(self, output_format='table'):
+        """Exibe resultados em diferentes formatos."""
+        if output_format == 'json':
+            import json
+            print(json.dumps(self.results, indent=2, default=str))
+            return
+        elif output_format == 'xml':
+            print(self._generate_xml_output())
+            return
+        
+        if not self.results:
+            console.print("[bold yellow][-] Nenhum recurso encontrado.[/bold yellow]")
+            return
+        
+        # Organiza resultados por status
+        self.results.sort(key=lambda x: (x['status'], x['url']))
+        
+        # Tabela principal
+        table = Table(title=f"Recursos Descobertos - {self.base_url}")
+        table.add_column("URL", style="cyan", no_wrap=False)
+        table.add_column("Status", justify="center", style="green")
+        table.add_column("Tamanho", justify="right", style="yellow")
+        table.add_column("Tipo", style="magenta")
+        table.add_column("Notas", style="dim", max_width=40)
+        
+        for result in self.results:
+            url = result['url']
+            status = str(result['status'])
+            size = str(result['length'])
+            dir_type = result['directory_type']
+            notes = ' | '.join(result['notes']) if result['notes'] else ''
+            
+            table.add_row(url, status, size, dir_type, notes)
+        
+        console.print(table)
+        
+        # Estatísticas por tipo
+        type_stats = Counter(r['directory_type'] for r in self.results)
+        if type_stats:
+            console.print(f"\n[*] Tipos encontrados:")
+            for dir_type, count in type_stats.most_common():
+                console.print(f"    • {dir_type}: {count}")
+        
+        # Tecnologias detectadas
+        if self.detected_technologies:
+            console.print(f"\n[*] Tecnologias detectadas: [cyan]{', '.join(self.detected_technologies)}[/cyan]")
+    
+    def _generate_xml_output(self):
+        """Gera output em formato XML."""
+        xml_lines = ['<?xml version="1.0" encoding="UTF-8"?>']
+        xml_lines.append('<spectra_directory_scan>')
+        xml_lines.append(f'  <target>{self.base_url}</target>')
+        xml_lines.append(f'  <results count="{len(self.results)}">')
+        
+        for result in self.results:
+            xml_lines.append('    <resource>')
+            xml_lines.append(f'      <url>{result["url"]}</url>')
+            xml_lines.append(f'      <status>{result["status"]}</status>')
+            xml_lines.append(f'      <length>{result["length"]}</length>')
+            xml_lines.append(f'      <type>{result["directory_type"]}</type>')
+            xml_lines.append('    </resource>')
+        
+        xml_lines.append('  </results>')
+        xml_lines.append('</spectra_directory_scan>')
+        
+        return '\n'.join(xml_lines)
 
 def check_directory(url, session):
-    """Verifica se uma URL específica existe e retorna seu status e local de redirecionamento."""
-    try:
-        with session.get(url, timeout=5, allow_redirects=False, stream=True, verify=False) as response:
-            if response.status_code != 404:
-                location = response.headers.get('Location', '')
-                return (url, response.status_code, location)
-    except requests.exceptions.RequestException:
-        pass
+    """Função legacy para compatibilidade - usa a nova implementação."""
+    scanner = AdvancedDirectoryScanner(url.rsplit('/', 1)[0], None)
+    scanner.session = session
+    response = scanner._make_request(url)
+    
+    if response and response.status_code != 404:
+        location = response.headers.get('Location', '')
+        return (url, response.status_code, location)
+    
     return None
 
+def advanced_directory_scan(base_url, wordlist_path, workers=30, timeout=10, 
+                          recursive=False, max_depth=3, stealth=False, 
+                          extension_fuzzing=True, output_format='table'):
+    """Interface para o scanner avançado de diretórios."""
+    
+    # Normaliza URL
+    if not re.match(r'^https?://', base_url):
+        base_url = 'http://' + base_url
+    base_url = base_url.rstrip('/')
+    
+    # Cria e configura scanner
+    scanner = AdvancedDirectoryScanner(base_url, wordlist_path, workers, timeout)
+    scanner.extension_fuzzing = extension_fuzzing
+    
+    # Executa scan
+    return scanner.scan(recursive, max_depth, stealth, output_format)
+
 def discover_directories(base_url, wordlist, workers=30, recursive=False, max_depth=2, current_depth=1, visited_urls=None, internal_call=False):
-    """Executa a varredura de diretórios, com suporte a recursividade."""
+    """Função legacy para compatibilidade - usa implementação melhorada."""
     if visited_urls is None:
         visited_urls = set()
 
@@ -5029,6 +5683,18 @@ Exemplos de Uso:
   
   # Scan com configurações customizadas
   python %(prog)s scan -t server.local -p 1-65535 --timeout 0.5 --delay 10 --workers 200
+  
+  # Discovery básico de diretórios e arquivos
+  python %(prog)s discover -u https://example.com -w wordlists/common.txt
+  
+  # Discovery avançado com modo recursivo e detecção de WAF
+  python %(prog)s discover -u https://target.com -w wordlists/big.txt --recursive --max-depth 3 --workers 50
+  
+  # Discovery em modo stealth com fuzzing de extensões
+  python %(prog)s discover -u https://site.com -w wordlist.txt --stealth --timeout 15 --extensions
+  
+  # Discovery com output em JSON para integração
+  python %(prog)s discover -u https://api.example.com -w wordlists/api.txt --output json --no-extensions
 
   [ Utilitários ]
   # Visualiza o conteúdo de um ficheiro online (ex: robots.txt)
@@ -5116,12 +5782,17 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     parser_scan.add_argument('--output', choices=['table', 'json', 'xml'], default='table', help='Formato de output (padrão: table).')
     parser_scan.add_argument('--stealth', action='store_true', help='Modo stealth (timeout alto, delay, menos workers).')
 
-    parser_discover = subparsers.add_parser('discover', help='[Recon] Encontra diretórios e ficheiros num site.')
+    parser_discover = subparsers.add_parser('discover', help='[Recon] Scanner avançado de diretórios e arquivos com detecção inteligente.')
     parser_discover.add_argument('-u', '--url', required=True, help='URL base do site alvo.')
     parser_discover.add_argument('-w', '--wordlist', required=True, help='Caminho para o ficheiro da wordlist.')
     parser_discover.add_argument('--workers', type=int, default=30, help='Número de threads (padrão: 30).')
+    parser_discover.add_argument('--timeout', type=int, default=10, help='Timeout por requisição em segundos (padrão: 10).')
     parser_discover.add_argument('--recursive', action='store_true', help='Realizar uma varredura recursiva.')
-    parser_discover.add_argument('--max-depth', type=int, default=2, help='Profundidade máxima para recursão (padrão: 2).')
+    parser_discover.add_argument('--max-depth', type=int, default=3, help='Profundidade máxima para recursão (padrão: 3).')
+    parser_discover.add_argument('--stealth', action='store_true', help='Modo stealth com delays entre requisições.')
+    parser_discover.add_argument('--extensions', action='store_true', default=True, help='Ativa fuzzing de extensões baseado em tecnologias detectadas (padrão: ativo).')
+    parser_discover.add_argument('--no-extensions', dest='extensions', action='store_false', help='Desativa fuzzing de extensões.')
+    parser_discover.add_argument('--output', choices=['table', 'json', 'xml'], default='table', help='Formato de output (padrão: table).')
 
     parser_subdomain = subparsers.add_parser('subdomain', help='[Recon] Encontra subdomínios de um domínio.')
     parser_subdomain.add_argument('-d', '--domain', required=True, help='O domínio alvo para escanear.')
@@ -5196,19 +5867,25 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     elif args.tool == 'grab':
         grab_banner(args.target, args.port)
     elif args.tool == 'discover':
-        all_found_paths = discover_directories(args.url, args.wordlist, workers=args.workers, recursive=args.recursive, max_depth=args.max_depth)
-        if all_found_paths:
-            console.print("-" * 60)
-            table = Table(title="Relatório Final de Diretórios Encontrados")
-            table.add_column("URL Encontrada", style="cyan", no_wrap=False)
-            table.add_column("Status", justify="center", style="magenta")
-            table.add_column("Observação", style="green")
-            for url, status, location in sorted(all_found_paths, key=lambda x: x[1]):
-                obs = f"Redireciona para: {location}" if location else ""
-                table.add_row(url, str(status), obs)
-            console.print(table)
-        else:
-            console.print("[bold yellow][-] Nenhum diretório ou ficheiro encontrado.[/bold yellow]")
+        # Usa o scanner avançado de diretórios
+        all_found_paths = advanced_directory_scan(
+            base_url=args.url,
+            wordlist_path=args.wordlist,
+            workers=args.workers,
+            timeout=args.timeout,
+            recursive=args.recursive,
+            max_depth=args.max_depth,
+            stealth=args.stealth,
+            extension_fuzzing=args.extensions,
+            output_format=args.output
+        )
+        
+        # Output especial para JSON/XML já é tratado dentro da função
+        if args.output == 'json':
+            pass  # JSON já foi impresso pela função
+        elif args.output == 'xml':
+            pass  # XML já foi impresso pela função
+        # Para table format, a exibição também é feita pela função
     elif args.tool == 'meta':
         extract_metadata(args.url)
     elif args.tool == 'subdomain':

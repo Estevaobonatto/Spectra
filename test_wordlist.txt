@@ -1,0 +1,17 @@
+admin
+login
+index
+robots.txt
+sitemap.xml
+test
+api
+config
+backup
+uploads
+images
+css
+js
+assets
+wp-admin
+wp-content
+.env
