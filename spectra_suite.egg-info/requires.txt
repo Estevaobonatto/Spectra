@@ -1,0 +1,8 @@
+requests
+Pillow
+tqdm
+rich
+dnspython
+beautifulsoup4
+python-whois
+pyOpenSSL

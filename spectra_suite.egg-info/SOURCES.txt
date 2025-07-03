@@ -1,0 +1,9 @@
+README.md
+setup.py
+spectra.py
+spectra_suite.egg-info/PKG-INFO
+spectra_suite.egg-info/SOURCES.txt
+spectra_suite.egg-info/dependency_links.txt
+spectra_suite.egg-info/entry_points.txt
+spectra_suite.egg-info/requires.txt
+spectra_suite.egg-info/top_level.txt
