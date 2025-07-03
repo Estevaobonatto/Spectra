@@ -68,7 +68,7 @@ def display_banner():
 ░▒▓███████▓▒░░▒▓█▓▒░      ░▒▓████████▓▒░▒▓██████▓▒░  ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░ 
 
 """
-    version = "3.2.3" # Versão com correção no Brute Force
+    version = "3.2.5" # Versão com correção no Brute Force (Campos de Formulário)
     console.print(f"[bold cyan]{banner}[/bold cyan]")
     console.print(f"[bold]Spectra - Web Security Suite v{version}[/bold]")
     console.print("[italic]Uma ferramenta de hacking ético para análise de segurança web.[/italic]")
@@ -2221,7 +2221,7 @@ class BruteForceScanner:
             sys.exit(1)
 
     def _get_form_details(self):
-        """Obtém o URL de action, método e campos ocultos (ex: CSRF) do formulário."""
+        """Obtém o URL de action, método e todos os campos do formulário."""
         try:
             response = self.session.get(self.url, verify=False, timeout=10)
             soup = BeautifulSoup(response.content, 'html.parser')
@@ -2240,13 +2240,21 @@ class BruteForceScanner:
 
             action_url = urljoin(self.url, form.get('action', self.url))
             method = form.get('method', 'post').lower()
-            hidden_fields = {i.get('name'): i.get('value', '') for i in form.find_all('input', {'type': 'hidden'}) if i.get('name')}
-            return action_url, method, hidden_fields
+            
+            # Captura TODOS os campos de input, incluindo os de submit e hidden.
+            base_payload = {}
+            for input_tag in form.find_all('input'):
+                name = input_tag.get('name')
+                value = input_tag.get('value', '')
+                if name:
+                    base_payload[name] = value
+
+            return action_url, method, base_payload
         except requests.RequestException as e:
             console.print(f"[bold red][!] Erro ao obter a página de login: {e}[/bold red]")
             return None, None, None
 
-    def _test_credential(self, username, password, action_url, method, hidden_fields):
+    def _test_credential(self, username, password, action_url, method, base_payload):
         """Testa um único par de credenciais (usuário/senha), suportando GET e POST."""
         if self.found_credential:  # Se já encontrou, não faz mais testes
             return None
@@ -2254,16 +2262,20 @@ class BruteForceScanner:
         if self.delay > 0:
             time.sleep(self.delay)
 
-        payload = hidden_fields.copy()
-        payload[self.user_field] = username
-        payload[self.pass_field] = password
+        # Cria o payload para esta tentativa específica
+        payload = base_payload.copy() # Começa com todos os campos do formulário
+        payload[self.user_field] = username # Define o usuário da tentativa
+        payload[self.pass_field] = password # Define a senha da tentativa
+        
+        # Adiciona o cabeçalho Referer para simular melhor um navegador real
+        headers = {'Referer': self.url}
         
         try:
             response = None
             if method == 'post':
-                response = self.session.post(action_url, data=payload, verify=False, timeout=7, allow_redirects=True)
+                response = self.session.post(action_url, data=payload, headers=headers, verify=False, timeout=7, allow_redirects=True)
             else: # GET
-                response = self.session.get(action_url, params=payload, verify=False, timeout=7, allow_redirects=True)
+                response = self.session.get(action_url, params=payload, headers=headers, verify=False, timeout=7, allow_redirects=True)
 
             # **LÓGICA DE DETECÇÃO DE SUCESSO CORRIGIDA**
             # A lógica agora é mais explícita e robusta.
@@ -2316,17 +2328,19 @@ class BruteForceScanner:
             console.print("[bold red][!] Nenhuma tarefa de credencial foi gerada. Verifique os parâmetros e arquivos de entrada.[/bold red]")
             return
 
-        action_url, method, hidden_fields = self._get_form_details()
+        action_url, method, base_payload = self._get_form_details()
         if not action_url:
             return
 
         console.print(f"[*] Formulário encontrado. Action: [cyan]{action_url}[/cyan] | Método: [cyan]{method.upper()}[/cyan]")
-        if hidden_fields:
-            console.print(f"[*] Campos ocultos (CSRF?) encontrados e incluídos: [cyan]{', '.join(hidden_fields.keys())}[/cyan]")
+        
+        other_fields = {k: v for k, v in base_payload.items() if k not in [self.user_field, self.pass_field]}
+        if other_fields:
+            console.print(f"[*] Outros campos do formulário incluídos: [cyan]{', '.join(other_fields.keys())}[/cyan]")
 
         found_credential = None
         with ThreadPoolExecutor(max_workers=self.workers) as executor:
-            future_to_cred = {executor.submit(self._test_credential, user, pwd, action_url, method, hidden_fields): (user, pwd) for user, pwd in tasks}
+            future_to_cred = {executor.submit(self._test_credential, user, pwd, action_url, method, base_payload): (user, pwd) for user, pwd in tasks}
             
             with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TextColumn("[progress.percentage]{task.percentage:>3.0f}%"), TimeRemainingColumn(), console=console) as progress:
                 p_task = progress.add_task(f"[green]Testando {len(tasks)} credenciais...", total=len(tasks))
