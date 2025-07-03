@@ -1670,7 +1670,8 @@ def get_whois_info(domain):
         table.add_column("Valor", style="magenta")
 
         def format_date_entry(date_value):
-            if not date_value: return "N/A"
+            if not date_value:
+                return "N/A"
             date_obj = date_value[0] if isinstance(date_value, list) else date_value
             now = datetime.now()
             delta = abs(now - date_obj)
@@ -2074,13 +2075,32 @@ class AdvancedTechnologyDetector:
                     'v=spf1 include:spf.protection.outlook.com': {'name': 'Microsoft Office 365', 'category': 'cloud_services'},
                     'v=spf1 include:_spf.google.com': {'name': 'Google Workspace', 'category': 'cloud_services'}
                 }
-            }
-        }
-                '__cf_bm': {'name': 'Cloudflare Bot Management', 'category': 'security_technologies'},
-                '_shopify_s': {'name': 'Shopify', 'category': 'cms_platforms'},
-                'connect.sid': {'name': 'Express.js', 'category': 'backend_technologies'}
             },
-            
+            'cookies': {
+                'PHPSESSID': {'name': 'PHP', 'category': 'backend_technologies'},
+                'JSESSIONID': {'name': 'Java/JSP', 'category': 'backend_technologies'},
+                'ASP.NET_SessionId': {'name': 'ASP.NET', 'category': 'backend_technologies'},
+                'CFID': {'name': 'ColdFusion', 'category': 'backend_technologies'},
+                'wp-settings': {'name': 'WordPress', 'category': 'cms_platforms'},
+                '_ga': {'name': 'Google Analytics', 'category': 'analytics_tools'},
+                '_gtm': {'name': 'Google Tag Manager', 'category': 'analytics_tools'},
+                'fbp': {'name': 'Facebook Pixel', 'category': 'analytics_tools'},
+                '_pk_id': {'name': 'Matomo', 'category': 'analytics_tools'},
+                '_hjIncludedInSample': {'name': 'Hotjar', 'category': 'analytics_tools'},
+                'ajs_user_id': {'name': 'Segment', 'category': 'analytics_tools'},
+                'laravel_session': {'name': 'Laravel', 'category': 'backend_technologies'},
+                'ci_session': {'name': 'CodeIgniter', 'category': 'backend_technologies'},
+                'CAKEPHP': {'name': 'CakePHP', 'category': 'backend_technologies'},
+                'connect.sid': {'name': 'Express.js', 'category': 'backend_technologies'},
+                'csrftoken': {'name': 'Django', 'category': 'backend_technologies'},
+                '_rails_session': {'name': 'Ruby on Rails', 'category': 'backend_technologies'},
+                'sucuri_cloudproxy_uuid': {'name': 'Sucuri', 'category': 'security_technologies'},
+                'wf_loginalerted': {'name': 'Wordfence', 'category': 'security_technologies'},
+                'incap_ses': {'name': 'Imperva', 'category': 'security_technologies'},
+                '__cf_bm': {'name': 'Cloudflare Bot Management', 'category': 'security_technologies'},
+                '_shopify_s': {'name': 'Shopify', 'category': 'cms_platforms'}
+            },
+
             'javascript_globals': {
                 'jQuery': {'name': 'jQuery', 'category': 'javascript_libraries'},
                 'React': {'name': 'React', 'category': 'frontend_frameworks'},
@@ -2253,10 +2273,17 @@ class AdvancedTechnologyDetector:
         
         for url in all_urls:
             for pattern, tech_info in self.tech_database['html_patterns']['url_patterns'].items():
-                if re.search(pattern, url, re.IGNORECASE):
+                match = re.search(pattern, url, re.IGNORECASE)
+                if match:
+                    version = None
+                    if 'version_regex' in tech_info and tech_info['version_regex']:
+                        version_match = re.search(tech_info['version_regex'], url, re.IGNORECASE)
+                        if version_match:
+                            version = version_match.group(1) if version_match.groups() else None
+
                     detection = {
                         'name': tech_info['name'],
-                        'version': None,
+                        'version': version,
                         'confidence': 0.8,
                         'method': 'url_pattern',
                         'evidence': f'URL: {url}'
@@ -2265,7 +2292,8 @@ class AdvancedTechnologyDetector:
                     self._add_detection(tech_info['category'], detection)
                     
                     if verbose:
-                        console.print(f"[bold green][+] {tech_info['name']}[/bold green] (via URL pattern)")
+                        version_str = f" v{version}" if version else ""
+                        console.print(f"[bold green][+] {tech_info['name']}{version_str}[/bold green] (via URL pattern)")
     
     def _analyze_scripts_and_styles(self, soup, verbose=False):
         """Analisa scripts e estilos para detecção de tecnologias."""
@@ -6476,6 +6504,8 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
 
     parser_tech = subparsers.add_parser('tech-detect', help='[Recon] Deteta tecnologias web (servidor, framework, etc).')
     parser_tech.add_argument('-u', '--url', required=True, help='URL do site para analisar.')
+    parser_tech.add_argument('--verbose', action='store_true', help='Exibe informações detalhadas durante a detecção.')
+    parser_tech.add_argument('--output', choices=['table', 'json', 'xml'], default='table', help='Formato de output (padrão: table).')
 
     parser_waf = subparsers.add_parser('waf-detect', help='[Recon] Deteta a presença de um Web Application Firewall (WAF).')
     parser_waf.add_argument('-u', '--url', required=True, help='URL base do site para verificar.')
@@ -6564,7 +6594,7 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     elif args.tool == 'ssl-info':
         get_ssl_info(args.domain, args.port)
     elif args.tool == 'tech-detect':
-        detect_technologies(args.url)
+        detect_technologies(args.url, verbose=args.verbose, output_format=args.output)
     elif args.tool == 'waf-detect':
         detect_waf(args.url)
     elif args.tool == 'vuln-scan':
