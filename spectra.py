@@ -2585,13 +2585,87 @@ class BruteForceScanner:
 
         # Executa teste
         found_credential = None
-        with ThreadPoolExecutor(max_workers=self.workers) as executor:
-            future_to_cred = {executor.submit(self._test_credential, user, pwd, action_url, method, form_data): (user, pwd) for user, pwd in tasks}
-            
-            with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), 
-                         TextColumn("[progress.percentage]{task.percentage:>3.0f}%"), TimeRemainingColumn(), 
-                         console=console, transient=return_findings) as progress:
-                task_id = progress.add_task(f"[green]Testando credenciais...", total=len(tasks))
+        captcha_blocked = False
+        
+        # Para garantir que o delay seja respeitado, vamos controlar as submissões
+        if self.workers == 1:
+            # Modo sequencial: uma tentativa por vez respeitando o delay
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[bold blue]{task.description}"),
+                BarColumn(bar_width=40),
+                "[progress.percentage]{task.percentage:>3.1f}%",
+                "|",
+                TextColumn("[bold green]{task.completed}[/bold green]/[bold cyan]{task.total}[/bold cyan]"),
+                "|",
+                TextColumn("[yellow]{task.fields[current_combo]}[/yellow]"),
+                "|",
+                TextColumn("[red]Falhas: {task.fields[failures]}[/red]"),
+                "|",
+                TimeRemainingColumn(),
+                console=console,
+                transient=return_findings
+            ) as progress:
+                task_id = progress.add_task(
+                    "[bold cyan]Testando credenciais sequencialmente...",
+                    total=len(tasks),
+                    current_combo="Iniciando...",
+                    failures=0
+                )
+                
+                for i, (user, pwd) in enumerate(tasks):
+                    if self._stop_event.is_set():
+                        break
+                    
+                    current_attempt = f"{user}:{pwd[:3]}{'*' * max(0, len(pwd) - 3)}"
+                    progress.update(task_id, current_combo=f"Testando {current_attempt}")
+                    
+                    result = self._test_credential(user, pwd, action_url, method, form_data, cookies)
+                    
+                    if result == 'captcha':
+                        captcha_blocked = True
+                        self._log("CAPTCHA blocking detected, stopping attack", 'warning')
+                        progress.update(task_id, current_combo="[red]CAPTCHA detectado![/red]")
+                        break
+                    elif result:
+                        found_credential = result
+                        progress.update(task_id, current_combo=f"[bold green]✓ {current_attempt}[/bold green]")
+                        break
+                    else:
+                        self.statistics['failed_attempts'] += 1
+                        progress.update(
+                            task_id, 
+                            advance=1,
+                            current_combo=current_attempt,
+                            failures=self.statistics['failed_attempts']
+                        )
+        else:
+            # Modo paralelo: múltiplas tentativas simultâneas (delay menos preciso)
+            with ThreadPoolExecutor(max_workers=self.workers) as executor:
+                future_to_cred = {executor.submit(self._test_credential, user, pwd, action_url, method, form_data, cookies): (user, pwd) for user, pwd in tasks}
+                
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[bold blue]{task.description}"),
+                    BarColumn(bar_width=40),
+                    "[progress.percentage]{task.percentage:>3.1f}%",
+                    "|",
+                    TextColumn("[bold green]{task.completed}[/bold green]/[bold cyan]{task.total}[/bold cyan]"),
+                    "|",
+                    TextColumn("[yellow]{task.fields[current_combo]}[/yellow]"),
+                    "|",
+                    TextColumn("[red]Falhas: {task.fields[failures]}[/red]"),
+                    "|",
+                    TimeRemainingColumn(),
+                    console=console,
+                    transient=return_findings
+                ) as progress:
+                    task_id = progress.add_task(
+                        "[bold cyan]Testando credenciais em paralelo...",
+                        total=len(tasks),
+                        current_combo="Iniciando...",
+                        failures=0
+                    )
                 
                 for future in as_completed(future_to_cred):
                     if self._stop_event.is_set():
@@ -2602,18 +2676,44 @@ class BruteForceScanner:
                     
                     try:
                         result = future.result(timeout=1)
-                        if result:
+                        cred = future_to_cred[future]
+                        current_attempt = f"{cred[0]}:{cred[1][:3]}{'*' * max(0, len(cred[1]) - 3)}"
+                        
+                        if result == 'captcha':
+                            captcha_blocked = True
+                            self._log("CAPTCHA blocking detected, stopping attack", 'warning')
+                            progress.update(task_id, current_combo="[red]CAPTCHA detectado![/red]")
+                            for f in future_to_cred:
+                                if not f.done():
+                                    f.cancel()
+                            break
+                        elif result:
                             found_credential = result
+                            progress.update(task_id, current_combo=f"[bold green]✓ {current_attempt}[/bold green]")
                             # Cancela tarefas pendentes
                             for f in future_to_cred:
                                 if not f.done():
                                     f.cancel()
                             break
-                        
-                        progress.update(task_id, advance=1)
+                        else:
+                            self.statistics['failed_attempts'] += 1
+                            progress.update(
+                                task_id, 
+                                advance=1,
+                                current_combo=current_attempt,
+                                failures=self.statistics['failed_attempts']
+                            )
                         
                     except (concurrent.futures.TimeoutError, Exception):
-                        progress.update(task_id, advance=1)
+                        cred = future_to_cred[future]
+                        current_attempt = f"{cred[0]}:{cred[1][:3]}{'*' * max(0, len(cred[1]) - 3)}"
+                        self.statistics['failed_attempts'] += 1
+                        progress.update(
+                            task_id, 
+                            advance=1,
+                            current_combo=f"[red]Timeout: {current_attempt}[/red]",
+                            failures=self.statistics['failed_attempts']
+                        )
 
         # Processa resultados
         if found_credential:
@@ -2648,27 +2748,218 @@ class BruteForceScanner:
         
         console.print("-" * 60)
 
+def validate_brute_force_args(url, user_field, pass_field, username, user_list_path, pass_wordlist_path,
+                              failure_string, success_string, workers, delay, attack_mode, max_retries,
+                              backoff_factor, session_pool_size):
+    """Valida argumentos do brute force e fornece feedback detalhado."""
+    errors = []
+    warnings = []
+    
+    # Validação de URL
+    if not url:
+        errors.append("URL é obrigatória")
+    elif not url.startswith(('http://', 'https://')):
+        warnings.append(f"URL '{url}' não possui protocolo, assumindo http://")
+    
+    # Validação de campos do formulário
+    if not user_field or not user_field.strip():
+        errors.append("Campo de usuário (--user-field) é obrigatório")
+    if not pass_field or not pass_field.strip():
+        errors.append("Campo de senha (--pass-field) é obrigatório")
+    
+    # Validação de wordlist
+    if not pass_wordlist_path:
+        errors.append("Wordlist de senhas (-w/--wordlist) é obrigatória")
+    elif not os.path.exists(pass_wordlist_path):
+        errors.append(f"Arquivo de wordlist '{pass_wordlist_path}' não encontrado")
+    elif os.path.getsize(pass_wordlist_path) == 0:
+        errors.append(f"Arquivo de wordlist '{pass_wordlist_path}' está vazio")
+    
+    # Validação de strings de detecção
+    if not failure_string and not success_string:
+        errors.append("Pelo menos um de --failure-string ou --success-string deve ser fornecido")
+    
+    # Validação de modo de ataque e usuários
+    if attack_mode == 'battering_ram':
+        if not username:
+            errors.append("Modo 'battering_ram' requer --username")
+    elif attack_mode in ['pitchfork', 'cluster_bomb']:
+        if not user_list_path:
+            errors.append(f"Modo '{attack_mode}' requer --user-list")
+        elif not os.path.exists(user_list_path):
+            errors.append(f"Arquivo de usuários '{user_list_path}' não encontrado")
+        elif os.path.getsize(user_list_path) == 0:
+            errors.append(f"Arquivo de usuários '{user_list_path}' está vazio")
+    
+    # Validação de parâmetros numéricos
+    if workers <= 0 or workers > 50:
+        warnings.append(f"Número de workers ({workers}) fora do recomendado (1-50)")
+    if delay < 0:
+        errors.append("Delay não pode ser negativo")
+    elif delay < 0.1:
+        warnings.append(f"Delay muito baixo ({delay}s) pode causar rate limiting")
+    if max_retries <= 0 or max_retries > 10:
+        warnings.append(f"Max retries ({max_retries}) fora do recomendado (1-10)")
+    if backoff_factor <= 1.0 or backoff_factor > 5.0:
+        warnings.append(f"Backoff factor ({backoff_factor}) fora do recomendado (1.1-5.0)")
+    if session_pool_size <= 0 or session_pool_size > 100:
+        warnings.append(f"Session pool size ({session_pool_size}) fora do recomendado (1-100)")
+    
+    return errors, warnings
+
+def print_brute_force_config(url, user_field, pass_field, username, user_list_path, pass_wordlist_path,
+                             failure_string, success_string, workers, delay, attack_mode, max_retries,
+                             backoff_factor, session_pool_size, enable_logging):
+    """Exibe configuração detalhada do ataque de força bruta."""
+    console.print("\n[bold cyan]═══ CONFIGURAÇÃO DO ATAQUE ═══[/bold cyan]")
+    
+    # Informações básicas
+    config_table = Table(title="Parâmetros Principais", show_header=True, header_style="bold magenta")
+    config_table.add_column("Parâmetro", style="cyan", width=20)
+    config_table.add_column("Valor", style="yellow", width=40)
+    config_table.add_column("Descrição", style="white", width=30)
+    
+    config_table.add_row("URL Alvo", url, "Página de login")
+    config_table.add_row("Campo Usuário", user_field, "Nome do campo no HTML")
+    config_table.add_row("Campo Senha", pass_field, "Nome do campo no HTML")
+    config_table.add_row("Modo de Ataque", attack_mode, "Estratégia de teste")
+    
+    if attack_mode == 'battering_ram' and username:
+        config_table.add_row("Usuário Fixo", username, "Usuário para testar")
+    elif user_list_path:
+        config_table.add_row("Lista Usuários", user_list_path, "Arquivo com usuários")
+    
+    config_table.add_row("Wordlist Senhas", pass_wordlist_path, "Arquivo com senhas")
+    
+    if failure_string:
+        config_table.add_row("String Falha", failure_string, "Indica login falhado")
+    if success_string:
+        config_table.add_row("String Sucesso", success_string, "Indica login bem-sucedido")
+    
+    console.print(config_table)
+    
+    # Parâmetros avançados
+    advanced_table = Table(title="Parâmetros Avançados", show_header=True, header_style="bold green")
+    advanced_table.add_column("Parâmetro", style="cyan", width=20)
+    advanced_table.add_column("Valor", style="yellow", width=15)
+    advanced_table.add_column("Recomendação", style="white", width=35)
+    
+    advanced_table.add_row("Workers", str(workers), "1-5 para sites pequenos")
+    advanced_table.add_row("Delay", f"{delay}s", "1.5-3.0s para evitar bloqueios")
+    advanced_table.add_row("Max Retries", str(max_retries), "3-5 para conexões instáveis")
+    advanced_table.add_row("Backoff Factor", str(backoff_factor), "1.5-3.0 para retry suave")
+    advanced_table.add_row("Session Pool", str(session_pool_size), "5-20 para performance")
+    advanced_table.add_row("Logging", "Ativado" if enable_logging else "Desativado", "Ative para debugging")
+    
+    console.print(advanced_table)
+    
+    # Estatísticas da wordlist
+    try:
+        with open(pass_wordlist_path, 'r', errors='ignore') as f:
+            passwords = [line.strip() for line in f if line.strip()]
+        
+        wordlist_info = Table(title="Informações da Wordlist", show_header=True, header_style="bold yellow")
+        wordlist_info.add_column("Métrica", style="cyan")
+        wordlist_info.add_column("Valor", style="yellow")
+        
+        wordlist_info.add_row("Total de Senhas", str(len(passwords)))
+        if passwords:
+            wordlist_info.add_row("Senha Mais Curta", str(min(len(p) for p in passwords)))
+            wordlist_info.add_row("Senha Mais Longa", str(max(len(p) for p in passwords)))
+            wordlist_info.add_row("Tamanho Médio", f"{sum(len(p) for p in passwords) / len(passwords):.1f}")
+        
+        console.print(wordlist_info)
+    except Exception:
+        pass
+    
+    # Informações de usuários
+    if attack_mode == 'battering_ram' and username:
+        total_combinations = len(passwords) if 'passwords' in locals() else 0
+    elif user_list_path and os.path.exists(user_list_path):
+        try:
+            with open(user_list_path, 'r', errors='ignore') as f:
+                users = [line.strip() for line in f if line.strip()]
+            if attack_mode == 'cluster_bomb':
+                total_combinations = len(users) * len(passwords) if 'passwords' in locals() else 0
+            else:  # pitchfork
+                total_combinations = min(len(users), len(passwords)) if 'passwords' in locals() else 0
+        except Exception:
+            total_combinations = 0
+    else:
+        total_combinations = 0
+    
+    if total_combinations > 0:
+        estimated_time = (total_combinations * delay) / workers
+        console.print(f"\n[bold white]Total de Combinações:[/bold white] [yellow]{total_combinations}[/yellow]")
+        console.print(f"[bold white]Tempo Estimado:[/bold white] [yellow]{estimated_time:.1f}s ({estimated_time/60:.1f}min)[/yellow]")
+    
+    console.print("\n[bold red]⚠️  AVISO:[/bold red] [white]Use apenas em sistemas que você possui ou tem autorização explícita para testar[/white]")
+    console.print("[bold cyan]═══════════════════════════════[/bold cyan]\n")
+
 def brute_force_scan(url, user_field, pass_field, username, user_list_path, pass_wordlist_path,
                      failure_string, success_string, workers, delay, attack_mode, max_retries=3,
                      backoff_factor=2.0, session_pool_size=10, enable_logging=False):
-    """Executa ataque de força bruta em formulários de login com capacidades aprimoradas."""
+    """Executa ataque de força bruta em formulários de login com capacidades aprimoradas e validações robustas."""
+    
+    # Valida argumentos
+    errors, warnings = validate_brute_force_args(url, user_field, pass_field, username, user_list_path, 
+                                                 pass_wordlist_path, failure_string, success_string, 
+                                                 workers, delay, attack_mode, max_retries, 
+                                                 backoff_factor, session_pool_size)
+    
+    # Exibe erros e para execução se houver
+    if errors:
+        console.print("\n[bold red]═══ ERROS DE VALIDAÇÃO ═══[/bold red]")
+        for error in errors:
+            console.print(f"[bold red]✗[/bold red] {error}")
+        console.print("[bold red]═══════════════════════════[/bold red]")
+        return
+    
+    # Exibe avisos se houver
+    if warnings:
+        console.print("\n[bold yellow]═══ AVISOS ═══[/bold yellow]")
+        for warning in warnings:
+            console.print(f"[bold yellow]⚠[/bold yellow] {warning}")
+        console.print("[bold yellow]═════════════[/bold yellow]")
+    
+    # Exibe configuração detalhada
+    print_brute_force_config(url, user_field, pass_field, username, user_list_path, pass_wordlist_path,
+                            failure_string, success_string, workers, delay, attack_mode, max_retries,
+                            backoff_factor, session_pool_size, enable_logging)
+    
+    # Confirmação do usuário para ataques grandes
+    try:
+        with open(pass_wordlist_path, 'r', errors='ignore') as f:
+            passwords = [line.strip() for line in f if line.strip()]
+        
+        if attack_mode == 'battering_ram':
+            total_combinations = len(passwords)
+        elif attack_mode == 'cluster_bomb' and user_list_path:
+            with open(user_list_path, 'r', errors='ignore') as f:
+                users_count = len([line.strip() for line in f if line.strip()])
+            total_combinations = users_count * len(passwords)
+        else:
+            total_combinations = len(passwords)
+        
+        if total_combinations > 100:
+            console.print(f"\n[bold yellow]⚠️  Ataque com {total_combinations} combinações pode ser detectado![/bold yellow]")
+            response = input("Deseja continuar? (s/N): ").strip().lower()
+            if response not in ['s', 'sim', 'y', 'yes']:
+                console.print("[yellow]Ataque cancelado pelo usuário.[/yellow]")
+                return
+    except Exception:
+        pass
     
     # Prepara lista de usuários baseada no modo de ataque
     users = []
     if attack_mode == 'battering_ram':
-        if not username:
-            console.print("[bold red][!] Modo 'battering_ram' requer --username[/bold red]")
-            return
         users = [username]
     elif attack_mode in ['pitchfork', 'cluster_bomb']:
-        if not user_list_path:
-            console.print(f"[bold red][!] Modo '{attack_mode}' requer --user-list[/bold red]")
-            return
         try:
             with open(user_list_path, 'r', errors='ignore') as f:
                 users = [line.strip() for line in f if line.strip()]
-        except FileNotFoundError:
-            console.print(f"[bold red][!] Arquivo de usuários não encontrado: {user_list_path}[/bold red]")
+        except Exception as e:
+            console.print(f"[bold red][!] Erro ao ler arquivo de usuários: {e}[/bold red]")
             return
 
     # Cria e executa scanner
@@ -2897,8 +3188,23 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     elif args.tool == 'cve-scan':
         cve_scan(args.product, args.version, args.min_cvss, args.no_cache)
     elif args.tool == 'brute-force':
+        # Validação inicial rápida
         if not args.failure_string and not args.success_string:
-            parser.error("Pelo menos um de --failure-string ou --success-string deve ser fornecido.")
+            console.print("\n[bold red]✗ Erro:[/bold red] Pelo menos um de --failure-string ou --success-string deve ser fornecido.")
+            console.print("[dim]Use --help para ver exemplos de uso.[/dim]\n")
+            return
+        
+        # Validação de arquivos essenciais
+        if not os.path.exists(args.wordlist):
+            console.print(f"\n[bold red]✗ Erro:[/bold red] Arquivo de wordlist '{args.wordlist}' não encontrado.")
+            console.print("[dim]Verifique o caminho do arquivo e tente novamente.[/dim]\n")
+            return
+        
+        if args.attack_mode in ['pitchfork', 'cluster_bomb'] and args.user_list and not os.path.exists(args.user_list):
+            console.print(f"\n[bold red]✗ Erro:[/bold red] Arquivo de usuários '{args.user_list}' não encontrado.")
+            console.print("[dim]Verifique o caminho do arquivo e tente novamente.[/dim]\n")
+            return
+        
         brute_force_scan(args.url, args.user_field, args.pass_field, args.username, args.user_list, args.wordlist, 
                          args.failure_string, args.success_string, args.workers, args.delay, args.attack_mode,
                          args.max_retries, args.backoff_factor, args.session_pool_size, args.enable_logging)
