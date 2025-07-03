@@ -67,7 +67,7 @@ def display_banner():
 ░▒▓███████▓▒░░▒▓█▓▒░      ░▒▓████████▓▒░▒▓██████▓▒░  ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░ 
 
 """
-    version = "2.8" # Versão atualizada com API NVD
+    version = "2.9" # Versão atualizada com melhorias no SQLi Scanner
     console.print(f"[bold cyan]{banner}[/bold cyan]")
     console.print(f"[bold]Spectra - Web Security Suite v{version}[/bold]")
     console.print("[italic]Uma ferramenta de hacking ético para análise de segurança web.[/italic]")
@@ -1012,23 +1012,41 @@ def vuln_scan(url):
 # --- MÓDULO 14: SCANNER DE SQL INJECTION MELHORADO ---
 
 class SQLiScanner:
-    def __init__(self, base_url):
+    """Classe para realizar scans de SQL Injection com múltiplos níveis e técnicas."""
+
+    def __init__(self, base_url, level=1, dbms=None):
         self.base_url = base_url
         self.session = requests.Session()
         self.session.headers.update({'User-Agent': 'Mozilla/5.0'})
         self.vulnerable_points = []
+        self.level = level
+        self.dbms = dbms.lower() if dbms else None
+        
+        # Payloads estruturados por tipo para serem ativados por nível
         self.payloads = {
-            "error_based": ["'", "\"", "')"],
-            "boolean_based": {"true": ["' OR '1'='1", "' OR 1=1 -- ", "' OR 1=1 #"], "false": ["' AND '1'='2", "' AND 1=2 -- ", "' AND 1=2 #"]},
-            "time_based": {"MySQL": "SLEEP(5)", "PostgreSQL": "pg_sleep(5)", "SQL Server": "WAITFOR DELAY '0:0:5'"}
+            "error_based": ["'", "\"", "')", "';", ";"],
+            "boolean_based": {
+                "true": ["' OR '1'='1", " OR 1=1", "' OR 1=1--", " OR 1=1--", "' OR 1=1#", " OR 1=1#"],
+                "false": ["' AND '1'='2", " AND 1=2", "' AND 1=2--", " AND 1=2--", "' AND 1=2#", " AND 1=2#"]
+            },
+            "time_based": {
+                "mysql": "' AND SLEEP(5)--",
+                "postgresql": "' AND pg_sleep(5)--",
+                "mssql": "' WAITFOR DELAY '0:0:5'--",
+                "oracle": "' AND DBMS_LOCK.SLEEP(5)--",
+                "sqlite": "' AND LIKE('ABC',UPPER(HEX(RANDOMBLOB(1000000000/2))))--"
+            }
         }
         self.error_patterns = {
-            "MySQL": r"you have an error in your sql syntax|warning: mysql", "PostgreSQL": r"postgres[ql]? error|unterminated quoted string",
-            "Microsoft SQL Server": r"unclosed quotation mark|incorrect syntax near", "Oracle": r"ora-[0-9][0-9][0-9][0-9]|quoted string not properly terminated",
-            "SQLite": r"sqlite error|near \".*?\": syntax error"
+            "mysql": r"you have an error in your sql syntax|warning: mysql|unknown column|illegal mix of collations",
+            "postgresql": r"postgres[ql]? error|unterminated quoted string|syntax error at or near",
+            "mssql": r"unclosed quotation mark|incorrect syntax near|conversion failed when converting",
+            "oracle": r"ora-[0-9][0-9][0-9][0-9]|quoted string not properly terminated",
+            "sqlite": r"sqlite error|near \".*?\": syntax error"
         }
 
     def _get_page_content(self, url, method='get', data=None, timeout=7):
+        """Obtém o conteúdo de uma página e o tempo de resposta."""
         try:
             start_time = time.time()
             if method.lower() == 'get': response = self.session.get(url, params=data, timeout=timeout, verify=False)
@@ -1038,60 +1056,83 @@ class SQLiScanner:
         except requests.exceptions.RequestException: return None, 0
 
     def _add_finding(self, risk, v_type, detail, recommendation):
+        """Adiciona uma nova descoberta, evitando duplicados."""
         finding = {"Risco": risk, "Tipo": v_type, "Detalhe": detail, "Recomendação": recommendation}
         if finding not in self.vulnerable_points: self.vulnerable_points.append(finding)
 
     def _test_param(self, url, param, original_value, method, form_data=None):
-        if self._test_error_based(url, param, original_value, method, form_data): return
-        if self._test_boolean_based(url, param, original_value, method, form_data): return
-        self._test_time_based(url, param, original_value, method, form_data)
+        """Testa um único parâmetro com base no nível de scan definido."""
+        if self.level >= 1:
+            if self._test_error_based(url, param, original_value, method, form_data): return
+        if self.level >= 2:
+            if self._test_boolean_based(url, param, original_value, method, form_data): return
+        if self.level >= 3:
+            if self._test_time_based(url, param, original_value, method, form_data): return
 
     def _test_error_based(self, url, param, original_value, method, form_data=None):
+        """Testa a injeção baseada em erros."""
         for payload in self.payloads["error_based"]:
             test_value = (original_value or "") + payload
             data = {param: test_value} if method == 'get' else {**(form_data or {}), param: test_value}
             content, _ = self._get_page_content(url, method=method, data=data)
             if content:
-                for db, pattern in self.error_patterns.items():
+                # Se um DBMS específico for alvo, apenas verifica os seus padrões de erro
+                db_patterns = {self.dbms: self.error_patterns[self.dbms]} if self.dbms and self.dbms in self.error_patterns else self.error_patterns
+                for db, pattern in db_patterns.items():
                     if re.search(pattern, content, re.IGNORECASE):
-                        self._add_finding("Alto", "SQL Injection", f"Parâmetro '{param}' em {url} ({method.upper()})", f"Técnica: Error-Based. Payload: '{payload}'. BD: {db}")
+                        self._add_finding("Alto", "SQL Injection", f"Parâmetro '{param}' em {url} ({method.upper()})", f"Técnica: Error-Based. Payload: '{payload}'. BD Provável: {db.capitalize()}")
                         return True
         return False
 
     def _test_boolean_based(self, url, param, original_value, method, form_data=None):
+        """Testa a injeção booleana cega."""
         original_data = {param: original_value} if method == 'get' else form_data
         original_content, _ = self._get_page_content(url, method=method, data=original_data)
         if not original_content: return False
+        
         for payload in self.payloads["boolean_based"]["true"]:
             test_value = (original_value or "") + payload
             true_data = {param: test_value} if method == 'get' else {**(form_data or {}), param: test_value}
             true_content, _ = self._get_page_content(url, method=method, data=true_data)
+            
             if true_content and SequenceMatcher(None, original_content, true_content).ratio() > 0.95:
                 for false_payload in self.payloads["boolean_based"]["false"]:
                     false_test_value = (original_value or "") + false_payload
                     false_data = {param: false_test_value} if method == 'get' else {**(form_data or {}), param: false_test_value}
                     false_content, _ = self._get_page_content(url, method=method, data=false_data)
+                    
                     if false_content and SequenceMatcher(None, original_content, false_content).ratio() < 0.9:
                         self._add_finding("Alto", "SQL Injection", f"Parâmetro '{param}' em {url} ({method.upper()})", f"Técnica: Boolean-Based. Payload: '{payload}'")
                         return True
         return False
 
     def _test_time_based(self, url, param, original_value, method, form_data=None):
-        for db, sleep_command in self.payloads["time_based"].items():
-            for payload_template in ["' AND {sleep} -- ", "\"' AND {sleep} -- "]:
-                payload = payload_template.format(sleep=sleep_command)
-                test_value = (original_value or "") + payload
-                data = {param: test_value} if method == 'get' else {**(form_data or {}), param: test_value}
-                _, duration = self._get_page_content(url, method=method, data=data, timeout=10)
-                if duration > 4.5:
-                    self._add_finding("Alto", "SQL Injection", f"Parâmetro '{param}' em {url} ({method.upper()})", f"Técnica: Time-Based Blind. Payload: '{payload}'. BD: {db}")
-                    return True
+        """Testa a injeção cega baseada em tempo."""
+        payloads_to_test = {}
+        if self.dbms:
+            if self.dbms in self.payloads["time_based"]:
+                payloads_to_test[self.dbms] = self.payloads["time_based"][self.dbms]
+        else:
+            payloads_to_test = self.payloads["time_based"]
+
+        for db, payload_template in payloads_to_test.items():
+            test_value = (original_value or "") + payload_template
+            data = {param: test_value} if method == 'get' else {**(form_data or {}), param: test_value}
+            _, duration = self._get_page_content(url, method=method, data=data, timeout=10)
+            
+            if duration > 4.5: # Menor que o sleep para contar com a latência
+                self._add_finding("Alto", "SQL Injection", f"Parâmetro '{param}' em {url} ({method.upper()})", f"Técnica: Time-Based Blind. Payload: '{payload_template}'. BD Provável: {db.capitalize()}")
+                return True
         return False
 
     def run_scan(self, return_findings=False):
+        """Executa o scan de SQLi, descobrindo pontos de entrada e testando-os."""
         if not return_findings:
             console.print("-" * 60)
             console.print(f"[*] Executando scanner de SQL Injection em: [bold cyan]{self.base_url}[/bold cyan]")
+            console.print(f"[*] Nível de Scan: [bold cyan]{self.level}[/bold cyan]")
+            if self.dbms:
+                console.print(f"[*] DBMS Alvo: [bold cyan]{self.dbms}[/bold cyan]")
             console.print("-" * 60)
         try:
             with console.status("[bold green]Coletando pontos de entrada (links e formulários)...[/bold green]"):
@@ -1131,6 +1172,7 @@ class SQLiScanner:
         self._present_findings()
 
     def _present_findings(self):
+        """Apresenta os resultados do scan de SQLi."""
         console.print("-" * 60)
         if not self.vulnerable_points:
             console.print("[bold green][+] Nenhuma vulnerabilidade de SQL Injection foi encontrada.[/bold green]")
@@ -1142,8 +1184,8 @@ class SQLiScanner:
             console.print(table)
         console.print("-" * 60)
 
-def sql_injection_scan(url):
-    SQLiScanner(url).run_scan()
+def sql_injection_scan(url, level=1, dbms=None):
+    SQLiScanner(url, level=level, dbms=dbms).run_scan()
 
 # --- MÓDULO 15: SCANNER DE XSS (CROSS-SITE SCRIPTING) ---
 
@@ -2124,6 +2166,9 @@ Exemplos de Uso:
   python %(prog)s full-scan -u http://testphp.vulnweb.com/ --no-cache
 
   [ Scanning de Vulnerabilidades ]
+  # Procura por falhas de SQL Injection com nível de agressividade 3 e focado em MySQL
+  python %(prog)s sql-scan -u "http://testphp.vulnweb.com/listproducts.php?cat=1" --level 3 --dbms mysql
+
   # Procura por CVEs para OpenSSL, ignorando o cache e filtrando por CVSS
   python %(prog)s cve-scan --product openssl --version 1.0.2 --min-cvss 7.0 --no-cache
 
@@ -2149,6 +2194,9 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     # --- Grupo de Scanning de Vulnerabilidades ---
     parser_sql = subparsers.add_parser('sql-scan', help='[Scan] Procura por falhas de SQL Injection.')
     parser_sql.add_argument('-u', '--url', required=True, help='URL base para iniciar a verificação.')
+    parser_sql.add_argument('--level', type=int, default=1, choices=range(1, 6), help='Nível de agressividade do scan (1-5, padrão: 1).')
+    parser_sql.add_argument('--dbms', help='Força o uso de payloads para um DBMS específico (ex: mysql, mssql, oracle).')
+
 
     parser_xss = subparsers.add_parser('xss-scan', help='[Scan] Procura por falhas de Cross-Site Scripting (XSS).')
     parser_xss.add_argument('-u', '--url', required=True, help='URL base para iniciar a verificação.')
@@ -2212,7 +2260,7 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     parser_crawl.add_argument('--depth', type=int, default=1, help='Profundidade máxima do crawling (padrão: 1).')
     parser_crawl.add_argument('-o', '--output', help='Arquivo para salvar a lista de recursos encontrados.')
 
-    parser_whois = subparsers.add_parser('whois', help='[Recon] Obtém informações de registro WHOIS de um domínio.')
+    parser_whois = subparsers.add_parser('whois', help='[Recon] Obtém informações de registo WHOIS de um domínio.')
     parser_whois.add_argument('-d', '--domain', required=True, help='Domínio para consultar o WHOIS.')
 
     parser_tech = subparsers.add_parser('tech-detect', help='[Recon] Deteta tecnologias web (servidor, framework, etc).')
@@ -2280,7 +2328,7 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     elif args.tool == 'vuln-scan':
         vuln_scan(args.url)
     elif args.tool == 'sql-scan':
-        sql_injection_scan(args.url)
+        sql_injection_scan(args.url, args.level, args.dbms)
     elif args.tool == 'xss-scan':
         xss_scan(args.url)
     elif args.tool == 'cmd-scan':
