@@ -21,7 +21,6 @@ try:
     import requests
     from PIL import Image
     from PIL.ExifTags import TAGS
-    from tqdm import tqdm
     from rich.console import Console
     from rich.table import Table
     from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeRemainingColumn
@@ -907,7 +906,7 @@ class VulnerabilityScanner:
         for cookie in self.response.cookies:
             if not cookie.secure and urlparse(self.url).scheme == 'https':
                 self._add_finding("Baixo", "Cookie Inseguro", f"O cookie '{cookie.name}' não possui a flag 'Secure'.", "Adicionar a flag 'Secure' a todos os cookies em sites HTTPS.")
-            if not cookie.has_nonstandard_attr('httponly') and cookie.name.lower() not in ['_ga']:
+            if not getattr(cookie, 'has_nonstandard_attr', lambda x: False)('httponly') and not getattr(cookie, '_rest', {}).get('httponly', False) and cookie.name.lower() not in ['_ga']:
                 self._add_finding("Baixo", "Cookie Inseguro", f"O cookie '{cookie.name}' não possui a flag 'HttpOnly'.", "Adicionar a flag 'HttpOnly' para prevenir acesso via JavaScript.")
     
     def _check_info_disclosure(self):
@@ -1592,7 +1591,7 @@ class SSRFScanner:
                 if method.lower() == 'get': response = self.session.get(url, params=test_data, timeout=7, verify=False)
                 else:
                     post_payload = form_data.copy()
-                    post_payload[param] = self.payload
+                    post_payload[param] = payload
                     response = self.session.post(url, data=post_payload, timeout=7, verify=False)
                 
                 if "It works!" in response.text or "Apache" in response.text or "instance-id" in response.text:
