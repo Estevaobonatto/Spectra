@@ -67,7 +67,7 @@ def display_banner():
 ░▒▓███████▓▒░░▒▓█▓▒░      ░▒▓████████▓▒░▒▓██████▓▒░  ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░ 
 
 """
-    version = "3.0" # Versão atualizada com melhorias no XSS Scanner
+    version = "3.1" # Versão atualizada com melhorias no XSS Scanner (Stored XSS)
     console.print(f"[bold cyan]{banner}[/bold cyan]")
     console.print(f"[bold]Spectra - Web Security Suite v{version}[/bold]")
     console.print("[italic]Uma ferramenta de hacking ético para análise de segurança web.[/italic]")
@@ -1190,12 +1190,14 @@ def sql_injection_scan(url, level=1, dbms=None):
 # --- MÓDULO 15: SCANNER DE XSS (CROSS-SITE SCRIPTING) MELHORADO ---
 
 class XSSScanner:
-    def __init__(self, base_url, custom_payloads_file=None):
+    def __init__(self, base_url, custom_payloads_file=None, scan_stored=False, fuzz_dom=False):
         self.base_url = base_url
         self.session = requests.Session()
         self.session.headers.update({'User-Agent': 'Mozilla/5.0'})
         self.vulnerable_points = []
         self.payloads = self._load_payloads(custom_payloads_file)
+        self.scan_stored = scan_stored
+        self.fuzz_dom = fuzz_dom # Placeholder for future implementation
 
     def _load_payloads(self, custom_payloads_file):
         """Carrega payloads de um ficheiro ou usa um payload padrão."""
@@ -1214,34 +1216,97 @@ class XSSScanner:
                 return [default_payload]
         return [default_payload]
 
-    def _scan_target(self, url, method, param, form_data=None):
-        """Testa um ponto de entrada com múltiplos payloads de XSS."""
-        for payload in self.payloads:
-            test_data = {param: payload}
+    def _add_finding(self, risk, v_type, detail, recommendation):
+        """Adiciona uma nova descoberta, evitando duplicados."""
+        finding = {"Risco": risk, "Tipo": v_type, "Detalhe": detail, "Recomendação": recommendation}
+        if finding not in self.vulnerable_points:
+            self.vulnerable_points.append(finding)
+
+    def _scan_reflected(self, tasks, progress, task_id):
+        """Executa o scan para XSS Refletido."""
+        progress.update(task_id, description="[green]Testando XSS Refletido...")
+        for method, url, param, form_data in tasks:
+            progress.update(task_id, advance=1, description=f"[green]Testando [cyan]{param}[/cyan] (Refletido)...")
+            for payload in self.payloads:
+                test_data = {param: payload}
+                try:
+                    if method.lower() == 'get':
+                        response = self.session.get(url, params=test_data, timeout=7, verify=False)
+                    else:
+                        post_payload = (form_data or {}).copy()
+                        post_payload[param] = payload
+                        response = self.session.post(url, data=post_payload, timeout=7, verify=False)
+
+                    if payload in response.text:
+                        self._add_finding("Médio", "XSS Refletido", f"Parâmetro '{param}' em {url} ({method.upper()})", f"Payload '{payload}' foi refletido sem sanitização.")
+                        break # Próximo parâmetro
+                except requests.RequestException:
+                    pass
+
+    def _scan_stored(self, forms, progress):
+        """Executa o scan para XSS Armazenado."""
+        console.print("\\[*] [bold]Iniciando verificação de XSS Armazenado...[/bold]")
+        
+        # 1. Submeter payloads em todos os formulários
+        submission_task = progress.add_task("[green]Submetendo payloads...", total=len(forms) * len(self.payloads) * sum(len(i.find_all(['input', 'textarea'])) for i in forms))
+        for form in forms:
+            action = urljoin(self.base_url, form.get('action', ''))
+            method = form.get('method', 'post').lower()
+            form_data = {i.get('name'): 'test' for i in form.find_all(['input', 'textarea']) if i.get('name')}
+            
+            for field in form_data:
+                for payload in self.payloads:
+                    progress.update(submission_task, advance=1)
+                    submission_data = form_data.copy()
+                    submission_data[field] = payload
+                    try:
+                        self.session.post(action, data=submission_data, timeout=7, verify=False)
+                    except requests.RequestException:
+                        continue
+        progress.remove_task(submission_task)
+        console.print("\\[*] Submissão de payloads concluída.")
+
+        # 2. Rastear o site para encontrar os payloads refletidos
+        console.print("\\[*] Rasteando o site para verificar a persistência dos payloads...")
+        to_visit = [self.base_url]
+        visited = set()
+        
+        crawl_task = progress.add_task("[green]Rasteando para encontrar XSS Armazenado...", total=None)
+        while to_visit:
+            current_url = to_visit.pop(0)
+            if current_url in visited:
+                continue
+            visited.add(current_url)
+            progress.update(crawl_task, advance=1, description=f"Verificando {current_url[:60]}...")
+
             try:
-                if method.lower() == 'get':
-                    response = self.session.get(url, params=test_data, timeout=7, verify=False)
-                else:
-                    post_payload = (form_data or {}).copy()
-                    post_payload[param] = payload
-                    response = self.session.post(url, data=post_payload, timeout=7, verify=False)
-
-                # Verifica se o payload é refletido sem codificação HTML
-                if payload in response.text:
-                    finding = {"Risco": "Médio", "Tipo": "Cross-Site Scripting (XSS)", "Detalhe": f"Parâmetro '{param}' em {url} ({method.upper()})", "Recomendação": f"Payload '{payload}' foi refletido sem sanitização. Validar e codificar o input do usuário."}
-                    if finding not in self.vulnerable_points:
-                        self.vulnerable_points.append(finding)
-                        return # Se um payload funcionar, passa para o próximo parâmetro
-
+                response = self.session.get(current_url, timeout=7, verify=False)
+                # Verifica se algum dos nossos payloads está na página
+                for payload in self.payloads:
+                    if payload in response.text:
+                        self._add_finding("Alto", "XSS Armazenado", f"Payload encontrado em {current_url}", f"Payload '{payload}' foi submetido e persistiu na aplicação.")
+                
+                # Encontra novos links para visitar
+                soup = BeautifulSoup(response.content, 'html.parser')
+                base_netloc = urlparse(self.base_url).netloc
+                for link_tag in soup.find_all('a', href=True):
+                    link = urljoin(self.base_url, link_tag['href'])
+                    if urlparse(link).netloc == base_netloc and link not in visited:
+                        to_visit.append(link)
             except requests.RequestException:
-                pass
+                continue
+        progress.remove_task(crawl_task)
+
 
     def run_scan(self, return_findings=False):
-        """Executa o scan de XSS, descobrindo e testando pontos de entrada."""
+        """Orquestra os diferentes tipos de scans de XSS."""
         if not return_findings:
             console.print("-" * 60)
             console.print(f"[*] Executando scanner de XSS em: [bold cyan]{self.base_url}[/bold cyan]")
+            if self.scan_stored: console.print("[*] Modo XSS Armazenado: [bold green]Ativado[/bold green]")
+            if self.fuzz_dom: console.print("[*] Modo XSS DOM: [bold yellow]Ativado (Funcionalidade Futura)[/bold yellow]")
             console.print("-" * 60)
+
         try:
             with console.status("[bold green]Coletando pontos de entrada...[/bold green]"):
                 response = self.session.get(self.base_url, timeout=10, verify=False)
@@ -1250,6 +1315,7 @@ class XSSScanner:
             if not return_findings: console.print(f"[bold red][!] Não foi possível aceder à página inicial: {e}[/bold red]")
             return [] if return_findings else None
 
+        # Coleta de tarefas (pontos de entrada)
         tasks = []
         links = {urljoin(self.base_url, a['href']) for a in soup.find_all('a', href=True) if '?' in a['href'] and '=' in a['href']}
         for link in links:
@@ -1264,15 +1330,24 @@ class XSSScanner:
             data = {i.get('name'): 'test' for i in form.find_all(['input', 'textarea']) if i.get('name')}
             for param in data: tasks.append((method, action, param, data))
         
-        if not tasks:
-            if not return_findings: console.print("[yellow]Nenhum ponto de entrada encontrado para testar XSS.[/yellow]")
+        if not tasks and not forms:
+            if not return_findings: console.print("[yellow]Nenhum ponto de entrada (parâmetro ou formulário) encontrado para testar XSS.[/yellow]")
             return [] if return_findings else None
-
+        
+        # Execução dos scans
         with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TextColumn("[progress.percentage]{task.percentage:>3.0f}%"), TimeRemainingColumn(), console=console, transient=return_findings) as progress:
             task_id = progress.add_task("[green]Testando XSS...", total=len(tasks))
-            for method, url, param, form_data in tasks:
-                progress.update(task_id, advance=1, description=f"[green]Testando [cyan]{param}[/cyan]...")
-                self._scan_target(url, method, param, form_data)
+            
+            # 1. Scan de XSS Refletido
+            self._scan_reflected(tasks, progress, task_id)
+            progress.remove_task(task_id)
+
+            # 2. Scan de XSS Armazenado (se ativado)
+            if self.scan_stored and forms:
+                self._scan_stored(forms, progress)
+        
+        if self.fuzz_dom:
+            console.print("[yellow]Aviso: A análise de XSS baseado em DOM (`--fuzz-dom`) ainda não está implementada.[/yellow]")
 
         if return_findings: return self.vulnerable_points
         self._present_findings()
@@ -1281,17 +1356,25 @@ class XSSScanner:
         """Apresenta os resultados do scan de XSS."""
         console.print("-" * 60)
         if not self.vulnerable_points:
-            console.print("[bold green][+] Nenhuma vulnerabilidade de XSS Refletido foi encontrada.[/bold green]")
+            console.print("[bold green][+] Nenhuma vulnerabilidade de XSS foi encontrada.[/bold green]")
         else:
-            table = Table(title="Potenciais Vulnerabilidades de XSS Refletido Encontradas")
-            table.add_column("Detalhe", style="cyan")
+            table = Table(title="Potenciais Vulnerabilidades de XSS Encontradas")
+            table.add_column("Risco", style="cyan")
+            table.add_column("Tipo", style="yellow")
+            table.add_column("Detalhe", style="magenta")
             table.add_column("Recomendação", style="white")
-            for f in self.vulnerable_points: table.add_row(f['Detalhe'], f['Recomendação'])
+            
+            risk_order = {"Alto": 0, "Médio": 1, "Baixo": 2}
+            sorted_findings = sorted(self.vulnerable_points, key=lambda x: risk_order.get(x["Risco"], 99))
+
+            for f in sorted_findings:
+                risk_style = "red" if f['Risco'] == 'Alto' else "yellow"
+                table.add_row(f"[{risk_style}]{f['Risco']}[/{risk_style}]", f['Tipo'], f['Detalhe'], f['Recomendação'])
             console.print(table)
         console.print("-" * 60)
 
-def xss_scan(url, custom_payloads_file=None):
-    XSSScanner(url, custom_payloads_file=custom_payloads_file).run_scan()
+def xss_scan(url, custom_payloads_file=None, scan_stored=False, fuzz_dom=False):
+    XSSScanner(url, custom_payloads_file=custom_payloads_file, scan_stored=scan_stored, fuzz_dom=fuzz_dom).run_scan()
 
 # --- MÓDULO 16: SCANNER DE INJEÇÃO DE COMANDOS ---
 
@@ -2194,8 +2277,8 @@ Exemplos de Uso:
   # Procura por falhas de SQL Injection com nível de agressividade 3 e focado em MySQL
   python %(prog)s sql-scan -u "http://testphp.vulnweb.com/listproducts.php?cat=1" --level 3 --dbms mysql
 
-  # Procura por falhas de XSS usando uma lista de payloads personalizada
-  python %(prog)s xss-scan -u "http://testphp.vulnweb.com/guestbook.php" --custom-payloads payloads/xss.txt
+  # Procura por falhas de XSS (Refletido e Armazenado) usando uma lista de payloads
+  python %(prog)s xss-scan -u "http://testphp.vulnweb.com/guestbook.php" --custom-payloads payloads/xss.txt --scan-stored
 
   # Procura por CVEs para OpenSSL, ignorando o cache e filtrando por CVSS
   python %(prog)s cve-scan --product openssl --version 1.0.2 --min-cvss 7.0 --no-cache
@@ -2228,6 +2311,9 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     parser_xss = subparsers.add_parser('xss-scan', help='[Scan] Procura por falhas de Cross-Site Scripting (XSS).')
     parser_xss.add_argument('-u', '--url', required=True, help='URL base para iniciar a verificação.')
     parser_xss.add_argument('--custom-payloads', help='Caminho para um ficheiro com payloads de XSS personalizados (um por linha).')
+    parser_xss.add_argument('--scan-stored', action='store_true', help='Ativa a verificação de XSS Armazenado (Stored).')
+    parser_xss.add_argument('--fuzz-dom', action='store_true', help='Ativa a análise de XSS baseado em DOM (funcionalidade futura).')
+
 
     parser_cmd = subparsers.add_parser('cmd-scan', help='[Scan] Procura por falhas de Injeção de Comandos.')
     parser_cmd.add_argument('-u', '--url', required=True, help='URL base para iniciar a verificação.')
@@ -2358,7 +2444,7 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     elif args.tool == 'sql-scan':
         sql_injection_scan(args.url, args.level, args.dbms)
     elif args.tool == 'xss-scan':
-        xss_scan(args.url, args.custom_payloads)
+        xss_scan(args.url, custom_payloads_file=args.custom_payloads, scan_stored=args.scan_stored, fuzz_dom=args.fuzz_dom)
     elif args.tool == 'cmd-scan':
         command_injection_scan(args.url)
     elif args.tool == 'lfi-scan':
