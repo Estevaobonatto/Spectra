@@ -1473,30 +1473,139 @@ def extract_metadata(image_url):
 # --- MÓDULO 5: SCANNER DE SUBDOMÍNIOS ---
 
 def check_subdomain(subdomain, domain):
-    """Verifica se um subdomínio existe tentando resolver seu endereço IP."""
+    """Verifica se um subdomínio existe com análise avançada de DNS."""
     if not subdomain:
         return None
     full_domain = f"{subdomain}.{domain}"
     try:
+        # Resolução básica
         ip_address = socket.gethostbyname(full_domain)
-        return (full_domain, ip_address)
+        
+        # Análise avançada de DNS
+        dns_info = _analyze_subdomain_dns(full_domain)
+        
+        return {
+            'domain': full_domain,
+            'ip': ip_address,
+            'dns_info': dns_info,
+            'status': 'active'
+        }
     except (socket.gaierror, UnicodeEncodeError):
         return None
 
+def _analyze_subdomain_dns(domain):
+    """Analisa registros DNS de um subdomínio."""
+    dns_info = {
+        'cname': None,
+        'mx_records': [],
+        'txt_records': [],
+        'has_wildcard': False,
+        'takeover_risk': False,
+        'cloud_service': None
+    }
+    
+    try:
+        # Verifica CNAME
+        try:
+            cname_answer = dns.resolver.resolve(domain, 'CNAME')
+            dns_info['cname'] = str(cname_answer[0]).rstrip('.')
+            
+            # Verifica potential subdomain takeover
+            dns_info['takeover_risk'] = _check_subdomain_takeover(dns_info['cname'])
+            dns_info['cloud_service'] = _identify_cloud_service(dns_info['cname'])
+            
+        except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
+            pass
+        
+        # Verifica MX records
+        try:
+            mx_answers = dns.resolver.resolve(domain, 'MX')
+            dns_info['mx_records'] = [str(mx.exchange).rstrip('.') for mx in mx_answers]
+        except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
+            pass
+        
+        # Verifica TXT records
+        try:
+            txt_answers = dns.resolver.resolve(domain, 'TXT')
+            dns_info['txt_records'] = [str(txt).strip('"') for txt in txt_answers]
+        except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
+            pass
+            
+    except Exception:
+        pass
+    
+    return dns_info
+
+def _check_subdomain_takeover(cname):
+    """Verifica se um CNAME aponta para serviços vulneráveis a subdomain takeover."""
+    if not cname:
+        return False
+    
+    # Padrões conhecidos de subdomain takeover
+    vulnerable_patterns = [
+        'amazonaws.com',
+        'azurewebsites.net',
+        'herokuapp.com',
+        'github.io',
+        'netlify.app',
+        'vercel.app',
+        'surge.sh',
+        'bitbucket.io',
+        'gitlab.io',
+        'wordpress.com',
+        'tumblr.com',
+        'shopify.com'
+    ]
+    
+    return any(pattern in cname.lower() for pattern in vulnerable_patterns)
+
+def _identify_cloud_service(cname):
+    """Identifica o serviço de cloud baseado no CNAME."""
+    if not cname:
+        return None
+    
+    cloud_patterns = {
+        'amazonaws.com': 'AWS',
+        'azurewebsites.net': 'Azure',
+        'googleapis.com': 'Google Cloud',
+        'herokuapp.com': 'Heroku',
+        'netlify.app': 'Netlify',
+        'vercel.app': 'Vercel',
+        'github.io': 'GitHub Pages',
+        'cloudflare.net': 'Cloudflare',
+        'fastly.com': 'Fastly'
+    }
+    
+    for pattern, service in cloud_patterns.items():
+        if pattern in cname.lower():
+            return service
+    
+    return None
+
 def discover_subdomains(domain, wordlist_path, workers=100):
-    """Executa a varredura de subdomínios usando uma wordlist e threads."""
+    """Executa a varredura avançada de subdomínios com análise de segurança."""
     console.print("-" * 60)
     console.print(f"[*] Domínio Alvo: [bold cyan]{domain}[/bold cyan]")
     console.print(f"[*] Wordlist: [bold cyan]{wordlist_path}[/bold cyan]")
     console.print("-" * 60)
+    
+    # Primeiro verifica wildcard DNS
+    wildcard_result = _check_dns_wildcard(domain)
+    if wildcard_result:
+        console.print(f"[bold yellow][!] Wildcard DNS detectado: {wildcard_result}[/bold yellow]")
+        console.print("[*] Continuando varredura com filtro de wildcard...")
+    
     try:
         with open(wordlist_path, 'r', errors='ignore') as f:
             subdomains = [line.strip() for line in f if line.strip() and not line.startswith('#') and line.strip() not in ('.', '..')]
     except FileNotFoundError:
         console.print(f"[bold red][!] Erro: O ficheiro da wordlist '{wordlist_path}' não foi encontrado.[/bold red]")
         return
+    
     console.print(f"[*] A iniciar a varredura com {len(subdomains)} palavras...")
     found_subdomains = []
+    takeover_risks = []
+    
     with ThreadPoolExecutor(max_workers=workers) as executor:
         future_to_subdomain = {executor.submit(check_subdomain, sub, domain): sub for sub in subdomains}
         
@@ -1505,36 +1614,113 @@ def discover_subdomains(domain, wordlist_path, workers=100):
             for future in as_completed(future_to_subdomain):
                 result = future.result()
                 if result:
-                    full_domain, ip_address = result
-                    console.print(f"[bold green][+] Encontrado: {full_domain} -> {ip_address}[/bold green]")
+                    # Filtra wildcard se necessário
+                    if wildcard_result and result['ip'] == wildcard_result:
+                        progress.update(task, advance=1)
+                        continue
+                    
+                    # Exibe resultado com informações avançadas
+                    status_info = []
+                    if result['dns_info']['cloud_service']:
+                        status_info.append(f"[blue]{result['dns_info']['cloud_service']}[/blue]")
+                    if result['dns_info']['takeover_risk']:
+                        status_info.append("[bold red]TAKEOVER RISK[/bold red]")
+                        takeover_risks.append(result)
+                    if result['dns_info']['cname']:
+                        status_info.append(f"CNAME: {result['dns_info']['cname']}")
+                    
+                    status_str = f" ({' | '.join(status_info)})" if status_info else ""
+                    console.print(f"[bold green][+] {result['domain']} -> {result['ip']}{status_str}[/bold green]")
                     found_subdomains.append(result)
                 progress.update(task, advance=1)
 
     console.print("-" * 60)
     console.print("[*] Varredura de subdomínios concluída.")
+    
     if found_subdomains:
+        # Tabela principal de subdomínios
         table = Table(title=f"Relatório de Subdomínios para {domain}")
-        table.add_column("Subdomínio Encontrado", style="cyan")
-        table.add_column("Endereço IP", style="magenta")
-        for full_domain, ip_address in sorted(found_subdomains):
-            table.add_row(full_domain, ip_address)
+        table.add_column("Subdomínio", style="cyan")
+        table.add_column("IP", style="magenta")
+        table.add_column("Cloud Service", style="blue")
+        table.add_column("CNAME", style="yellow")
+        table.add_column("Status", style="green")
+        
+        for result in sorted(found_subdomains, key=lambda x: x['domain']):
+            cloud_service = result['dns_info']['cloud_service'] or 'N/A'
+            cname = result['dns_info']['cname'] or 'N/A'
+            status = "🔴 TAKEOVER RISK" if result['dns_info']['takeover_risk'] else "✅ OK"
+            
+            table.add_row(result['domain'], result['ip'], cloud_service, cname, status)
+        
         console.print(table)
+        
+        # Relatório de segurança
+        if takeover_risks:
+            console.print("\n[bold red]⚠️  ALERTAS DE SEGURANÇA[/bold red]")
+            risk_table = Table(title="Subdomínios com Risco de Takeover")
+            risk_table.add_column("Subdomínio", style="red")
+            risk_table.add_column("CNAME Vulnerável", style="yellow")
+            risk_table.add_column("Serviço", style="blue")
+            
+            for risk in takeover_risks:
+                risk_table.add_row(
+                    risk['domain'],
+                    risk['dns_info']['cname'],
+                    risk['dns_info']['cloud_service'] or 'Desconhecido'
+                )
+            
+            console.print(risk_table)
+            console.print("[bold red]⚠️  RECOMENDAÇÃO: Verificar se estes subdomínios estão ativos nos serviços de destino[/bold red]")
+        
+        # Estatísticas
+        console.print(f"\n[*] Total encontrado: [bold cyan]{len(found_subdomains)}[/bold cyan] subdomínios")
+        cloud_services = {}
+        for result in found_subdomains:
+            service = result['dns_info']['cloud_service']
+            if service:
+                cloud_services[service] = cloud_services.get(service, 0) + 1
+        
+        if cloud_services:
+            console.print("[*] Serviços de cloud detectados:")
+            for service, count in cloud_services.items():
+                console.print(f"    • {service}: {count} subdomínio(s)")
+                
     else:
         console.print(f"[bold yellow][-] Nenhum subdomínio encontrado com esta wordlist.[/bold yellow]")
     console.print("-" * 60)
 
+def _check_dns_wildcard(domain):
+    """Verifica se o domínio tem wildcard DNS configurado."""
+    import random
+    import string
+    
+    # Gera subdomínio aleatório
+    random_subdomain = ''.join(random.choices(string.ascii_lowercase + string.digits, k=20))
+    test_domain = f"{random_subdomain}.{domain}"
+    
+    try:
+        ip_address = socket.gethostbyname(test_domain)
+        return ip_address  # Retorna IP do wildcard
+    except (socket.gaierror, UnicodeEncodeError):
+        return None  # Sem wildcard
+
 # --- MÓDULO 6: CONSULTA DE DNS ---
 
 def query_dns(domain, record_type):
-    """Consulta registros DNS para um domínio. Suporta 'ALL' para múltiplos tipos."""
+    """Consulta avançada de registros DNS com análise de vulnerabilidades."""
     console.print("-" * 60)
     console.print(f"[*] Consultando registros para [bold cyan]{domain}[/bold cyan]")
     console.print("-" * 60)
 
-    record_types = ['A', 'AAAA', 'MX', 'TXT', 'NS', 'CNAME'] if record_type.upper() == 'ALL' else [record_type.upper()]
+    record_types = ['A', 'AAAA', 'MX', 'TXT', 'NS', 'CNAME', 'SOA'] if record_type.upper() == 'ALL' else [record_type.upper()]
     
     resolver = dns.resolver.Resolver()
     resolver.lifetime = 10
+    
+    # Análise de vulnerabilidades DNS
+    vulnerabilities = []
+    nameservers = []
 
     with console.status("[bold green]Consultando registros DNS...[/bold green]") as status:
         for r_type in record_types:
@@ -1547,18 +1733,54 @@ def query_dns(domain, record_type):
                 if r_type == 'MX':
                     table.add_column("Prioridade", style="cyan", justify="center")
                     table.add_column("Servidor de E-mail", style="magenta")
+                    table.add_column("Análise", style="yellow")
                     mx_records = sorted([(rdata.preference, str(rdata.exchange)) for rdata in answers])
                     for preference, exchange in mx_records:
-                        table.add_row(str(preference), exchange)
+                        analysis = _analyze_mx_record(exchange)
+                        table.add_row(str(preference), exchange, analysis)
+                        
                 elif r_type == 'TXT':
                     table.add_column("Registro TXT", style="magenta")
+                    table.add_column("Tipo", style="yellow")
                     for rdata in answers:
                         text = b''.join(rdata.strings).decode('utf-8', errors='ignore')
-                        table.add_row(text)
-                else:
+                        txt_type = _analyze_txt_record(text)
+                        table.add_row(text, txt_type)
+                        
+                elif r_type == 'NS':
+                    table.add_column("Nameserver", style="magenta")
+                    table.add_column("IP", style="cyan")
+                    table.add_column("Provedor", style="yellow")
+                    for rdata in answers:
+                        ns = str(rdata).rstrip('.')
+                        nameservers.append(ns)
+                        ns_ip = _resolve_nameserver_ip(ns)
+                        provider = _identify_dns_provider(ns)
+                        table.add_row(ns, ns_ip or "N/A", provider or "Desconhecido")
+                        
+                elif r_type == 'SOA':
+                    table.add_column("Campo", style="cyan")
                     table.add_column("Valor", style="magenta")
                     for rdata in answers:
-                        table.add_row(str(rdata))
+                        table.add_row("Nameserver Primário", str(rdata.mname))
+                        table.add_row("Email Responsável", str(rdata.rname))
+                        table.add_row("Serial", str(rdata.serial))
+                        table.add_row("Refresh", f"{rdata.refresh}s")
+                        table.add_row("Retry", f"{rdata.retry}s")
+                        table.add_row("Expire", f"{rdata.expire}s")
+                        table.add_row("TTL Mínimo", f"{rdata.minimum}s")
+                        
+                else:
+                    table.add_column("Valor", style="magenta")
+                    table.add_column("Análise", style="yellow")
+                    for rdata in answers:
+                        value = str(rdata)
+                        analysis = ""
+                        if r_type == 'A':
+                            analysis = _analyze_ip_address(value)
+                        elif r_type == 'CNAME':
+                            analysis = _analyze_cname_record(value)
+                        table.add_row(value, analysis or "N/A")
                 
                 console.print(table)
 
@@ -1572,6 +1794,417 @@ def query_dns(domain, record_type):
             except Exception as e:
                 console.print(f"[bold red][!] Erro ao consultar {r_type}: {e}[/bold red]")
             console.print()
+    
+    # Análise de vulnerabilidades DNS
+    console.print("[bold cyan]🔍 ANÁLISE DE SEGURANÇA DNS[/bold cyan]")
+    console.print("-" * 60)
+    
+    # Verifica Zone Transfer
+    if nameservers:
+        zone_transfer_results = _check_zone_transfer(domain, nameservers)
+        if zone_transfer_results:
+            console.print("[bold red]⚠️  VULNERABILIDADE: Zone Transfer habilitado![/bold red]")
+            for ns, status in zone_transfer_results.items():
+                if status == "vulnerable":
+                    console.print(f"    • {ns}: [bold red]VULNERÁVEL[/bold red]")
+                else:
+                    console.print(f"    • {ns}: [green]Protegido[/green]")
+        else:
+            console.print("[green]✅ Zone Transfer: Protegido[/green]")
+    
+    # Verifica DNS Cache Poisoning
+    cache_poisoning_risk = _check_dns_cache_poisoning(domain)
+    if cache_poisoning_risk:
+        console.print(f"[bold yellow]⚠️  DNS Cache Poisoning: {cache_poisoning_risk}[/bold yellow]")
+    else:
+        console.print("[green]✅ DNS Cache Poisoning: Baixo risco[/green]")
+    
+    # Verifica DNSSEC
+    dnssec_status = _check_dnssec(domain)
+    if dnssec_status:
+        console.print(f"[green]✅ DNSSEC: {dnssec_status}[/green]")
+    else:
+        console.print("[bold yellow]⚠️  DNSSEC: Não configurado[/bold yellow]")
+    
+    console.print("-" * 60)
+
+def _analyze_mx_record(mx_server):
+    """Analisa registro MX para identificar provedor de email."""
+    mx_patterns = {
+        'google.com': 'Google Workspace',
+        'outlook.com': 'Microsoft 365',
+        'zoho.com': 'Zoho Mail',
+        'protonmail.ch': 'ProtonMail',
+        'amazonaws.com': 'Amazon SES'
+    }
+    
+    for pattern, provider in mx_patterns.items():
+        if pattern in mx_server.lower():
+            return provider
+    return "Personalizado"
+
+def _analyze_txt_record(txt_record):
+    """Analisa registro TXT para identificar tipo."""
+    txt_record_lower = txt_record.lower()
+    
+    if txt_record_lower.startswith('v=spf1'):
+        return "SPF"
+    elif txt_record_lower.startswith('v=dmarc1'):
+        return "DMARC"
+    elif txt_record_lower.startswith('v=dkim1'):
+        return "DKIM"
+    elif 'google-site-verification' in txt_record_lower:
+        return "Google Verification"
+    elif 'facebook-domain-verification' in txt_record_lower:
+        return "Facebook Verification"
+    elif '_domainkey' in txt_record_lower:
+        return "DKIM Key"
+    return "Outro"
+
+def _resolve_nameserver_ip(nameserver):
+    """Resolve IP do nameserver."""
+    try:
+        return socket.gethostbyname(nameserver)
+    except:
+        return None
+
+def _identify_dns_provider(nameserver):
+    """Identifica provedor DNS baseado no nameserver."""
+    dns_providers = {
+        'cloudflare.com': 'Cloudflare',
+        'google.com': 'Google Cloud DNS',
+        'amazonaws.com': 'Amazon Route 53',
+        'azure-dns.com': 'Microsoft Azure DNS',
+        'digitalocean.com': 'DigitalOcean DNS',
+        'linode.com': 'Linode DNS',
+        'godaddy.com': 'GoDaddy DNS',
+        'namecheap.com': 'Namecheap DNS'
+    }
+    
+    for pattern, provider in dns_providers.items():
+        if pattern in nameserver.lower():
+            return provider
+    return None
+
+def _analyze_ip_address(ip):
+    """Analisa endereço IP para identificar provedor."""
+    # Ranges conhecidos de provedores cloud
+    ip_ranges = {
+        '104.16.': 'Cloudflare',
+        '104.17.': 'Cloudflare',
+        '172.64.': 'Cloudflare',
+        '13.107.': 'Microsoft Azure',
+        '20.': 'Microsoft Azure',
+        '52.': 'Amazon AWS',
+        '54.': 'Amazon AWS',
+        '35.': 'Google Cloud'
+    }
+    
+    for ip_prefix, provider in ip_ranges.items():
+        if ip.startswith(ip_prefix):
+            return provider
+    return "IP próprio"
+
+def _analyze_cname_record(cname):
+    """Analisa registro CNAME para identificar serviço."""
+    cname_patterns = {
+        'cloudflare.net': 'Cloudflare',
+        'azurewebsites.net': 'Azure App Service',
+        'amazonaws.com': 'Amazon AWS',
+        'herokuapp.com': 'Heroku',
+        'github.io': 'GitHub Pages',
+        'netlify.app': 'Netlify'
+    }
+    
+    for pattern, service in cname_patterns.items():
+        if pattern in cname.lower():
+            return service
+    return "Serviço personalizado"
+
+def _check_zone_transfer(domain, nameservers):
+    """Verifica se zone transfer está habilitado."""
+    results = {}
+    
+    for ns in nameservers[:3]:  # Testa apenas os primeiros 3 NS
+        try:
+            # Tenta zone transfer
+            transfer = dns.zone.from_xfr(dns.query.xfr(ns, domain, timeout=5))
+            if transfer:
+                results[ns] = "vulnerable"
+            else:
+                results[ns] = "protected"
+        except:
+            results[ns] = "protected"
+    
+    return results
+
+def _check_dns_cache_poisoning(domain):
+    """Verifica vulnerabilidade a DNS cache poisoning."""
+    try:
+        # Verifica se usa DNS recursivo aberto
+        answers = dns.resolver.resolve(domain, 'A')
+        if len(answers) > 5:  # Muitos registros A podem indicar round-robin vulnerável
+            return "Possível round-robin vulnerável"
+        return None
+    except:
+        return None
+
+def _check_dnssec(domain):
+    """Verifica se DNSSEC está configurado."""
+    try:
+        # Tenta resolver registro DNSKEY
+        answers = dns.resolver.resolve(domain, 'DNSKEY')
+        if answers:
+            return "Ativo"
+        return None
+    except:
+        return None
+
+# --- MÓDULO 6B: ANÁLISE DE DNS REVERSO ---
+
+def analyze_reverse_dns(ip_or_domain):
+    """Realiza análise avançada de DNS reverso."""
+    console.print("-" * 60)
+    console.print(f"[*] Análise de DNS Reverso para: [bold cyan]{ip_or_domain}[/bold cyan]")
+    console.print("-" * 60)
+    
+    # Determina se é IP ou domínio
+    is_ip = _is_valid_ip(ip_or_domain)
+    
+    if is_ip:
+        ips_to_analyze = [ip_or_domain]
+    else:
+        # Resolve domínio para IPs
+        ips_to_analyze = _resolve_domain_to_ips(ip_or_domain)
+        if not ips_to_analyze:
+            console.print("[bold red][!] Não foi possível resolver o domínio.[/bold red]")
+            return
+    
+    console.print(f"[*] Analisando {len(ips_to_analyze)} endereço(s) IP...")
+    
+    results = []
+    for ip in ips_to_analyze:
+        result = _perform_reverse_dns_analysis(ip)
+        if result:
+            results.append(result)
+    
+    if results:
+        # Tabela de resultados
+        table = Table(title="Análise de DNS Reverso")
+        table.add_column("IP", style="cyan")
+        table.add_column("Hostname", style="magenta")
+        table.add_column("Provedor", style="yellow")
+        table.add_column("Localização", style="green")
+        table.add_column("ASN", style="blue")
+        
+        for result in results:
+            table.add_row(
+                result['ip'],
+                result['hostname'] or "N/A",
+                result['provider'] or "Desconhecido",
+                result['location'] or "N/A",
+                result['asn'] or "N/A"
+            )
+        
+        console.print(table)
+        
+        # Análise de segurança
+        _analyze_reverse_dns_security(results)
+    else:
+        console.print("[bold yellow][-] Nenhuma informação de DNS reverso encontrada.[/bold yellow]")
+    
+    console.print("-" * 60)
+
+def _is_valid_ip(ip_string):
+    """Verifica se uma string é um IP válido."""
+    try:
+        socket.inet_aton(ip_string)
+        return True
+    except socket.error:
+        return False
+
+def _resolve_domain_to_ips(domain):
+    """Resolve um domínio para lista de IPs."""
+    ips = []
+    try:
+        # A records
+        answers = dns.resolver.resolve(domain, 'A')
+        for rdata in answers:
+            ips.append(str(rdata))
+        
+        # AAAA records (IPv6)
+        try:
+            answers_v6 = dns.resolver.resolve(domain, 'AAAA')
+            for rdata in answers_v6:
+                ips.append(str(rdata))
+        except:
+            pass
+            
+    except:
+        pass
+    
+    return ips
+
+def _perform_reverse_dns_analysis(ip):
+    """Realiza análise completa de DNS reverso para um IP."""
+    result = {
+        'ip': ip,
+        'hostname': None,
+        'provider': None,
+        'location': None,
+        'asn': None
+    }
+    
+    # DNS reverso básico
+    try:
+        hostname = socket.gethostbyaddr(ip)[0]
+        result['hostname'] = hostname
+    except:
+        pass
+    
+    # Identificação do provedor
+    result['provider'] = _identify_ip_provider(ip)
+    
+    # Análise de ASN (simulado - normalmente usaria APIs externas)
+    result['asn'] = _get_asn_info(ip)
+    
+    # Localização (simulado)
+    result['location'] = _get_ip_location(ip)
+    
+    return result
+
+def _identify_ip_provider(ip):
+    """Identifica provedor baseado no IP."""
+    # Ranges conhecidos de provedores
+    provider_ranges = {
+        '8.8.': 'Google DNS',
+        '1.1.': 'Cloudflare DNS',
+        '208.67.': 'OpenDNS',
+        '9.9.': 'Quad9',
+        '64.6.': 'Verisign',
+        '104.16.': 'Cloudflare',
+        '104.17.': 'Cloudflare',
+        '172.64.': 'Cloudflare',
+        '13.107.': 'Microsoft',
+        '20.': 'Microsoft Azure',
+        '40.': 'Microsoft Azure',
+        '52.': 'Amazon AWS',
+        '54.': 'Amazon AWS',
+        '3.': 'Amazon AWS',
+        '18.': 'Amazon AWS',
+        '35.': 'Google Cloud',
+        '34.': 'Google Cloud'
+    }
+    
+    for ip_prefix, provider in provider_ranges.items():
+        if ip.startswith(ip_prefix):
+            return provider
+    
+    # Verifica se é IP privado
+    if (_is_private_ip(ip)):
+        return "Rede Privada"
+    
+    return None
+
+def _is_private_ip(ip):
+    """Verifica se IP é privado."""
+    private_ranges = [
+        ('10.', '10.255.255.255'),
+        ('172.16.', '172.31.255.255'),
+        ('192.168.', '192.168.255.255'),
+        ('127.', '127.255.255.255')
+    ]
+    
+    for start, end in private_ranges:
+        if ip.startswith(start.split('.')[0]):
+            return True
+    return False
+
+def _get_asn_info(ip):
+    """Obtém informações de ASN (simulado)."""
+    # Em implementação real, usaria APIs como IPWhois ou bgpview.io
+    # Aqui simulamos alguns ASNs conhecidos
+    asn_patterns = {
+        '8.8.': 'AS15169 Google',
+        '1.1.': 'AS13335 Cloudflare',
+        '208.67.': 'AS36692 OpenDNS',
+        '104.16.': 'AS13335 Cloudflare',
+        '52.': 'AS16509 Amazon',
+        '35.': 'AS15169 Google'
+    }
+    
+    for ip_prefix, asn in asn_patterns.items():
+        if ip.startswith(ip_prefix):
+            return asn
+    
+    return None
+
+def _get_ip_location(ip):
+    """Obtém localização do IP (simulado)."""
+    # Em implementação real, usaria APIs de geolocalização
+    # Aqui simulamos algumas localizações conhecidas
+    location_patterns = {
+        '8.8.': 'Estados Unidos',
+        '1.1.': 'Estados Unidos',
+        '208.67.': 'Estados Unidos',
+        '104.16.': 'Global (CDN)',
+        '52.': 'Estados Unidos',
+        '35.': 'Estados Unidos'
+    }
+    
+    for ip_prefix, location in location_patterns.items():
+        if ip.startswith(ip_prefix):
+            return location
+    
+    return None
+
+def _analyze_reverse_dns_security(results):
+    """Analisa aspectos de segurança do DNS reverso."""
+    console.print("\n[bold cyan]🔍 ANÁLISE DE SEGURANÇA[/bold cyan]")
+    console.print("-" * 40)
+    
+    security_issues = []
+    
+    for result in results:
+        ip = result['ip']
+        hostname = result['hostname']
+        
+        # Verifica DNS reverso ausente
+        if not hostname:
+            security_issues.append(f"[yellow]IP {ip}: DNS reverso não configurado[/yellow]")
+        
+        # Verifica hostname suspeito
+        elif hostname and _is_suspicious_hostname(hostname):
+            security_issues.append(f"[red]IP {ip}: Hostname suspeito - {hostname}[/red]")
+        
+        # Verifica mismatch forward/reverse
+        if hostname and not _verify_forward_reverse_match(ip, hostname):
+            security_issues.append(f"[yellow]IP {ip}: Mismatch forward/reverse DNS[/yellow]")
+    
+    if security_issues:
+        console.print("[bold red]⚠️  Problemas de segurança encontrados:[/bold red]")
+        for issue in security_issues:
+            console.print(f"    • {issue}")
+    else:
+        console.print("[green]✅ Nenhum problema de segurança detectado[/green]")
+
+def _is_suspicious_hostname(hostname):
+    """Verifica se hostname é suspeito."""
+    suspicious_patterns = [
+        'malware', 'phishing', 'spam', 'botnet', 'trojan',
+        'virus', 'exploit', 'hack', 'attack', 'evil'
+    ]
+    
+    hostname_lower = hostname.lower()
+    return any(pattern in hostname_lower for pattern in suspicious_patterns)
+
+def _verify_forward_reverse_match(ip, hostname):
+    """Verifica se forward e reverse DNS coincidem."""
+    try:
+        forward_ips = socket.gethostbyname_ex(hostname)[2]
+        return ip in forward_ips
+    except:
+        return False
 
 # --- MÓDULO 7: COLETOR DE LINKS ---
 
@@ -9103,6 +9736,9 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     parser_dns.add_argument('-d', '--domain', required=True, help='O domínio para consultar.')
     parser_dns.add_argument('-t', '--type', default='ALL', help="Tipo de registro (A, MX, TXT, etc.) ou 'ALL' para os mais comuns.")
 
+    parser_reverse_dns = subparsers.add_parser('reverse-dns', help='[Recon] Análise avançada de DNS reverso.')
+    parser_reverse_dns.add_argument('-t', '--target', required=True, help='IP ou domínio para análise de DNS reverso.')
+
     parser_crawl = subparsers.add_parser('crawl', help='[Recon] Extrai todos os links e recursos de uma página web.')
     parser_crawl.add_argument('-u', '--url', required=True, help='URL inicial para o crawling.')
     parser_crawl.add_argument('--depth', type=int, default=1, help='Profundidade máxima do crawling (padrão: 1).')
@@ -9194,6 +9830,8 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
         discover_subdomains(args.domain, args.wordlist, args.workers)
     elif args.tool == 'dns':
         query_dns(args.domain, args.type)
+    elif args.tool == 'reverse-dns':
+        analyze_reverse_dns(args.target)
     elif args.tool == 'crawl':
         crawl_links(args.url, args.depth, args.output)
     elif args.tool == 'whois':
