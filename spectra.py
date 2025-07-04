@@ -8332,6 +8332,10 @@ class LFIScanner:
             # Detecção por assinatura
             for signature in signatures:
                 if signature.lower() in response.text.lower():
+                    # Capturar evidência específica da resposta
+                    evidence_start = response.text.lower().find(signature.lower())
+                    evidence_excerpt = response.text[max(0, evidence_start-50):evidence_start+100]
+                    
                     finding = {
                         "Risco": "Alto",
                         "Tipo": "Local File Inclusion (LFI)",
@@ -8343,7 +8347,14 @@ class LFIScanner:
                         "Response_Time": round(response_time, 3),
                         "Response_Length": len(response.text),
                         "Status_Code": response.status_code,
-                        "Encoding_Technique": self._get_encoding_technique(payload, f"../{path}")
+                        "Encoding_Technique": self._get_encoding_technique(payload, f"../{path}"),
+                        "Evidence": evidence_excerpt.strip(),
+                        "Full_URL": f"{url}?{param}={payload}" if method.lower() == 'get' else url,
+                        "Method": method.upper(),
+                        "Content_Type": response.headers.get('content-type', 'N/A'),
+                        "Server_Header": response.headers.get('server', 'N/A'),
+                        "Response_Size": len(response.content),
+                        "Confidence": "High"
                     }
                     return finding
             
@@ -8359,7 +8370,14 @@ class LFIScanner:
                     "Response_Time": round(response_time, 3),
                     "Response_Length": len(response.text),
                     "Status_Code": response.status_code,
-                    "Detection_Method": "Timing-based"
+                    "Detection_Method": "Timing-based",
+                    "Evidence": f"Delay anômalo de {response_time:.2f}s detectado",
+                    "Full_URL": f"{url}?{param}={payload}" if method.lower() == 'get' else url,
+                    "Method": method.upper(),
+                    "Content_Type": response.headers.get('content-type', 'N/A'),
+                    "Server_Header": response.headers.get('server', 'N/A'),
+                    "Response_Size": len(response.content),
+                    "Confidence": "Medium"
                 }
                 return timing_finding
             
@@ -8375,7 +8393,14 @@ class LFIScanner:
                     "Response_Time": round(response_time, 3),
                     "Response_Length": len(response.text),
                     "Status_Code": response.status_code,
-                    "Detection_Method": "Error-based"
+                    "Detection_Method": "Error-based",
+                    "Evidence": response.text[:200] + "..." if len(response.text) > 200 else response.text,
+                    "Full_URL": f"{url}?{param}={payload}" if method.lower() == 'get' else url,
+                    "Method": method.upper(),
+                    "Content_Type": response.headers.get('content-type', 'N/A'),
+                    "Server_Header": response.headers.get('server', 'N/A'),
+                    "Response_Size": len(response.content),
+                    "Confidence": "Low"
                 }
                 return error_finding
                 
@@ -8742,80 +8767,190 @@ class LFIScanner:
             timing_findings = [f for f in self.vulnerable_points if 'Timing' in f['Tipo']]
             error_findings = [f for f in self.vulnerable_points if 'Error' in f['Tipo']]
             
-            # Tabela principal de vulnerabilidades críticas e altas
+            # Resumo executivo destacado
+            critical_count = len([f for f in self.vulnerable_points if f['Risco'] == 'Crítico'])
+            high_count = len([f for f in self.vulnerable_points if f['Risco'] == 'Alto'])
+            
+            if critical_count > 0:
+                console.print(f"[bold red]⚠️ ALERTA: {critical_count} vulnerabilidade(s) CRÍTICA(S) encontrada(s)![/bold red]")
+            if high_count > 0:
+                console.print(f"[bold orange1]⚠️ ATENÇÃO: {high_count} vulnerabilidade(s) de ALTO RISCO encontrada(s)![/bold orange1]")
+            
+            console.print()
+            
+            # Tabela principal de vulnerabilidades críticas e altas com mais detalhes
             critical_high = [f for f in self.vulnerable_points if f['Risco'] in ['Crítico', 'Alto']]
             if critical_high:
-                table = Table(title="[bold red]Vulnerabilidades Críticas e de Alto Risco[/bold red]")
-                table.add_column("Tipo", style="red")
-                table.add_column("Risco", style="red")
-                table.add_column("Detalhe", style="cyan")
-                table.add_column("Payload", style="yellow")
-                table.add_column("Status", style="green")
-                table.add_column("Tempo (s)", style="magenta")
+                table = Table(title="[bold red]Vulnerabilidades Críticas e de Alto Risco - PRIORIDADE MÁXIMA[/bold red]")
+                table.add_column("Tipo", style="red", width=8)
+                table.add_column("Risco", style="red", width=8)
+                table.add_column("Parâmetro", style="cyan", width=12)
+                table.add_column("Técnica Bypass", style="yellow", width=15)
+                table.add_column("Status/Tempo", style="green", width=12)
+                table.add_column("Evidência", style="magenta", width=20)
                 
                 for f in critical_high:
-                    payload = f.get('Payload', 'N/A')[:50] + '...' if len(f.get('Payload', '')) > 50 else f.get('Payload', 'N/A')
+                    # Extrair informações mais detalhadas
+                    payload = f.get('Payload', 'N/A')
+                    bypass_technique = self._identify_bypass_technique(payload)
+                    evidence = f.get('Evidence', 'N/A')[:20] + '...' if len(f.get('Evidence', '')) > 20 else f.get('Evidence', 'N/A')
+                    
                     table.add_row(
                         f['Tipo'],
                         f['Risco'],
                         f['Detalhe'],
-                        payload,
-                        str(f.get('Status_Code', 'N/A')),
-                        str(f.get('Response_Time', 'N/A'))
+                        bypass_technique,
+                        f"{f.get('Status_Code', 'N/A')}/{f.get('Response_Time', 'N/A')}s",
+                        evidence
                     )
                 console.print(table)
                 console.print()
+                
+                # Detalhes técnicos para cada vulnerabilidade crítica/alta
+                for idx, finding in enumerate(critical_high, 1):
+                    console.print(f"[bold red]📋 Detalhes Técnicos - Vulnerabilidade {idx}:[/bold red]")
+                    console.print(f"   • [bold]URL Completa:[/bold] {finding.get('Full_URL', 'N/A')}")
+                    console.print(f"   • [bold]Payload Exato:[/bold] {finding.get('Payload', 'N/A')}")
+                    console.print(f"   • [bold]Método HTTP:[/bold] {finding.get('Method', 'GET')}")
+                    console.print(f"   • [bold]Content-Type:[/bold] {finding.get('Content_Type', 'N/A')}")
+                    console.print(f"   • [bold]Tamanho Resposta:[/bold] {finding.get('Response_Size', 'N/A')} bytes")
+                    if finding.get('Server_Header'):
+                        console.print(f"   • [bold]Servidor:[/bold] {finding.get('Server_Header', 'N/A')}")
+                    console.print(f"   • [bold]Impacto Estimado:[/bold] {self._calculate_impact(finding)}")
+                    console.print()
             
             # Tabela de vulnerabilidades médias e baixas
             medium_low = [f for f in self.vulnerable_points if f['Risco'] in ['Médio', 'Baixo']]
             if medium_low:
                 table2 = Table(title="[bold yellow]Vulnerabilidades de Médio e Baixo Risco[/bold yellow]")
-                table2.add_column("Tipo", style="yellow")
-                table2.add_column("Risco", style="yellow")
-                table2.add_column("Detalhe", style="cyan")
-                table2.add_column("Método de Detecção", style="green")
-                table2.add_column("Status", style="green")
+                table2.add_column("Tipo", style="yellow", width=8)
+                table2.add_column("Risco", style="yellow", width=8)
+                table2.add_column("Parâmetro", style="cyan", width=12)
+                table2.add_column("Método Detecção", style="green", width=15)
+                table2.add_column("Status", style="green", width=8)
+                table2.add_column("Confiança", style="blue", width=10)
                 
                 for f in medium_low:
+                    confidence = f.get('Confidence', 'Medium')
                     table2.add_row(
                         f['Tipo'],
                         f['Risco'],
                         f['Detalhe'],
                         f.get('Detection_Method', 'Signature-based'),
-                        str(f.get('Status_Code', 'N/A'))
+                        str(f.get('Status_Code', 'N/A')),
+                        confidence
                     )
                 console.print(table2)
                 console.print()
             
-            # Estatísticas resumidas
-            stats_table = Table(title="[bold blue]Estatísticas do Scan[/bold blue]")
-            stats_table.add_column("Categoria", style="blue")
-            stats_table.add_column("Quantidade", style="white")
+            # Estatísticas expandidas
+            stats_table = Table(title="[bold blue]📊 Estatísticas Detalhadas do Scan[/bold blue]")
+            stats_table.add_column("Categoria", style="blue", width=25)
+            stats_table.add_column("Quantidade", style="white", width=10)
+            stats_table.add_column("Percentual", style="cyan", width=10)
             
-            stats_table.add_row("Total de Vulnerabilidades", str(len(self.vulnerable_points)))
-            stats_table.add_row("LFI Confirmadas", str(len(lfi_findings)))
-            stats_table.add_row("RFI Confirmadas", str(len(rfi_findings)))
-            stats_table.add_row("Timing-based", str(len(timing_findings)))
-            stats_table.add_row("Error-based", str(len(error_findings)))
-            stats_table.add_row("Crítico", str(len([f for f in self.vulnerable_points if f['Risco'] == 'Crítico'])))
-            stats_table.add_row("Alto", str(len([f for f in self.vulnerable_points if f['Risco'] == 'Alto'])))
-            stats_table.add_row("Médio", str(len([f for f in self.vulnerable_points if f['Risco'] == 'Médio'])))
-            stats_table.add_row("Baixo", str(len([f for f in self.vulnerable_points if f['Risco'] == 'Baixo'])))
+            total_vulns = len(self.vulnerable_points)
+            stats_table.add_row("Total de Vulnerabilidades", str(total_vulns), "100%")
+            stats_table.add_row("LFI Confirmadas", str(len(lfi_findings)), f"{len(lfi_findings)/total_vulns*100:.1f}%" if total_vulns > 0 else "0%")
+            stats_table.add_row("RFI Confirmadas", str(len(rfi_findings)), f"{len(rfi_findings)/total_vulns*100:.1f}%" if total_vulns > 0 else "0%")
+            stats_table.add_row("Timing-based", str(len(timing_findings)), f"{len(timing_findings)/total_vulns*100:.1f}%" if total_vulns > 0 else "0%")
+            stats_table.add_row("Error-based", str(len(error_findings)), f"{len(error_findings)/total_vulns*100:.1f}%" if total_vulns > 0 else "0%")
+            stats_table.add_row("Crítico", str(critical_count), f"{critical_count/total_vulns*100:.1f}%" if total_vulns > 0 else "0%")
+            stats_table.add_row("Alto", str(high_count), f"{high_count/total_vulns*100:.1f}%" if total_vulns > 0 else "0%")
+            stats_table.add_row("Médio", str(len([f for f in self.vulnerable_points if f['Risco'] == 'Médio'])), f"{len([f for f in self.vulnerable_points if f['Risco'] == 'Médio'])/total_vulns*100:.1f}%" if total_vulns > 0 else "0%")
+            stats_table.add_row("Baixo", str(len([f for f in self.vulnerable_points if f['Risco'] == 'Baixo'])), f"{len([f for f in self.vulnerable_points if f['Risco'] == 'Baixo'])/total_vulns*100:.1f}%" if total_vulns > 0 else "0%")
             
             console.print(stats_table)
             
-            # Recomendações gerais
-            console.print("\n[bold blue]Recomendações de Segurança:[/bold blue]")
-            console.print("• Implementar validação rigorosa de entrada")
-            console.print("• Usar whitelist de arquivos permitidos")
-            console.print("• Implementar path canonicalization")
-            console.print("• Configurar chroot/jail para o servidor web")
-            console.print("• Desabilitar funções perigosas do PHP (allow_url_include, allow_url_fopen)")
-            console.print("• Implementar Content Security Policy (CSP)")
-            console.print("• Monitorar logs de acesso para padrões suspeitos")
-            console.print("• Atualizar regularmente o sistema e aplicações")
+            # Recomendações priorizadas por criticidade
+            console.print("\n[bold blue]Recomendações Priorizadas para Correção:[/bold blue]")
+            if critical_count > 0 or high_count > 0:
+                console.print("[bold red]AÇÃO IMEDIATA NECESSÁRIA:[/bold red]")
+                console.print("   1. Implementar validação rigorosa de entrada nos parâmetros afetados")
+                console.print("   2. Desabilitar allow_url_include e allow_url_fopen no PHP")
+                console.print("   3. Implementar whitelist de arquivos permitidos")
+                console.print("   4. Configurar chroot/jail para isolamento do servidor web")
+                console.print()
+            
+            console.print("[bold yellow]MELHORIAS DE SEGURANÇA:[/bold yellow]")
+            console.print("   • Implementar path canonicalization")
+            console.print("   • Configurar Content Security Policy (CSP)")
+            console.print("   • Implementar rate limiting para requisições suspeitas")
+            console.print("   • Monitorar logs de acesso para padrões de path traversal")
+            console.print("   • Atualizar regularmente o sistema e aplicações")
+            console.print("   • Implementar Web Application Firewall (WAF)")
+            
+            # Próximos passos recomendados
+            console.print("\n[bold cyan]Próximos Passos para Pentest:[/bold cyan]")
+            if lfi_findings:
+                console.print("   • Tentar escalação através de log poisoning")
+                console.print("   • Testar inclusão de arquivos de sistema críticos")
+                console.print("   • Verificar possibilidade de RCE através de wrappers PHP")
+            if rfi_findings:
+                console.print("   • Tentar upload de webshell através de RFI")
+                console.print("   • Testar inclusão de arquivos maliciosos externos")
             
         console.print("-" * 80)
+
+    def _identify_bypass_technique(self, payload):
+        """Identifica a técnica de bypass usada no payload"""
+        if not payload:
+            return "N/A"
+        
+        payload_lower = payload.lower()
+        
+        # Técnicas de encoding
+        if "%2e%2e" in payload_lower or "%2f" in payload_lower:
+            return "URL Encoding"
+        elif "%c0%af" in payload_lower or "%c1%9c" in payload_lower:
+            return "UTF-8 Overlong"
+        elif "%00" in payload_lower:
+            return "Null Byte"
+        elif payload_lower.count("%") > 6:
+            return "Double Encoding"
+        
+        # Técnicas de path traversal
+        elif "../" in payload_lower:
+            return "Path Traversal"
+        elif "..\\\\" in payload_lower:
+            return "Windows Path"
+        elif "php://filter" in payload_lower:
+            return "PHP Filter"
+        elif "php://input" in payload_lower:
+            return "PHP Input"
+        elif "data://" in payload_lower:
+            return "Data URI"
+        elif "http://" in payload_lower or "https://" in payload_lower:
+            return "RFI"
+        elif "file://" in payload_lower:
+            return "File URI"
+        else:
+            return "Direct Include"
+
+    def _calculate_impact(self, finding):
+        """Calcula o impacto estimado da vulnerabilidade"""
+        impact_factors = []
+        
+        # Baseado no tipo de vulnerabilidade
+        if "LFI" in finding.get('Tipo', ''):
+            if "Critical" in finding.get('Risco', ''):
+                impact_factors.append("Leitura de arquivos críticos do sistema")
+            impact_factors.append("Exposição de informações sensíveis")
+        
+        if "RFI" in finding.get('Tipo', ''):
+            impact_factors.append("Execução remota de código")
+            impact_factors.append("Upload de webshell")
+        
+        # Baseado no payload
+        payload = finding.get('Payload', '').lower()
+        if 'passwd' in payload or 'shadow' in payload:
+            impact_factors.append("Acesso a credenciais do sistema")
+        if 'config' in payload or '.env' in payload:
+            impact_factors.append("Exposição de configurações")
+        if 'log' in payload:
+            impact_factors.append("Possível log poisoning")
+        
+        return " | ".join(impact_factors[:3]) if impact_factors else "Exposição de informações"
 
     def export_findings(self, filename='lfi_scan_results.json'):
         """Exporta os resultados para um arquivo JSON"""
@@ -8823,23 +8958,68 @@ class LFIScanner:
             console.print("[yellow]Nenhuma vulnerabilidade encontrada para exportar.[/yellow]")
             return
             
+        # Análise de técnicas de bypass encontradas
+        bypass_techniques = {}
+        confidence_levels = {'High': 0, 'Medium': 0, 'Low': 0}
+        
+        for finding in self.vulnerable_points:
+            technique = self._identify_bypass_technique(finding.get('Payload', ''))
+            bypass_techniques[technique] = bypass_techniques.get(technique, 0) + 1
+            
+            conf = finding.get('Confidence', 'Medium')
+            confidence_levels[conf] = confidence_levels.get(conf, 0) + 1
+        
         export_data = {
             'scan_info': {
                 'target': self.base_url,
                 'timestamp': datetime.now().isoformat(),
                 'total_vulnerabilities': len(self.vulnerable_points),
-                'scanner_version': '2.0',
+                'scanner_version': '3.0 Enhanced',
                 'timeout': self.timeout,
-                'threads': self.threads
+                'threads': self.threads,
+                'scan_duration': getattr(self, 'scan_duration', 'N/A'),
+                'payloads_tested': getattr(self, 'payloads_tested', 'N/A'),
+                'requests_sent': getattr(self, 'requests_sent', 'N/A')
             },
             'vulnerabilities': self.vulnerable_points,
             'statistics': {
-                'critical': len([f for f in self.vulnerable_points if f['Risco'] == 'Crítico']),
-                'high': len([f for f in self.vulnerable_points if f['Risco'] == 'Alto']),
-                'medium': len([f for f in self.vulnerable_points if f['Risco'] == 'Médio']),
-                'low': len([f for f in self.vulnerable_points if f['Risco'] == 'Baixo']),
-                'lfi_count': len([f for f in self.vulnerable_points if 'LFI' in f['Tipo']]),
-                'rfi_count': len([f for f in self.vulnerable_points if 'RFI' in f['Tipo']])
+                'risk_distribution': {
+                    'critical': len([f for f in self.vulnerable_points if f['Risco'] == 'Crítico']),
+                    'high': len([f for f in self.vulnerable_points if f['Risco'] == 'Alto']),
+                    'medium': len([f for f in self.vulnerable_points if f['Risco'] == 'Médio']),
+                    'low': len([f for f in self.vulnerable_points if f['Risco'] == 'Baixo'])
+                },
+                'vulnerability_types': {
+                    'lfi_count': len([f for f in self.vulnerable_points if 'LFI' in f['Tipo']]),
+                    'rfi_count': len([f for f in self.vulnerable_points if 'RFI' in f['Tipo']]),
+                    'timing_based': len([f for f in self.vulnerable_points if 'Timing' in f['Tipo']]),
+                    'error_based': len([f for f in self.vulnerable_points if 'Error' in f['Tipo']])
+                },
+                'bypass_techniques': bypass_techniques,
+                'confidence_levels': confidence_levels
+            },
+            'recommendations': {
+                'immediate_actions': [
+                    "Implementar validação rigorosa de entrada nos parâmetros afetados",
+                    "Desabilitar allow_url_include e allow_url_fopen no PHP",
+                    "Implementar whitelist de arquivos permitidos",
+                    "Configurar chroot/jail para isolamento do servidor web"
+                ],
+                'security_improvements': [
+                    "Implementar path canonicalization",
+                    "Configurar Content Security Policy (CSP)",
+                    "Implementar rate limiting para requisições suspeitas",
+                    "Monitorar logs de acesso para padrões de path traversal",
+                    "Atualizar regularmente o sistema e aplicações",
+                    "Implementar Web Application Firewall (WAF)"
+                ],
+                'pentest_next_steps': [
+                    "Tentar escalação através de log poisoning",
+                    "Testar inclusão de arquivos de sistema críticos",
+                    "Verificar possibilidade de RCE através de wrappers PHP",
+                    "Tentar upload de webshell através de RFI",
+                    "Testar inclusão de arquivos maliciosos externos"
+                ]
             }
         }
         
