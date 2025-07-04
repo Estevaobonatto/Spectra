@@ -8591,7 +8591,7 @@ class LFIScanner:
             
         try:
             with console.status("[bold green]Coletando pontos de entrada...[/bold green]"):
-                response = self.session.get(self.base_url, timeout=self.timeout, verify=False)
+                response = self._get_session().get(self.base_url, timeout=self.timeout, verify=False)
                 soup = BeautifulSoup(response.content, 'html.parser')
                 
             if self.verbose:
