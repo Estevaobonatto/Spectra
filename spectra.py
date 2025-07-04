@@ -9629,6 +9629,41 @@ Exemplos de Uso:
   # Discovery com output em JSON para integração
   python %(prog)s discover -u https://api.example.com -w wordlists/api.txt --output json --no-extensions
 
+  [ Análise DNS & Subdomínios Avançada ]
+  # Análise básica de DNS com todos os registros comuns
+  python %(prog)s dns -d example.com
+  
+  # Consulta específica de registros MX para análise de email
+  python %(prog)s dns -d company.com -t MX
+  
+  # Análise completa de DNS com verificações de segurança (DNSSEC, Zone Transfer, etc.)
+  python %(prog)s dns -d target.com -t ALL
+  
+  # Scanner de subdomínios básico com detecção de wildcard DNS
+  python %(prog)s subdomain -d example.com -w wordlists/subdomains.txt
+  
+  # Scanner de subdomínios avançado com detecção de subdomain takeover
+  python %(prog)s subdomain -d target.com -w wordlists/subdomains-top1million.txt --workers 50
+  
+  # Análise de DNS reverso para IP único
+  python %(prog)s reverse-dns -t 8.8.8.8
+  
+  # Análise de DNS reverso para domínio (resolve IPs automaticamente)
+  python %(prog)s reverse-dns -t cloudflare.com
+
+  [ Detecção de Tecnologias Web Avançada ]
+  # Detecção básica de tecnologias web
+  python %(prog)s tech-detect -u https://example.com
+  
+  # Análise verbose com detecção de DNS e subdomínios
+  python %(prog)s tech-detect -u https://target.com --verbose
+  
+  # Output em JSON para análise automatizada
+  python %(prog)s tech-detect -u https://api.site.com --output json
+  
+  # Output em XML para integração com outras ferramentas
+  python %(prog)s tech-detect -u https://company.com --output xml --verbose
+
   [ Utilitários ]
   # Visualiza o conteúdo de um ficheiro online (ex: robots.txt)
   python %(prog)s view -u https://www.google.com/robots.txt

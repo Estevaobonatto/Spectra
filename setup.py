@@ -17,11 +17,11 @@ setup(
     version='2.8',
 
     # Autor e email
-    author='Seu Nome',
-    author_email='seu.email@example.com',
+    author='Spectra',
+    author_email='',
 
     # Breve descrição
-    description='Spectra - Uma ferramenta de hacking ético para análise de segurança web.',
+    description='Spectra - Análise de segurança web.',
 
     # Descrição longa (do README)
     long_description=long_description,
