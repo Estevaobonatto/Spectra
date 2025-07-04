@@ -2737,17 +2737,942 @@ class AdvancedTechnologyDetector:
 
             'dns_records': {
                 'CNAME': {
+                    # Website Builders & CMS
                     'sites.squarespace.com': {'name': 'Squarespace', 'category': 'cms_platforms'},
                     'shops.myshopify.com': {'name': 'Shopify', 'category': 'cms_platforms'},
+                    'proxy.webflow.com': {'name': 'Webflow', 'category': 'cms_platforms'},
+                    'domains.tumblr.com': {'name': 'Tumblr', 'category': 'cms_platforms'},
+                    'redirect.feedpress.me': {'name': 'FeedPress', 'category': 'cms_platforms'},
+                    'domains.wordpress.com': {'name': 'WordPress.com', 'category': 'cms_platforms'},
+                    'ghs.google.com': {'name': 'Google Sites', 'category': 'cms_platforms'},
+                    'weebly.com': {'name': 'Weebly', 'category': 'cms_platforms'},
+                    'wix.com': {'name': 'Wix', 'category': 'cms_platforms'},
+                    'jimdo.com': {'name': 'Jimdo', 'category': 'cms_platforms'},
+                    'strikingly.com': {'name': 'Strikingly', 'category': 'cms_platforms'},
+                    'carrd.co': {'name': 'Carrd', 'category': 'cms_platforms'},
+                    'tilda.ws': {'name': 'Tilda', 'category': 'cms_platforms'},
+                    'readymag.com': {'name': 'Readymag', 'category': 'cms_platforms'},
+                    'format.com': {'name': 'Format', 'category': 'cms_platforms'},
+                    'carbonmade.com': {'name': 'Carbonmade', 'category': 'cms_platforms'},
+                    'behance.net': {'name': 'Behance', 'category': 'cms_platforms'},
+                    'dribbble.com': {'name': 'Dribbble', 'category': 'cms_platforms'},
+                    'myportfolio.com': {'name': 'Adobe Portfolio', 'category': 'cms_platforms'},
+                    'zyrosite.com': {'name': 'Zyro', 'category': 'cms_platforms'},
+                    'hostinger.com': {'name': 'Hostinger Website Builder', 'category': 'cms_platforms'},
+                    'godaddysites.com': {'name': 'GoDaddy Website Builder', 'category': 'cms_platforms'},
+                    'ionos-server.com': {'name': 'IONOS Website Builder', 'category': 'cms_platforms'},
+                    'websitebuilder.com': {'name': 'Website Builder', 'category': 'cms_platforms'},
+                    'site123.com': {'name': 'SITE123', 'category': 'cms_platforms'},
+                    'yola.net': {'name': 'Yola', 'category': 'cms_platforms'},
+                    'sites.zoho.com': {'name': 'Zoho Sites', 'category': 'cms_platforms'},
+                    'duda.co': {'name': 'Duda', 'category': 'cms_platforms'},
+                    'ucraft.com': {'name': 'uCraft', 'category': 'cms_platforms'},
+                    'ukit.com': {'name': 'uKit', 'category': 'cms_platforms'},
+                    'mozello.com': {'name': 'Mozello', 'category': 'cms_platforms'},
+                    'webnode.com': {'name': 'Webnode', 'category': 'cms_platforms'},
+                    'webstarts.com': {'name': 'WebStarts', 'category': 'cms_platforms'},
+                    'imcreator.com': {'name': 'IM Creator', 'category': 'cms_platforms'},
+                    'sitebuilder.com': {'name': 'SiteBuilder', 'category': 'cms_platforms'},
+                    'about.me': {'name': 'About.me', 'category': 'cms_platforms'},
+                    'linktr.ee': {'name': 'Linktree', 'category': 'cms_platforms'},
+                    'bio.link': {'name': 'Bio.link', 'category': 'cms_platforms'},
+                    'beacons.ai': {'name': 'Beacons', 'category': 'cms_platforms'},
+                    'koji.to': {'name': 'Koji', 'category': 'cms_platforms'},
+                    
+                    # Cloud Platforms
                     'ghs.googlehosted.com': {'name': 'Google Cloud', 'category': 'cloud_services'},
                     'azurewebsites.net': {'name': 'Microsoft Azure', 'category': 'cloud_services'},
-                    'herokuapp.com': {'name': 'Heroku', 'category': 'cloud_services'}
+                    'herokuapp.com': {'name': 'Heroku', 'category': 'cloud_services'},
+                    'vercel.app': {'name': 'Vercel', 'category': 'cloud_services'},
+                    'vercel.com': {'name': 'Vercel', 'category': 'cloud_services'},
+                    'netlify.app': {'name': 'Netlify', 'category': 'cloud_services'},
+                    'netlify.com': {'name': 'Netlify', 'category': 'cloud_services'},
+                    'surge.sh': {'name': 'Surge.sh', 'category': 'cloud_services'},
+                    'github.io': {'name': 'GitHub Pages', 'category': 'cloud_services'},
+                    'gitlab.io': {'name': 'GitLab Pages', 'category': 'cloud_services'},
+                    'bitbucket.io': {'name': 'Bitbucket', 'category': 'cloud_services'},
+                    'render.com': {'name': 'Render', 'category': 'cloud_services'},
+                    'railway.app': {'name': 'Railway', 'category': 'cloud_services'},
+                    'fly.dev': {'name': 'Fly.io', 'category': 'cloud_services'},
+                    'digitaloceanspaces.com': {'name': 'DigitalOcean Spaces', 'category': 'cloud_services'},
+                    'do.co': {'name': 'DigitalOcean', 'category': 'cloud_services'},
+                    'linode.com': {'name': 'Linode', 'category': 'cloud_services'},
+                    'vultr.com': {'name': 'Vultr', 'category': 'cloud_services'},
+                    'hetzner.cloud': {'name': 'Hetzner Cloud', 'category': 'cloud_services'},
+                    'ovh.net': {'name': 'OVH', 'category': 'cloud_services'},
+                    'scaleway.com': {'name': 'Scaleway', 'category': 'cloud_services'},
+                    'upcloud.com': {'name': 'UpCloud', 'category': 'cloud_services'},
+                    'dreamhost.com': {'name': 'DreamHost', 'category': 'cloud_services'},
+                    'bluehost.com': {'name': 'Bluehost', 'category': 'cloud_services'},
+                    'siteground.com': {'name': 'SiteGround', 'category': 'cloud_services'},
+                    'hostgator.com': {'name': 'HostGator', 'category': 'cloud_services'},
+                    'godaddy.com': {'name': 'GoDaddy', 'category': 'cloud_services'},
+                    'namecheap.com': {'name': 'Namecheap', 'category': 'cloud_services'},
+                    'ionos.com': {'name': 'IONOS', 'category': 'cloud_services'},
+                    'a2hosting.com': {'name': 'A2 Hosting', 'category': 'cloud_services'},
+                    'inmotion.com': {'name': 'InMotion Hosting', 'category': 'cloud_services'},
+                    'wpengine.com': {'name': 'WP Engine', 'category': 'cloud_services'},
+                    'kinsta.com': {'name': 'Kinsta', 'category': 'cloud_services'},
+                    'pantheon.io': {'name': 'Pantheon', 'category': 'cloud_services'},
+                    'acquia.com': {'name': 'Acquia', 'category': 'cloud_services'},
+                    'platform.sh': {'name': 'Platform.sh', 'category': 'cloud_services'},
+                    'rackspace.com': {'name': 'Rackspace', 'category': 'cloud_services'},
+                    'cloudways.com': {'name': 'Cloudways', 'category': 'cloud_services'},
+                    'gridpane.com': {'name': 'GridPane', 'category': 'cloud_services'},
+                    'runcloud.io': {'name': 'RunCloud', 'category': 'cloud_services'},
+                    'spinupwp.com': {'name': 'SpinupWP', 'category': 'cloud_services'},
+                    'serverpilot.io': {'name': 'ServerPilot', 'category': 'cloud_services'},
+                    'forge.laravel.com': {'name': 'Laravel Forge', 'category': 'cloud_services'},
+                    'envoyer.io': {'name': 'Laravel Envoyer', 'category': 'cloud_services'},
+                    'vapor.laravel.com': {'name': 'Laravel Vapor', 'category': 'cloud_services'},
+                    'zeit.co': {'name': 'Zeit (Vercel)', 'category': 'cloud_services'},
+                    'now.sh': {'name': 'Zeit Now (Vercel)', 'category': 'cloud_services'},
+                    'firebase.app': {'name': 'Firebase Hosting', 'category': 'cloud_services'},
+                    'firebaseapp.com': {'name': 'Firebase Hosting', 'category': 'cloud_services'},
+                    'aws.amazon.com': {'name': 'Amazon AWS', 'category': 'cloud_services'},
+                    'amazonaws.com': {'name': 'Amazon AWS', 'category': 'cloud_services'},
+                    'awsglobalconfig.com': {'name': 'Amazon AWS', 'category': 'cloud_services'},
+                    's3.amazonaws.com': {'name': 'Amazon S3', 'category': 'cloud_services'},
+                    's3-website': {'name': 'Amazon S3 Website', 'category': 'cloud_services'},
+                    'cloudfront.net': {'name': 'Amazon CloudFront', 'category': 'cdn_services'},
+                    'elb.amazonaws.com': {'name': 'Amazon ELB', 'category': 'cloud_services'},
+                    'elasticbeanstalk.com': {'name': 'Amazon Elastic Beanstalk', 'category': 'cloud_services'},
+                    'compute.amazonaws.com': {'name': 'Amazon EC2', 'category': 'cloud_services'},
+                    'rds.amazonaws.com': {'name': 'Amazon RDS', 'category': 'databases'},
+                    'lightsail.aws.amazon.com': {'name': 'Amazon Lightsail', 'category': 'cloud_services'},
+                    'appspot.com': {'name': 'Google App Engine', 'category': 'cloud_services'},
+                    'googleusercontent.com': {'name': 'Google Cloud Storage', 'category': 'cloud_services'},
+                    'storage.googleapis.com': {'name': 'Google Cloud Storage', 'category': 'cloud_services'},
+                    'compute.googleapis.com': {'name': 'Google Compute Engine', 'category': 'cloud_services'},
+                    'run.app': {'name': 'Google Cloud Run', 'category': 'cloud_services'},
+                    'cloudfunctions.net': {'name': 'Google Cloud Functions', 'category': 'cloud_services'},
+                    'firestore.googleapis.com': {'name': 'Google Firestore', 'category': 'databases'},
+                    'cloudflaressl.com': {'name': 'Cloudflare SSL', 'category': 'security_technologies'},
+                    'cloudflare.net': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    'cloudflare.com': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    'azure-api.net': {'name': 'Microsoft Azure API', 'category': 'cloud_services'},
+                    'azureedge.net': {'name': 'Microsoft Azure CDN', 'category': 'cdn_services'},
+                    'azurefd.net': {'name': 'Microsoft Azure Front Door', 'category': 'cdn_services'},
+                    'database.windows.net': {'name': 'Microsoft SQL Azure', 'category': 'databases'},
+                    'servicebus.windows.net': {'name': 'Microsoft Azure Service Bus', 'category': 'cloud_services'},
+                    'blob.core.windows.net': {'name': 'Microsoft Azure Blob Storage', 'category': 'cloud_services'},
+                    'table.core.windows.net': {'name': 'Microsoft Azure Table Storage', 'category': 'databases'},
+                    'queue.core.windows.net': {'name': 'Microsoft Azure Queue Storage', 'category': 'cloud_services'},
+                    'file.core.windows.net': {'name': 'Microsoft Azure File Storage', 'category': 'cloud_services'},
+                    'documents.azure.com': {'name': 'Microsoft Azure Cosmos DB', 'category': 'databases'},
+                    'vault.azure.net': {'name': 'Microsoft Azure Key Vault', 'category': 'security_technologies'},
+                    'search.windows.net': {'name': 'Microsoft Azure Search', 'category': 'cloud_services'},
+                    'redis.cache.windows.net': {'name': 'Microsoft Azure Redis Cache', 'category': 'databases'},
+                    'servicebus.cloudapi.de': {'name': 'Microsoft Azure Germany', 'category': 'cloud_services'},
+                    
+                    # CDN Services
+                    'cloudfront.net': {'name': 'Amazon CloudFront', 'category': 'cdn_services'},
+                    'azureedge.net': {'name': 'Microsoft Azure CDN', 'category': 'cdn_services'},
+                    'googleusercontent.com': {'name': 'Google Cloud CDN', 'category': 'cdn_services'},
+                    'fastly.com': {'name': 'Fastly', 'category': 'cdn_services'},
+                    'fastlylb.net': {'name': 'Fastly', 'category': 'cdn_services'},
+                    'edgecastcdn.net': {'name': 'EdgeCast', 'category': 'cdn_services'},
+                    'akamai.net': {'name': 'Akamai', 'category': 'cdn_services'},
+                    'akamaihd.net': {'name': 'Akamai', 'category': 'cdn_services'},
+                    'akamaitechnologies.com': {'name': 'Akamai', 'category': 'cdn_services'},
+                    'edgesuite.net': {'name': 'Akamai EdgeSuite', 'category': 'cdn_services'},
+                    'edgekey.net': {'name': 'Akamai EdgeKey', 'category': 'cdn_services'},
+                    'akamaized.net': {'name': 'Akamai', 'category': 'cdn_services'},
+                    'akamaistream.net': {'name': 'Akamai Stream', 'category': 'cdn_services'},
+                    'limelight.com': {'name': 'Limelight Networks', 'category': 'cdn_services'},
+                    'llnwd.net': {'name': 'Limelight Networks', 'category': 'cdn_services'},
+                    'maxcdn.com': {'name': 'MaxCDN', 'category': 'cdn_services'},
+                    'stackpathdns.com': {'name': 'StackPath', 'category': 'cdn_services'},
+                    'stackpathcdn.com': {'name': 'StackPath CDN', 'category': 'cdn_services'},
+                    'jsdelivr.net': {'name': 'jsDelivr', 'category': 'cdn_services'},
+                    'unpkg.com': {'name': 'unpkg', 'category': 'cdn_services'},
+                    'cdnjs.cloudflare.com': {'name': 'cdnjs', 'category': 'cdn_services'},
+                    'googlecdn.com': {'name': 'Google CDN', 'category': 'cdn_services'},
+                    'gstatic.com': {'name': 'Google Static Content', 'category': 'cdn_services'},
+                    'microsoftajax.com': {'name': 'Microsoft Ajax CDN', 'category': 'cdn_services'},
+                    'aspnetcdn.com': {'name': 'Microsoft ASP.NET CDN', 'category': 'cdn_services'},
+                    'bootstrapcdn.com': {'name': 'Bootstrap CDN', 'category': 'cdn_services'},
+                    'jquery.com': {'name': 'jQuery CDN', 'category': 'cdn_services'},
+                    'cdnjs.com': {'name': 'cdnjs', 'category': 'cdn_services'},
+                    'rawgit.com': {'name': 'RawGit', 'category': 'cdn_services'},
+                    'gitcdn.xyz': {'name': 'GitCDN', 'category': 'cdn_services'},
+                    'combinatronics.com': {'name': 'Combinatronics CDN', 'category': 'cdn_services'},
+                    'keycdn.com': {'name': 'KeyCDN', 'category': 'cdn_services'},
+                    'bunnycdn.com': {'name': 'BunnyCDN', 'category': 'cdn_services'},
+                    'kxcdn.com': {'name': 'KeyCDN', 'category': 'cdn_services'},
+                    'hwcdn.net': {'name': 'Highwinds CDN', 'category': 'cdn_services'},
+                    'cachefly.net': {'name': 'CacheFly', 'category': 'cdn_services'},
+                    'belugacdn.com': {'name': 'BelugaCDN', 'category': 'cdn_services'},
+                    'rackspacecloud.com': {'name': 'Rackspace Cloud Files CDN', 'category': 'cdn_services'},
+                    'rackcdn.com': {'name': 'Rackspace CDN', 'category': 'cdn_services'},
+                    'panthercdn.com': {'name': 'PantherCDN', 'category': 'cdn_services'},
+                    'swiftcdn.com': {'name': 'SwiftCDN', 'category': 'cdn_services'},
+                    'cedexis.net': {'name': 'Cedexis', 'category': 'cdn_services'},
+                    'section.io': {'name': 'Section.io', 'category': 'cdn_services'},
+                    'imperva.com': {'name': 'Imperva CDN', 'category': 'cdn_services'},
+                    'sucuri.net': {'name': 'Sucuri CDN', 'category': 'cdn_services'},
+                    'photon.io': {'name': 'Photon CDN', 'category': 'cdn_services'},
+                    'wp.com': {'name': 'WordPress.com CDN', 'category': 'cdn_services'},
+                    'jetpack.com': {'name': 'Jetpack CDN', 'category': 'cdn_services'},
+                    'gravatar.com': {'name': 'Gravatar CDN', 'category': 'cdn_services'},
+                    
+                    # Email Services
+                    'mailgun.org': {'name': 'Mailgun', 'category': 'cloud_services'},
+                    'sendgrid.net': {'name': 'SendGrid', 'category': 'cloud_services'},
+                    'postmarkapp.com': {'name': 'Postmark', 'category': 'cloud_services'},
+                    'amazonses.com': {'name': 'Amazon SES', 'category': 'cloud_services'},
+                    'sparkpostmail.com': {'name': 'SparkPost', 'category': 'cloud_services'},
+                    'mailjet.com': {'name': 'Mailjet', 'category': 'cloud_services'},
+                    'sendinblue.com': {'name': 'Sendinblue', 'category': 'cloud_services'},
+                    'elasticemail.com': {'name': 'Elastic Email', 'category': 'cloud_services'},
+                    'pepipost.com': {'name': 'Pepipost', 'category': 'cloud_services'},
+                    'socketlabs.com': {'name': 'SocketLabs', 'category': 'cloud_services'},
+                    'smtp2go.com': {'name': 'SMTP2GO', 'category': 'cloud_services'},
+                    'mailersend.io': {'name': 'MailerSend', 'category': 'cloud_services'},
+                    'resend.com': {'name': 'Resend', 'category': 'cloud_services'},
+                    'loops.so': {'name': 'Loops', 'category': 'cloud_services'},
+                    'convertkit.com': {'name': 'ConvertKit', 'category': 'cloud_services'},
+                    'activecampaign.com': {'name': 'ActiveCampaign', 'category': 'cloud_services'},
+                    'getdrip.com': {'name': 'Drip', 'category': 'cloud_services'},
+                    'infusionsoft.com': {'name': 'Infusionsoft', 'category': 'cloud_services'},
+                    'keap.com': {'name': 'Keap', 'category': 'cloud_services'},
+                    'ontraport.com': {'name': 'Ontraport', 'category': 'cloud_services'},
+                    'pardot.com': {'name': 'Pardot', 'category': 'cloud_services'},
+                    'marketo.com': {'name': 'Marketo', 'category': 'cloud_services'},
+                    'hubspot.com': {'name': 'HubSpot', 'category': 'cloud_services'},
+                    'mailchimp.com': {'name': 'Mailchimp', 'category': 'cloud_services'},
+                    'constantcontact.com': {'name': 'Constant Contact', 'category': 'cloud_services'},
+                    'aweber.com': {'name': 'AWeber', 'category': 'cloud_services'},
+                    'campaignmonitor.com': {'name': 'Campaign Monitor', 'category': 'cloud_services'},
+                    'getresponse.com': {'name': 'GetResponse', 'category': 'cloud_services'},
+                    'benchmarkemail.com': {'name': 'Benchmark Email', 'category': 'cloud_services'},
+                    'myemma.com': {'name': 'Emma', 'category': 'cloud_services'},
+                    'icontact.com': {'name': 'iContact', 'category': 'cloud_services'},
+                    'verticalresponse.com': {'name': 'Vertical Response', 'category': 'cloud_services'},
+                    'madmimi.com': {'name': 'Mad Mimi', 'category': 'cloud_services'},
+                    'pinpointe.com': {'name': 'Pinpointe', 'category': 'cloud_services'},
+                    
+                    # Database Services
+                    'mongodb.net': {'name': 'MongoDB Atlas', 'category': 'databases'},
+                    'cosmos.azure.com': {'name': 'Azure Cosmos DB', 'category': 'databases'},
+                    'dynamodb.amazonaws.com': {'name': 'Amazon DynamoDB', 'category': 'databases'},
+                    'firestore.googleapis.com': {'name': 'Google Firestore', 'category': 'databases'},
+                    'supabase.co': {'name': 'Supabase', 'category': 'databases'},
+                    'planetscale.com': {'name': 'PlanetScale', 'category': 'databases'},
+                    'railway.app': {'name': 'Railway DB', 'category': 'databases'},
+                    'neon.tech': {'name': 'Neon', 'category': 'databases'},
+                    'cockroachlabs.cloud': {'name': 'CockroachDB', 'category': 'databases'},
+                    'fauna.com': {'name': 'FaunaDB', 'category': 'databases'},
+                    'airtable.com': {'name': 'Airtable', 'category': 'databases'},
+                    'notion.so': {'name': 'Notion', 'category': 'databases'},
+                    'hasura.app': {'name': 'Hasura', 'category': 'databases'},
+                    'graphcms.com': {'name': 'GraphCMS', 'category': 'databases'},
+                    'sanity.studio': {'name': 'Sanity', 'category': 'databases'},
+                    'contentful.com': {'name': 'Contentful', 'category': 'databases'},
+                    'strapi.io': {'name': 'Strapi', 'category': 'databases'},
+                    'redis.com': {'name': 'Redis Cloud', 'category': 'databases'},
+                    'redislabs.com': {'name': 'Redis Labs', 'category': 'databases'},
+                    'memcachier.com': {'name': 'MemCachier', 'category': 'databases'},
+                    'elephantsql.com': {'name': 'ElephantSQL', 'category': 'databases'},
+                    'cleardb.com': {'name': 'ClearDB', 'category': 'databases'},
+                    'jawsdb.com': {'name': 'JawsDB', 'category': 'databases'},
+                    'remotemysql.com': {'name': 'RemoteMySQL', 'category': 'databases'},
+                    'freemysqlhosting.net': {'name': 'Free MySQL Hosting', 'category': 'databases'},
+                    'db4free.net': {'name': 'db4free', 'category': 'databases'},
+                    
+                    # Analytics & Tracking
+                    'google-analytics.com': {'name': 'Google Analytics', 'category': 'analytics_tools'},
+                    'googletagmanager.com': {'name': 'Google Tag Manager', 'category': 'analytics_tools'},
+                    'doubleclick.net': {'name': 'Google DoubleClick', 'category': 'analytics_tools'},
+                    'googlesyndication.com': {'name': 'Google AdSense', 'category': 'analytics_tools'},
+                    'googleadservices.com': {'name': 'Google Ads', 'category': 'analytics_tools'},
+                    'facebook.com': {'name': 'Facebook Pixel', 'category': 'analytics_tools'},
+                    'connect.facebook.net': {'name': 'Facebook SDK', 'category': 'analytics_tools'},
+                    'hotjar.com': {'name': 'Hotjar', 'category': 'analytics_tools'},
+                    'segment.com': {'name': 'Segment', 'category': 'analytics_tools'},
+                    'segment.io': {'name': 'Segment', 'category': 'analytics_tools'},
+                    'amplitude.com': {'name': 'Amplitude', 'category': 'analytics_tools'},
+                    'mixpanel.com': {'name': 'Mixpanel', 'category': 'analytics_tools'},
+                    'fullstory.com': {'name': 'FullStory', 'category': 'analytics_tools'},
+                    'logrocket.com': {'name': 'LogRocket', 'category': 'analytics_tools'},
+                    'smartlook.com': {'name': 'Smartlook', 'category': 'analytics_tools'},
+                    'mouseflow.com': {'name': 'Mouseflow', 'category': 'analytics_tools'},
+                    'crazyegg.com': {'name': 'Crazy Egg', 'category': 'analytics_tools'},
+                    'luckyorange.com': {'name': 'Lucky Orange', 'category': 'analytics_tools'},
+                    'inspectlet.com': {'name': 'Inspectlet', 'category': 'analytics_tools'},
+                    'clicktale.net': {'name': 'ClickTale', 'category': 'analytics_tools'},
+                    'sessioncam.com': {'name': 'SessionCam', 'category': 'analytics_tools'},
+                    'quantummetric.com': {'name': 'Quantum Metric', 'category': 'analytics_tools'},
+                    'contentsquare.net': {'name': 'ContentSquare', 'category': 'analytics_tools'},
+                    'glassbox.com': {'name': 'Glassbox', 'category': 'analytics_tools'},
+                    'dynatrace.com': {'name': 'Dynatrace', 'category': 'analytics_tools'},
+                    'newrelic.com': {'name': 'New Relic', 'category': 'analytics_tools'},
+                    'datadog.com': {'name': 'Datadog', 'category': 'analytics_tools'},
+                    'sentry.io': {'name': 'Sentry', 'category': 'analytics_tools'},
+                    'bugsnag.com': {'name': 'Bugsnag', 'category': 'analytics_tools'},
+                    'rollbar.com': {'name': 'Rollbar', 'category': 'analytics_tools'},
+                    'honeybadger.io': {'name': 'Honeybadger', 'category': 'analytics_tools'},
+                    'raygun.com': {'name': 'Raygun', 'category': 'analytics_tools'},
+                    'airbrake.io': {'name': 'Airbrake', 'category': 'analytics_tools'},
+                    'errorception.com': {'name': 'Errorception', 'category': 'analytics_tools'},
+                    'muscula.com': {'name': 'Muscula', 'category': 'analytics_tools'},
+                    'trackjs.com': {'name': 'TrackJS', 'category': 'analytics_tools'},
+                    'exceptionsjs.com': {'name': 'ExceptionsJS', 'category': 'analytics_tools'},
+                    'errorify.io': {'name': 'Errorify', 'category': 'analytics_tools'},
+                    'flawcheck.com': {'name': 'FlawCheck', 'category': 'analytics_tools'},
+                    'errorbucket.com': {'name': 'ErrorBucket', 'category': 'analytics_tools'},
+                    'exceptionless.com': {'name': 'Exceptionless', 'category': 'analytics_tools'},
+                    'elmah.io': {'name': 'elmah.io', 'category': 'analytics_tools'},
+                    'retrace.stackify.com': {'name': 'Stackify Retrace', 'category': 'analytics_tools'},
+                    'stackify.com': {'name': 'Stackify', 'category': 'analytics_tools'},
+                    'appsignal.com': {'name': 'AppSignal', 'category': 'analytics_tools'},
+                    'scout-apm.com': {'name': 'Scout APM', 'category': 'analytics_tools'},
+                    'skylight.io': {'name': 'Skylight', 'category': 'analytics_tools'},
+                    'pingdom.com': {'name': 'Pingdom', 'category': 'analytics_tools'},
+                    'uptime.com': {'name': 'Uptime.com', 'category': 'analytics_tools'},
+                    'uptimerobot.com': {'name': 'UptimeRobot', 'category': 'analytics_tools'},
+                    'statuspage.io': {'name': 'StatusPage', 'category': 'analytics_tools'},
+                    'cachet.io': {'name': 'Cachet', 'category': 'analytics_tools'},
+                    'freshping.io': {'name': 'Freshping', 'category': 'analytics_tools'},
+                    'pingbreak.com': {'name': 'Pingbreak', 'category': 'analytics_tools'},
+                    'monitor.us': {'name': 'Monitor.us', 'category': 'analytics_tools'},
+                    'site24x7.com': {'name': 'Site24x7', 'category': 'analytics_tools'},
+                    'monitis.com': {'name': 'Monitis', 'category': 'analytics_tools'},
+                    'nodeping.com': {'name': 'NodePing', 'category': 'analytics_tools'},
+                    'montastic.com': {'name': 'Montastic', 'category': 'analytics_tools'},
+                    'checkly.com': {'name': 'Checkly', 'category': 'analytics_tools'},
+                    'ghostinspector.com': {'name': 'Ghost Inspector', 'category': 'analytics_tools'},
+                    'browserstack.com': {'name': 'BrowserStack', 'category': 'development_tools'},
+                    'saucelabs.com': {'name': 'Sauce Labs', 'category': 'development_tools'},
+                    'crossbrowsertesting.com': {'name': 'CrossBrowserTesting', 'category': 'development_tools'},
+                    'lambdatest.com': {'name': 'LambdaTest', 'category': 'development_tools'},
+                    'testingbot.com': {'name': 'TestingBot', 'category': 'development_tools'},
+                    'selenium.dev': {'name': 'Selenium Grid', 'category': 'development_tools'},
+                    'webdriver.io': {'name': 'WebDriver.io', 'category': 'development_tools'},
+                    'cypress.io': {'name': 'Cypress', 'category': 'development_tools'},
+                    'playwright.dev': {'name': 'Playwright', 'category': 'development_tools'},
+                    'puppeteer.dev': {'name': 'Puppeteer', 'category': 'development_tools'}
                 },
+                
                 'TXT': {
+                    # Domain Verification
                     'google-site-verification': {'name': 'Google Search Console', 'category': 'development_tools'},
                     'facebook-domain-verification': {'name': 'Facebook', 'category': 'analytics_tools'},
+                    'yandex-verification': {'name': 'Yandex Webmaster', 'category': 'development_tools'},
+                    'bing-site-verification': {'name': 'Bing Webmaster Tools', 'category': 'development_tools'},
+                    'apple-domain-verification': {'name': 'Apple Developer', 'category': 'development_tools'},
+                    'zoom-domain-verification': {'name': 'Zoom', 'category': 'development_tools'},
+                    'stripe-verification': {'name': 'Stripe', 'category': 'development_tools'},
+                    'paypal-domain-verification': {'name': 'PayPal', 'category': 'development_tools'},
+                    'shopify-domain-verification': {'name': 'Shopify', 'category': 'cms_platforms'},
+                    'squarespace-domain-verification': {'name': 'Squarespace', 'category': 'cms_platforms'},
+                    'wix-verification': {'name': 'Wix', 'category': 'cms_platforms'},
+                    'weebly-verification': {'name': 'Weebly', 'category': 'cms_platforms'},
+                    'webflow-verification': {'name': 'Webflow', 'category': 'cms_platforms'},
+                    'adobe-domain-verification': {'name': 'Adobe', 'category': 'development_tools'},
+                    'atlassian-domain-verification': {'name': 'Atlassian', 'category': 'development_tools'},
+                    'slack-verification': {'name': 'Slack', 'category': 'development_tools'},
+                    'discord-verification': {'name': 'Discord', 'category': 'development_tools'},
+                    'telegram-verification': {'name': 'Telegram', 'category': 'development_tools'},
+                    'whatsapp-verification': {'name': 'WhatsApp Business', 'category': 'development_tools'},
+                    'twitter-verification': {'name': 'Twitter', 'category': 'analytics_tools'},
+                    'linkedin-verification': {'name': 'LinkedIn', 'category': 'analytics_tools'},
+                    'pinterest-verification': {'name': 'Pinterest', 'category': 'analytics_tools'},
+                    'tiktok-verification': {'name': 'TikTok', 'category': 'analytics_tools'},
+                    'youtube-verification': {'name': 'YouTube', 'category': 'analytics_tools'},
+                    'instagram-verification': {'name': 'Instagram', 'category': 'analytics_tools'},
+                    'snapchat-verification': {'name': 'Snapchat', 'category': 'analytics_tools'},
+                    'reddit-verification': {'name': 'Reddit', 'category': 'analytics_tools'},
+                    'medium-verification': {'name': 'Medium', 'category': 'analytics_tools'},
+                    'tumblr-verification': {'name': 'Tumblr', 'category': 'analytics_tools'},
+                    'behance-verification': {'name': 'Behance', 'category': 'analytics_tools'},
+                    'dribbble-verification': {'name': 'Dribbble', 'category': 'analytics_tools'},
+                    'github-verification': {'name': 'GitHub', 'category': 'development_tools'},
+                    'gitlab-verification': {'name': 'GitLab', 'category': 'development_tools'},
+                    'bitbucket-verification': {'name': 'Bitbucket', 'category': 'development_tools'},
+                    'codepen-verification': {'name': 'CodePen', 'category': 'development_tools'},
+                    'jsfiddle-verification': {'name': 'JSFiddle', 'category': 'development_tools'},
+                    'replit-verification': {'name': 'Replit', 'category': 'development_tools'},
+                    'glitch-verification': {'name': 'Glitch', 'category': 'development_tools'},
+                    'stackblitz-verification': {'name': 'StackBlitz', 'category': 'development_tools'},
+                    'codesandbox-verification': {'name': 'CodeSandbox', 'category': 'development_tools'},
+                    'observablehq-verification': {'name': 'Observable', 'category': 'development_tools'},
+                    'kaggle-verification': {'name': 'Kaggle', 'category': 'development_tools'},
+                    'huggingface-verification': {'name': 'Hugging Face', 'category': 'development_tools'},
+                    'dockerhub-verification': {'name': 'Docker Hub', 'category': 'development_tools'},
+                    'npm-verification': {'name': 'npm', 'category': 'development_tools'},
+                    'pypi-verification': {'name': 'PyPI', 'category': 'development_tools'},
+                    'rubygems-verification': {'name': 'RubyGems', 'category': 'development_tools'},
+                    'packagist-verification': {'name': 'Packagist', 'category': 'development_tools'},
+                    'nuget-verification': {'name': 'NuGet', 'category': 'development_tools'},
+                    'mvnrepository-verification': {'name': 'Maven Repository', 'category': 'development_tools'},
+                    'gradle-verification': {'name': 'Gradle', 'category': 'development_tools'},
+                    'cocoapods-verification': {'name': 'CocoaPods', 'category': 'development_tools'},
+                    'carthage-verification': {'name': 'Carthage', 'category': 'development_tools'},
+                    'swiftpackagemanager-verification': {'name': 'Swift Package Manager', 'category': 'development_tools'},
+                    'pub-verification': {'name': 'Dart Pub', 'category': 'development_tools'},
+                    'crates-verification': {'name': 'Crates.io', 'category': 'development_tools'},
+                    'hackage-verification': {'name': 'Hackage', 'category': 'development_tools'},
+                    'hex-verification': {'name': 'Hex.pm', 'category': 'development_tools'},
+                    'opam-verification': {'name': 'OPAM', 'category': 'development_tools'},
+                    'quicklisp-verification': {'name': 'Quicklisp', 'category': 'development_tools'},
+                    'cpan-verification': {'name': 'CPAN', 'category': 'development_tools'},
+                    'go-verification': {'name': 'Go Modules', 'category': 'development_tools'},
+                    'julia-verification': {'name': 'Julia Packages', 'category': 'development_tools'},
+                    'r-verification': {'name': 'CRAN', 'category': 'development_tools'},
+                    'conda-verification': {'name': 'Conda', 'category': 'development_tools'},
+                    'bioconda-verification': {'name': 'Bioconda', 'category': 'development_tools'},
+                    
+                    # Email Authentication - SPF Records
                     'v=spf1 include:spf.protection.outlook.com': {'name': 'Microsoft Office 365', 'category': 'cloud_services'},
-                    'v=spf1 include:_spf.google.com': {'name': 'Google Workspace', 'category': 'cloud_services'}
+                    'v=spf1 include:_spf.google.com': {'name': 'Google Workspace', 'category': 'cloud_services'},
+                    'v=spf1 include:mailgun.org': {'name': 'Mailgun', 'category': 'cloud_services'},
+                    'v=spf1 include:sendgrid.net': {'name': 'SendGrid', 'category': 'cloud_services'},
+                    'v=spf1 include:servers.mcsv.net': {'name': 'Mailchimp', 'category': 'cloud_services'},
+                    'v=spf1 include:amazonses.com': {'name': 'Amazon SES', 'category': 'cloud_services'},
+                    'v=spf1 include:sparkpostmail.com': {'name': 'SparkPost', 'category': 'cloud_services'},
+                    'v=spf1 include:mailjet.com': {'name': 'Mailjet', 'category': 'cloud_services'},
+                    'v=spf1 include:sendinblue.com': {'name': 'Sendinblue', 'category': 'cloud_services'},
+                    'v=spf1 include:elasticemail.com': {'name': 'Elastic Email', 'category': 'cloud_services'},
+                    'v=spf1 include:postmarkapp.com': {'name': 'Postmark', 'category': 'cloud_services'},
+                    'v=spf1 include:mandrillapp.com': {'name': 'Mandrill', 'category': 'cloud_services'},
+                    'v=spf1 include:constantcontact.com': {'name': 'Constant Contact', 'category': 'cloud_services'},
+                    'v=spf1 include:aweber.com': {'name': 'AWeber', 'category': 'cloud_services'},
+                    'v=spf1 include:campaignmonitor.com': {'name': 'Campaign Monitor', 'category': 'cloud_services'},
+                    'v=spf1 include:getresponse.com': {'name': 'GetResponse', 'category': 'cloud_services'},
+                    'v=spf1 include:activecampaign.com': {'name': 'ActiveCampaign', 'category': 'cloud_services'},
+                    'v=spf1 include:convertkit.com': {'name': 'ConvertKit', 'category': 'cloud_services'},
+                    'v=spf1 include:drip.com': {'name': 'Drip', 'category': 'cloud_services'},
+                    'v=spf1 include:infusionsoft.com': {'name': 'Infusionsoft', 'category': 'cloud_services'},
+                    'v=spf1 include:keap.com': {'name': 'Keap', 'category': 'cloud_services'},
+                    'v=spf1 include:ontraport.com': {'name': 'Ontraport', 'category': 'cloud_services'},
+                    'v=spf1 include:pardot.com': {'name': 'Pardot', 'category': 'cloud_services'},
+                    'v=spf1 include:marketo.com': {'name': 'Marketo', 'category': 'cloud_services'},
+                    'v=spf1 include:hubspot.com': {'name': 'HubSpot', 'category': 'cloud_services'},
+                    'v=spf1 include:salesforce.com': {'name': 'Salesforce', 'category': 'cloud_services'},
+                    'v=spf1 include:pipedrive.com': {'name': 'Pipedrive', 'category': 'cloud_services'},
+                    'v=spf1 include:zoho.com': {'name': 'Zoho Mail', 'category': 'cloud_services'},
+                    'v=spf1 include:freshworks.com': {'name': 'Freshworks', 'category': 'cloud_services'},
+                    'v=spf1 include:insightly.com': {'name': 'Insightly', 'category': 'cloud_services'},
+                    'v=spf1 include:capsulecrm.com': {'name': 'Capsule', 'category': 'cloud_services'},
+                    'v=spf1 include:sugarcrm.com': {'name': 'SugarCRM', 'category': 'cloud_services'},
+                    'v=spf1 include:vtiger.com': {'name': 'Vtiger', 'category': 'cloud_services'},
+                    'v=spf1 include:zurmo.com': {'name': 'Zurmo', 'category': 'cloud_services'},
+                    'v=spf1 include:x2crm.com': {'name': 'X2CRM', 'category': 'cloud_services'},
+                    'v=spf1 include:yetiforce.com': {'name': 'YetiForce', 'category': 'cloud_services'},
+                    'v=spf1 include:dolibarr.org': {'name': 'Dolibarr', 'category': 'cloud_services'},
+                    'v=spf1 include:civicrm.org': {'name': 'CiviCRM', 'category': 'cloud_services'},
+                    'v=spf1 include:espocrm.com': {'name': 'EspoCRM', 'category': 'cloud_services'},
+                    'v=spf1 include:suitecrm.com': {'name': 'SuiteCRM', 'category': 'cloud_services'},
+                    
+                    # Security & Anti-Spam
+                    'v=spf1 -all': {'name': 'Strict SPF Policy', 'category': 'security_technologies'},
+                    'v=spf1 ~all': {'name': 'Soft Fail SPF Policy', 'category': 'security_technologies'},
+                    'v=spf1 ?all': {'name': 'Neutral SPF Policy', 'category': 'security_technologies'},
+                    'v=spf1 +all': {'name': 'Pass All SPF Policy', 'category': 'security_technologies'},
+                    'v=DMARC1': {'name': 'DMARC Policy', 'category': 'security_technologies'},
+                    'v=DKIM1': {'name': 'DKIM Key', 'category': 'security_technologies'},
+                    'barracuda-domain-verification': {'name': 'Barracuda', 'category': 'security_technologies'},
+                    'proofpoint-verification': {'name': 'Proofpoint', 'category': 'security_technologies'},
+                    'mimecast-verification': {'name': 'Mimecast', 'category': 'security_technologies'},
+                    'symantec-verification': {'name': 'Symantec', 'category': 'security_technologies'},
+                    'mcafee-verification': {'name': 'McAfee', 'category': 'security_technologies'},
+                    'trendmicro-verification': {'name': 'Trend Micro', 'category': 'security_technologies'},
+                    'fortimail-verification': {'name': 'FortiMail', 'category': 'security_technologies'},
+                    'sophos-verification': {'name': 'Sophos', 'category': 'security_technologies'},
+                    'kaspersky-verification': {'name': 'Kaspersky', 'category': 'security_technologies'},
+                    'bitdefender-verification': {'name': 'Bitdefender', 'category': 'security_technologies'},
+                    'avast-verification': {'name': 'Avast', 'category': 'security_technologies'},
+                    'avg-verification': {'name': 'AVG', 'category': 'security_technologies'},
+                    'norton-verification': {'name': 'Norton', 'category': 'security_technologies'},
+                    'eset-verification': {'name': 'ESET', 'category': 'security_technologies'},
+                    'f-secure-verification': {'name': 'F-Secure', 'category': 'security_technologies'},
+                    'gdata-verification': {'name': 'G Data', 'category': 'security_technologies'},
+                    'comodo-verification': {'name': 'Comodo', 'category': 'security_technologies'},
+                    'checkpoint-verification': {'name': 'Check Point', 'category': 'security_technologies'},
+                    'paloalto-verification': {'name': 'Palo Alto Networks', 'category': 'security_technologies'},
+                    'fortinet-verification': {'name': 'Fortinet', 'category': 'security_technologies'},
+                    'cisco-verification': {'name': 'Cisco', 'category': 'security_technologies'},
+                    'juniper-verification': {'name': 'Juniper Networks', 'category': 'security_technologies'},
+                    'sonicwall-verification': {'name': 'SonicWall', 'category': 'security_technologies'},
+                    'watchguard-verification': {'name': 'WatchGuard', 'category': 'security_technologies'},
+                    'barracuda-verification': {'name': 'Barracuda Networks', 'category': 'security_technologies'},
+                    'cyberoam-verification': {'name': 'Cyberoam', 'category': 'security_technologies'},
+                    'kemp-verification': {'name': 'Kemp Technologies', 'category': 'security_technologies'},
+                    'f5-verification': {'name': 'F5 Networks', 'category': 'security_technologies'},
+                    'citrix-verification': {'name': 'Citrix', 'category': 'security_technologies'},
+                    'vmware-verification': {'name': 'VMware', 'category': 'security_technologies'},
+                    'microsoft-verification': {'name': 'Microsoft', 'category': 'security_technologies'},
+                    'amazon-verification': {'name': 'Amazon', 'category': 'security_technologies'},
+                    'google-verification': {'name': 'Google', 'category': 'security_technologies'},
+                    'cloudflare-verification': {'name': 'Cloudflare', 'category': 'security_technologies'},
+                    'sucuri-verification': {'name': 'Sucuri', 'category': 'security_technologies'},
+                    'wordfence-verification': {'name': 'Wordfence', 'category': 'security_technologies'},
+                    'incapsula-verification': {'name': 'Incapsula', 'category': 'security_technologies'},
+                    'imperva-verification': {'name': 'Imperva', 'category': 'security_technologies'},
+                    'akamai-verification': {'name': 'Akamai', 'category': 'security_technologies'},
+                    'fastly-verification': {'name': 'Fastly', 'category': 'security_technologies'},
+                    'maxcdn-verification': {'name': 'MaxCDN', 'category': 'security_technologies'},
+                    'stackpath-verification': {'name': 'StackPath', 'category': 'security_technologies'},
+                    'keycdn-verification': {'name': 'KeyCDN', 'category': 'security_technologies'},
+                    'bunnycdn-verification': {'name': 'BunnyCDN', 'category': 'security_technologies'},
+                    'cachefly-verification': {'name': 'CacheFly', 'category': 'security_technologies'},
+                    'belugacdn-verification': {'name': 'BelugaCDN', 'category': 'security_technologies'},
+                    'rackspace-verification': {'name': 'Rackspace', 'category': 'security_technologies'},
+                    'digitalocean-verification': {'name': 'DigitalOcean', 'category': 'security_technologies'},
+                    'linode-verification': {'name': 'Linode', 'category': 'security_technologies'},
+                    'vultr-verification': {'name': 'Vultr', 'category': 'security_technologies'},
+                    'hetzner-verification': {'name': 'Hetzner', 'category': 'security_technologies'},
+                    'ovh-verification': {'name': 'OVH', 'category': 'security_technologies'},
+                    'scaleway-verification': {'name': 'Scaleway', 'category': 'security_technologies'},
+                    'upcloud-verification': {'name': 'UpCloud', 'category': 'security_technologies'},
+                    
+                    # Certificate Authorities
+                    'letsencrypt-verification': {'name': 'Let\'s Encrypt', 'category': 'security_technologies'},
+                    'comodo-ca-verification': {'name': 'Comodo CA', 'category': 'security_technologies'},
+                    'symantec-ca-verification': {'name': 'Symantec CA', 'category': 'security_technologies'},
+                    'digicert-verification': {'name': 'DigiCert', 'category': 'security_technologies'},
+                    'globalsign-verification': {'name': 'GlobalSign', 'category': 'security_technologies'},
+                    'godaddy-ca-verification': {'name': 'GoDaddy CA', 'category': 'security_technologies'},
+                    'thawte-verification': {'name': 'Thawte', 'category': 'security_technologies'},
+                    'verisign-verification': {'name': 'VeriSign', 'category': 'security_technologies'},
+                    'geotrust-verification': {'name': 'GeoTrust', 'category': 'security_technologies'},
+                    'rapidssl-verification': {'name': 'RapidSSL', 'category': 'security_technologies'},
+                    'startssl-verification': {'name': 'StartSSL', 'category': 'security_technologies'},
+                    'wosign-verification': {'name': 'WoSign', 'category': 'security_technologies'},
+                    'alphassl-verification': {'name': 'AlphaSSL', 'category': 'security_technologies'},
+                    'trustwave-verification': {'name': 'Trustwave', 'category': 'security_technologies'},
+                    'entrust-verification': {'name': 'Entrust', 'category': 'security_technologies'},
+                    'sectigo-verification': {'name': 'Sectigo', 'category': 'security_technologies'},
+                    'zerossl-verification': {'name': 'ZeroSSL', 'category': 'security_technologies'},
+                    'buypass-verification': {'name': 'Buypass', 'category': 'security_technologies'},
+                    'ssl-com-verification': {'name': 'SSL.com', 'category': 'security_technologies'},
+                    'ssls-com-verification': {'name': 'SSLS.com', 'category': 'security_technologies'},
+                    'namecheap-ssl-verification': {'name': 'Namecheap SSL', 'category': 'security_technologies'},
+                    'cloudflare-ssl-verification': {'name': 'Cloudflare SSL', 'category': 'security_technologies'},
+                    'amazon-ssl-verification': {'name': 'Amazon SSL', 'category': 'security_technologies'},
+                    'google-ssl-verification': {'name': 'Google SSL', 'category': 'security_technologies'},
+                    'microsoft-ssl-verification': {'name': 'Microsoft SSL', 'category': 'security_technologies'},
+                    'letsencrypt-ssl-verification': {'name': 'Let\'s Encrypt SSL', 'category': 'security_technologies'},
+                    'acme-challenge': {'name': 'ACME Challenge', 'category': 'security_technologies'},
+                    'ca-issuers': {'name': 'CA Issuers', 'category': 'security_technologies'},
+                    'ocsp': {'name': 'OCSP', 'category': 'security_technologies'},
+                    'crl': {'name': 'Certificate Revocation List', 'category': 'security_technologies'},
+                    'ct-logs': {'name': 'Certificate Transparency Logs', 'category': 'security_technologies'},
+                    'sct': {'name': 'Signed Certificate Timestamp', 'category': 'security_technologies'},
+                    'expect-ct': {'name': 'Expect-CT', 'category': 'security_technologies'},
+                    'expect-staple': {'name': 'Expect-Staple', 'category': 'security_technologies'},
+                    'hpkp': {'name': 'HTTP Public Key Pinning', 'category': 'security_technologies'},
+                    'hsts': {'name': 'HTTP Strict Transport Security', 'category': 'security_technologies'},
+                    'csp': {'name': 'Content Security Policy', 'category': 'security_technologies'},
+                    'upgrade-insecure-requests': {'name': 'Upgrade Insecure Requests', 'category': 'security_technologies'},
+                    'referrer-policy': {'name': 'Referrer Policy', 'category': 'security_technologies'},
+                    'feature-policy': {'name': 'Feature Policy', 'category': 'security_technologies'},
+                    'permissions-policy': {'name': 'Permissions Policy', 'category': 'security_technologies'},
+                    'x-frame-options': {'name': 'X-Frame-Options', 'category': 'security_technologies'},
+                    'x-content-type-options': {'name': 'X-Content-Type-Options', 'category': 'security_technologies'},
+                    'x-xss-protection': {'name': 'X-XSS-Protection', 'category': 'security_technologies'},
+                    'cross-origin-embedder-policy': {'name': 'Cross-Origin-Embedder-Policy', 'category': 'security_technologies'},
+                    'cross-origin-opener-policy': {'name': 'Cross-Origin-Opener-Policy', 'category': 'security_technologies'},
+                    'cross-origin-resource-policy': {'name': 'Cross-Origin-Resource-Policy', 'category': 'security_technologies'},
+                    'origin-agent-cluster': {'name': 'Origin-Agent-Cluster', 'category': 'security_technologies'},
+                    'sec-fetch-site': {'name': 'Sec-Fetch-Site', 'category': 'security_technologies'},
+                    'sec-fetch-mode': {'name': 'Sec-Fetch-Mode', 'category': 'security_technologies'},
+                    'sec-fetch-user': {'name': 'Sec-Fetch-User', 'category': 'security_technologies'},
+                    'sec-fetch-dest': {'name': 'Sec-Fetch-Dest', 'category': 'security_technologies'},
+                    'sec-websocket-protocol': {'name': 'Sec-WebSocket-Protocol', 'category': 'security_technologies'},
+                    'sec-websocket-extensions': {'name': 'Sec-WebSocket-Extensions', 'category': 'security_technologies'},
+                    'sec-websocket-key': {'name': 'Sec-WebSocket-Key', 'category': 'security_technologies'},
+                    'sec-websocket-accept': {'name': 'Sec-WebSocket-Accept', 'category': 'security_technologies'},
+                    'sec-websocket-version': {'name': 'Sec-WebSocket-Version', 'category': 'security_technologies'}
+                },
+                
+                'MX': {
+                    # Google Workspace
+                    'aspmx.l.google.com': {'name': 'Google Workspace', 'category': 'cloud_services'},
+                    'alt1.aspmx.l.google.com': {'name': 'Google Workspace', 'category': 'cloud_services'},
+                    'alt2.aspmx.l.google.com': {'name': 'Google Workspace', 'category': 'cloud_services'},
+                    'alt3.aspmx.l.google.com': {'name': 'Google Workspace', 'category': 'cloud_services'},
+                    'alt4.aspmx.l.google.com': {'name': 'Google Workspace', 'category': 'cloud_services'},
+                    'gmail-smtp-in.l.google.com': {'name': 'Gmail', 'category': 'cloud_services'},
+                    
+                    # Microsoft Office 365
+                    'mail.protection.outlook.com': {'name': 'Microsoft Office 365', 'category': 'cloud_services'},
+                    'outlook.office365.com': {'name': 'Microsoft Office 365', 'category': 'cloud_services'},
+                    'smtp.office365.com': {'name': 'Microsoft Office 365', 'category': 'cloud_services'},
+                    'exchange.office365.com': {'name': 'Microsoft Exchange Online', 'category': 'cloud_services'},
+                    
+                    # Zoho Mail
+                    'mx.zoho.com': {'name': 'Zoho Mail', 'category': 'cloud_services'},
+                    'mx2.zoho.com': {'name': 'Zoho Mail', 'category': 'cloud_services'},
+                    'mx3.zoho.com': {'name': 'Zoho Mail', 'category': 'cloud_services'},
+                    
+                    # ProtonMail
+                    'mail.protonmail.ch': {'name': 'ProtonMail', 'category': 'cloud_services'},
+                    'mailsec.protonmail.ch': {'name': 'ProtonMail', 'category': 'cloud_services'},
+                    
+                    # Tutanota
+                    'mail.tutanota.de': {'name': 'Tutanota', 'category': 'cloud_services'},
+                    
+                    # FastMail
+                    'in1-smtp.messagingengine.com': {'name': 'FastMail', 'category': 'cloud_services'},
+                    'in2-smtp.messagingengine.com': {'name': 'FastMail', 'category': 'cloud_services'},
+                    
+                    # Rackspace Email
+                    'mx1.emailsrvr.com': {'name': 'Rackspace Email', 'category': 'cloud_services'},
+                    'mx2.emailsrvr.com': {'name': 'Rackspace Email', 'category': 'cloud_services'},
+                    
+                    # Amazon WorkMail
+                    'inbound-smtp.us-east-1.amazonaws.com': {'name': 'Amazon WorkMail', 'category': 'cloud_services'},
+                    'inbound-smtp.us-west-2.amazonaws.com': {'name': 'Amazon WorkMail', 'category': 'cloud_services'},
+                    'inbound-smtp.eu-west-1.amazonaws.com': {'name': 'Amazon WorkMail', 'category': 'cloud_services'},
+                    
+                    # Mailgun
+                    'mxa.mailgun.org': {'name': 'Mailgun', 'category': 'cloud_services'},
+                    'mxb.mailgun.org': {'name': 'Mailgun', 'category': 'cloud_services'},
+                    
+                    # SendGrid
+                    'mx.sendgrid.net': {'name': 'SendGrid', 'category': 'cloud_services'},
+                    
+                    # Postmark
+                    'inbound.postmarkapp.com': {'name': 'Postmark', 'category': 'cloud_services'},
+                    
+                    # Mailchimp
+                    'mail.messagingengine.com': {'name': 'Mailchimp', 'category': 'cloud_services'},
+                    
+                    # Cloudflare Email Routing
+                    'route1.mx.cloudflare.net': {'name': 'Cloudflare Email Routing', 'category': 'cloud_services'},
+                    'route2.mx.cloudflare.net': {'name': 'Cloudflare Email Routing', 'category': 'cloud_services'},
+                    'route3.mx.cloudflare.net': {'name': 'Cloudflare Email Routing', 'category': 'cloud_services'},
+                    
+                    # ImprovMX
+                    'mx1.improvmx.com': {'name': 'ImprovMX', 'category': 'cloud_services'},
+                    'mx2.improvmx.com': {'name': 'ImprovMX', 'category': 'cloud_services'},
+                    
+                    # ForwardMX
+                    'fmx1.forwardemail.net': {'name': 'Forward Email', 'category': 'cloud_services'},
+                    'fmx2.forwardemail.net': {'name': 'Forward Email', 'category': 'cloud_services'},
+                    
+                    # Yandex Mail
+                    'mx.yandex.net': {'name': 'Yandex Mail', 'category': 'cloud_services'},
+                    'mx.yandex.ru': {'name': 'Yandex Mail', 'category': 'cloud_services'},
+                    
+                    # Mail.ru
+                    'mx.mail.ru': {'name': 'Mail.ru', 'category': 'cloud_services'},
+                    
+                    # 1&1 IONOS
+                    'mx00.ionos.com': {'name': 'IONOS', 'category': 'cloud_services'},
+                    'mx01.ionos.com': {'name': 'IONOS', 'category': 'cloud_services'},
+                    
+                    # GoDaddy
+                    'smtp.secureserver.net': {'name': 'GoDaddy', 'category': 'cloud_services'},
+                    'mailstore1.secureserver.net': {'name': 'GoDaddy', 'category': 'cloud_services'},
+                    
+                    # Namecheap
+                    'mail.privateemail.com': {'name': 'Namecheap Private Email', 'category': 'cloud_services'},
+                    
+                    # Bluehost
+                    'mail.bluehost.com': {'name': 'Bluehost', 'category': 'cloud_services'},
+                    
+                    # HostGator
+                    'mail.hostgator.com': {'name': 'HostGator', 'category': 'cloud_services'},
+                    
+                    # SiteGround
+                    'mail.siteground.com': {'name': 'SiteGround', 'category': 'cloud_services'},
+                    
+                    # DreamHost
+                    'mx1.dreamhost.com': {'name': 'DreamHost', 'category': 'cloud_services'},
+                    'mx2.dreamhost.com': {'name': 'DreamHost', 'category': 'cloud_services'},
+                    
+                    # InMotion Hosting
+                    'mail.inmotionhosting.com': {'name': 'InMotion Hosting', 'category': 'cloud_services'},
+                    
+                    # A2 Hosting
+                    'mail.a2hosting.com': {'name': 'A2 Hosting', 'category': 'cloud_services'},
+                    
+                    # Hover
+                    'mail.hover.com': {'name': 'Hover', 'category': 'cloud_services'},
+                    
+                    # Gandi
+                    'spool.mail.gandi.net': {'name': 'Gandi', 'category': 'cloud_services'},
+                    'fb.mail.gandi.net': {'name': 'Gandi', 'category': 'cloud_services'},
+                    
+                    # OVH
+                    'mx1.mail.ovh.net': {'name': 'OVH', 'category': 'cloud_services'},
+                    'mx2.mail.ovh.net': {'name': 'OVH', 'category': 'cloud_services'},
+                    
+                    # Hetzner
+                    'mail.your-server.de': {'name': 'Hetzner', 'category': 'cloud_services'},
+                    
+                    # DigitalOcean
+                    'mail.digitalocean.com': {'name': 'DigitalOcean', 'category': 'cloud_services'},
+                    
+                    # Linode
+                    'mail.linode.com': {'name': 'Linode', 'category': 'cloud_services'},
+                    
+                    # Vultr
+                    'mail.vultr.com': {'name': 'Vultr', 'category': 'cloud_services'},
+                    
+                    # Scaleway
+                    'mail.scaleway.com': {'name': 'Scaleway', 'category': 'cloud_services'},
+                    
+                    # UpCloud
+                    'mail.upcloud.com': {'name': 'UpCloud', 'category': 'cloud_services'},
+                    
+                    # Generic patterns
+                    'mail.': {'name': 'Generic Mail Server', 'category': 'cloud_services'},
+                    'mx.': {'name': 'Generic MX Server', 'category': 'cloud_services'},
+                    'smtp.': {'name': 'Generic SMTP Server', 'category': 'cloud_services'},
+                    'email.': {'name': 'Generic Email Server', 'category': 'cloud_services'},
+                    'mx1.': {'name': 'Primary MX Server', 'category': 'cloud_services'},
+                    'mx2.': {'name': 'Secondary MX Server', 'category': 'cloud_services'},
+                    'mx3.': {'name': 'Tertiary MX Server', 'category': 'cloud_services'},
+                    'aspmx.': {'name': 'Google MX Server', 'category': 'cloud_services'},
+                    'alt1.aspmx.': {'name': 'Google Alt MX Server', 'category': 'cloud_services'},
+                    'alt2.aspmx.': {'name': 'Google Alt MX Server', 'category': 'cloud_services'},
+                    'alt3.aspmx.': {'name': 'Google Alt MX Server', 'category': 'cloud_services'},
+                    'alt4.aspmx.': {'name': 'Google Alt MX Server', 'category': 'cloud_services'}
+                },
+                
+                'NS': {
+                    # Major DNS Providers
+                    'ns1.cloudflare.com': {'name': 'Cloudflare DNS', 'category': 'cloud_services'},
+                    'ns2.cloudflare.com': {'name': 'Cloudflare DNS', 'category': 'cloud_services'},
+                    'ns1.google.com': {'name': 'Google Cloud DNS', 'category': 'cloud_services'},
+                    'ns2.google.com': {'name': 'Google Cloud DNS', 'category': 'cloud_services'},
+                    'ns3.google.com': {'name': 'Google Cloud DNS', 'category': 'cloud_services'},
+                    'ns4.google.com': {'name': 'Google Cloud DNS', 'category': 'cloud_services'},
+                    'dns1.p01.nsone.net': {'name': 'NS1', 'category': 'cloud_services'},
+                    'dns2.p01.nsone.net': {'name': 'NS1', 'category': 'cloud_services'},
+                    'dns3.p01.nsone.net': {'name': 'NS1', 'category': 'cloud_services'},
+                    'dns4.p01.nsone.net': {'name': 'NS1', 'category': 'cloud_services'},
+                    'route53.amazonaws.com': {'name': 'Amazon Route 53', 'category': 'cloud_services'},
+                    'awsdns': {'name': 'Amazon Route 53', 'category': 'cloud_services'},
+                    'ns1-01.azure-dns.com': {'name': 'Microsoft Azure DNS', 'category': 'cloud_services'},
+                    'ns2-01.azure-dns.net': {'name': 'Microsoft Azure DNS', 'category': 'cloud_services'},
+                    'ns3-01.azure-dns.org': {'name': 'Microsoft Azure DNS', 'category': 'cloud_services'},
+                    'ns4-01.azure-dns.info': {'name': 'Microsoft Azure DNS', 'category': 'cloud_services'},
+                    'dns1.registrar-servers.com': {'name': 'Namecheap DNS', 'category': 'cloud_services'},
+                    'dns2.registrar-servers.com': {'name': 'Namecheap DNS', 'category': 'cloud_services'},
+                    'ns1.digitalocean.com': {'name': 'DigitalOcean DNS', 'category': 'cloud_services'},
+                    'ns2.digitalocean.com': {'name': 'DigitalOcean DNS', 'category': 'cloud_services'},
+                    'ns3.digitalocean.com': {'name': 'DigitalOcean DNS', 'category': 'cloud_services'},
+                    'dns1.p08.nsone.net': {'name': 'NS1', 'category': 'cloud_services'},
+                    'dns2.p08.nsone.net': {'name': 'NS1', 'category': 'cloud_services'},
+                    'dns3.p08.nsone.net': {'name': 'NS1', 'category': 'cloud_services'},
+                    'dns4.p08.nsone.net': {'name': 'NS1', 'category': 'cloud_services'},
+                    'ns1.linode.com': {'name': 'Linode DNS', 'category': 'cloud_services'},
+                    'ns2.linode.com': {'name': 'Linode DNS', 'category': 'cloud_services'},
+                    'ns3.linode.com': {'name': 'Linode DNS', 'category': 'cloud_services'},
+                    'ns4.linode.com': {'name': 'Linode DNS', 'category': 'cloud_services'},
+                    'ns5.linode.com': {'name': 'Linode DNS', 'category': 'cloud_services'},
+                    'ns1.vultr.com': {'name': 'Vultr DNS', 'category': 'cloud_services'},
+                    'ns2.vultr.com': {'name': 'Vultr DNS', 'category': 'cloud_services'},
+                    'pdns1.ultradns.net': {'name': 'UltraDNS', 'category': 'cloud_services'},
+                    'pdns2.ultradns.net': {'name': 'UltraDNS', 'category': 'cloud_services'},
+                    'pdns3.ultradns.org': {'name': 'UltraDNS', 'category': 'cloud_services'},
+                    'pdns4.ultradns.org': {'name': 'UltraDNS', 'category': 'cloud_services'},
+                    'pdns5.ultradns.info': {'name': 'UltraDNS', 'category': 'cloud_services'},
+                    'pdns6.ultradns.co.uk': {'name': 'UltraDNS', 'category': 'cloud_services'},
+                    'ns1.dnsimple.com': {'name': 'DNSimple', 'category': 'cloud_services'},
+                    'ns2.dnsimple.com': {'name': 'DNSimple', 'category': 'cloud_services'},
+                    'ns3.dnsimple.com': {'name': 'DNSimple', 'category': 'cloud_services'},
+                    'ns4.dnsimple.com': {'name': 'DNSimple', 'category': 'cloud_services'},
+                    'dns1.name-services.com': {'name': 'Network Solutions', 'category': 'cloud_services'},
+                    'dns2.name-services.com': {'name': 'Network Solutions', 'category': 'cloud_services'},
+                    'dns3.name-services.com': {'name': 'Network Solutions', 'category': 'cloud_services'},
+                    'dns4.name-services.com': {'name': 'Network Solutions', 'category': 'cloud_services'},
+                    'dns5.name-services.com': {'name': 'Network Solutions', 'category': 'cloud_services'},
+                    'ns1.dnsmadeeasy.com': {'name': 'DNS Made Easy', 'category': 'cloud_services'},
+                    'ns2.dnsmadeeasy.com': {'name': 'DNS Made Easy', 'category': 'cloud_services'},
+                    'ns3.dnsmadeeasy.com': {'name': 'DNS Made Easy', 'category': 'cloud_services'},
+                    'ns4.dnsmadeeasy.com': {'name': 'DNS Made Easy', 'category': 'cloud_services'},
+                    'ns5.dnsmadeeasy.com': {'name': 'DNS Made Easy', 'category': 'cloud_services'},
+                    'ns1.zoneedit.com': {'name': 'ZoneEdit', 'category': 'cloud_services'},
+                    'ns2.zoneedit.com': {'name': 'ZoneEdit', 'category': 'cloud_services'},
+                    'ns3.zoneedit.com': {'name': 'ZoneEdit', 'category': 'cloud_services'},
+                    'ns4.zoneedit.com': {'name': 'ZoneEdit', 'category': 'cloud_services'},
+                    'ns5.zoneedit.com': {'name': 'ZoneEdit', 'category': 'cloud_services'},
+                    'ns1.afraid.org': {'name': 'FreeDNS', 'category': 'cloud_services'},
+                    'ns2.afraid.org': {'name': 'FreeDNS', 'category': 'cloud_services'},
+                    'ns3.afraid.org': {'name': 'FreeDNS', 'category': 'cloud_services'},
+                    'ns4.afraid.org': {'name': 'FreeDNS', 'category': 'cloud_services'},
+                    'f1g1ns1.dnspod.net': {'name': 'DNSPod', 'category': 'cloud_services'},
+                    'f1g1ns2.dnspod.net': {'name': 'DNSPod', 'category': 'cloud_services'},
+                    'ns1.he.net': {'name': 'Hurricane Electric', 'category': 'cloud_services'},
+                    'ns2.he.net': {'name': 'Hurricane Electric', 'category': 'cloud_services'},
+                    'ns3.he.net': {'name': 'Hurricane Electric', 'category': 'cloud_services'},
+                    'ns4.he.net': {'name': 'Hurricane Electric', 'category': 'cloud_services'},
+                    'ns5.he.net': {'name': 'Hurricane Electric', 'category': 'cloud_services'},
+                    'ns1.easydns.com': {'name': 'EasyDNS', 'category': 'cloud_services'},
+                    'ns2.easydns.com': {'name': 'EasyDNS', 'category': 'cloud_services'},
+                    'ns3.easydns.org': {'name': 'EasyDNS', 'category': 'cloud_services'},
+                    'ns4.easydns.info': {'name': 'EasyDNS', 'category': 'cloud_services'},
+                    'remote1.easydns.com': {'name': 'EasyDNS', 'category': 'cloud_services'},
+                    'remote2.easydns.com': {'name': 'EasyDNS', 'category': 'cloud_services'},
+                    'puck.nether.net': {'name': 'Nether.net', 'category': 'cloud_services'},
+                    'ns.nether.net': {'name': 'Nether.net', 'category': 'cloud_services'},
+                    'ns1.hover.com': {'name': 'Hover DNS', 'category': 'cloud_services'},
+                    'ns2.hover.com': {'name': 'Hover DNS', 'category': 'cloud_services'},
+                    'ns1.gandi.net': {'name': 'Gandi DNS', 'category': 'cloud_services'},
+                    'ns2.gandi.net': {'name': 'Gandi DNS', 'category': 'cloud_services'},
+                    'ns3.gandi.net': {'name': 'Gandi DNS', 'category': 'cloud_services'},
+                    'ns4.gandi.net': {'name': 'Gandi DNS', 'category': 'cloud_services'},
+                    'ns5.gandi.net': {'name': 'Gandi DNS', 'category': 'cloud_services'},
+                    'ns6.gandi.net': {'name': 'Gandi DNS', 'category': 'cloud_services'},
+                    'ns-cloud-a1.googledomains.com': {'name': 'Google Domains', 'category': 'cloud_services'},
+                    'ns-cloud-a2.googledomains.com': {'name': 'Google Domains', 'category': 'cloud_services'},
+                    'ns-cloud-a3.googledomains.com': {'name': 'Google Domains', 'category': 'cloud_services'},
+                    'ns-cloud-a4.googledomains.com': {'name': 'Google Domains', 'category': 'cloud_services'},
+                    'ns1.godaddy.com': {'name': 'GoDaddy DNS', 'category': 'cloud_services'},
+                    'ns2.godaddy.com': {'name': 'GoDaddy DNS', 'category': 'cloud_services'},
+                    'ns3.godaddy.com': {'name': 'GoDaddy DNS', 'category': 'cloud_services'},
+                    'ns4.godaddy.com': {'name': 'GoDaddy DNS', 'category': 'cloud_services'},
+                    'ns5.godaddy.com': {'name': 'GoDaddy DNS', 'category': 'cloud_services'},
+                    'ns6.godaddy.com': {'name': 'GoDaddy DNS', 'category': 'cloud_services'},
+                    'ns7.godaddy.com': {'name': 'GoDaddy DNS', 'category': 'cloud_services'},
+                    'ns8.godaddy.com': {'name': 'GoDaddy DNS', 'category': 'cloud_services'},
+                    'ns1.bluehost.com': {'name': 'Bluehost DNS', 'category': 'cloud_services'},
+                    'ns2.bluehost.com': {'name': 'Bluehost DNS', 'category': 'cloud_services'},
+                    'ns1.hostgator.com': {'name': 'HostGator DNS', 'category': 'cloud_services'},
+                    'ns2.hostgator.com': {'name': 'HostGator DNS', 'category': 'cloud_services'},
+                    'ns1.siteground.com': {'name': 'SiteGround DNS', 'category': 'cloud_services'},
+                    'ns2.siteground.com': {'name': 'SiteGround DNS', 'category': 'cloud_services'},
+                    'ns1.dreamhost.com': {'name': 'DreamHost DNS', 'category': 'cloud_services'},
+                    'ns2.dreamhost.com': {'name': 'DreamHost DNS', 'category': 'cloud_services'},
+                    'ns3.dreamhost.com': {'name': 'DreamHost DNS', 'category': 'cloud_services'},
+                    'ns1.inmotionhosting.com': {'name': 'InMotion DNS', 'category': 'cloud_services'},
+                    'ns2.inmotionhosting.com': {'name': 'InMotion DNS', 'category': 'cloud_services'},
+                    'ns1.a2hosting.com': {'name': 'A2 Hosting DNS', 'category': 'cloud_services'},
+                    'ns2.a2hosting.com': {'name': 'A2 Hosting DNS', 'category': 'cloud_services'},
+                    'ns3.a2hosting.com': {'name': 'A2 Hosting DNS', 'category': 'cloud_services'},
+                    'ns4.a2hosting.com': {'name': 'A2 Hosting DNS', 'category': 'cloud_services'},
+                    'ns1.ovh.net': {'name': 'OVH DNS', 'category': 'cloud_services'},
+                    'ns2.ovh.net': {'name': 'OVH DNS', 'category': 'cloud_services'},
+                    'ns3.ovh.net': {'name': 'OVH DNS', 'category': 'cloud_services'},
+                    'ns4.ovh.net': {'name': 'OVH DNS', 'category': 'cloud_services'},
+                    'ns5.ovh.net': {'name': 'OVH DNS', 'category': 'cloud_services'},
+                    'ns1.hetzner.de': {'name': 'Hetzner DNS', 'category': 'cloud_services'},
+                    'ns2.hetzner.de': {'name': 'Hetzner DNS', 'category': 'cloud_services'},
+                    'ns3.hetzner.de': {'name': 'Hetzner DNS', 'category': 'cloud_services'},
+                    'ns1.scaleway.com': {'name': 'Scaleway DNS', 'category': 'cloud_services'},
+                    'ns2.scaleway.com': {'name': 'Scaleway DNS', 'category': 'cloud_services'},
+                    'ns1.upcloud.com': {'name': 'UpCloud DNS', 'category': 'cloud_services'},
+                    'ns2.upcloud.com': {'name': 'UpCloud DNS', 'category': 'cloud_services'},
+                    'ns3.upcloud.com': {'name': 'UpCloud DNS', 'category': 'cloud_services'},
+                    'ns4.upcloud.com': {'name': 'UpCloud DNS', 'category': 'cloud_services'},
+                    'ns5.upcloud.com': {'name': 'UpCloud DNS', 'category': 'cloud_services'},
+                    
+                    # Website Builder DNS
+                    'ns1.squarespace.com': {'name': 'Squarespace DNS', 'category': 'cms_platforms'},
+                    'ns2.squarespace.com': {'name': 'Squarespace DNS', 'category': 'cms_platforms'},
+                    'ns3.squarespace.com': {'name': 'Squarespace DNS', 'category': 'cms_platforms'},
+                    'ns4.squarespace.com': {'name': 'Squarespace DNS', 'category': 'cms_platforms'},
+                    'ns1.shopify.com': {'name': 'Shopify DNS', 'category': 'cms_platforms'},
+                    'ns2.shopify.com': {'name': 'Shopify DNS', 'category': 'cms_platforms'},
+                    'ns3.shopify.com': {'name': 'Shopify DNS', 'category': 'cms_platforms'},
+                    'ns1.wix.com': {'name': 'Wix DNS', 'category': 'cms_platforms'},
+                    'ns2.wix.com': {'name': 'Wix DNS', 'category': 'cms_platforms'},
+                    'ns3.wix.com': {'name': 'Wix DNS', 'category': 'cms_platforms'},
+                    'ns1.weebly.com': {'name': 'Weebly DNS', 'category': 'cms_platforms'},
+                    'ns2.weebly.com': {'name': 'Weebly DNS', 'category': 'cms_platforms'},
+                    'ns1.webflow.com': {'name': 'Webflow DNS', 'category': 'cms_platforms'},
+                    'ns2.webflow.com': {'name': 'Webflow DNS', 'category': 'cms_platforms'},
+                    'ns1.jimdo.com': {'name': 'Jimdo DNS', 'category': 'cms_platforms'},
+                    'ns2.jimdo.com': {'name': 'Jimdo DNS', 'category': 'cms_platforms'},
+                    'ns1.strikingly.com': {'name': 'Strikingly DNS', 'category': 'cms_platforms'},
+                    'ns2.strikingly.com': {'name': 'Strikingly DNS', 'category': 'cms_platforms'},
+                    'ns1.carrd.co': {'name': 'Carrd DNS', 'category': 'cms_platforms'},
+                    'ns2.carrd.co': {'name': 'Carrd DNS', 'category': 'cms_platforms'},
+                    'ns1.tilda.ws': {'name': 'Tilda DNS', 'category': 'cms_platforms'},
+                    'ns2.tilda.ws': {'name': 'Tilda DNS', 'category': 'cms_platforms'}
+                },
+                
+                'A': {
+                    # CDN & Edge Networks
+                    '104.16.': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    '104.17.': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    '104.18.': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    '104.19.': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    '104.20.': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    '104.21.': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    '104.22.': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    '104.23.': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    '104.24.': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    '104.25.': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    '104.26.': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    '104.27.': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    '104.28.': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    '104.29.': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    '104.30.': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    '104.31.': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    '108.162.': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    '141.101.': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    '162.158.': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    '172.64.': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    '172.65.': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    '172.66.': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    '172.67.': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    '172.68.': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    '172.69.': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    '172.70.': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    '172.71.': {'name': 'Cloudflare', 'category': 'cdn_services'},
+                    '185.199.': {'name': 'GitHub Pages', 'category': 'cloud_services'},
+                    '76.76.': {'name': 'Fastly', 'category': 'cdn_services'},
+                    '151.101.': {'name': 'Fastly', 'category': 'cdn_services'},
+                    '185.31.': {'name': 'Fastly', 'category': 'cdn_services'},
+                    '199.232.': {'name': 'Fastly', 'category': 'cdn_services'},
+                    '23.235.': {'name': 'Akamai', 'category': 'cdn_services'},
+                    '96.16.': {'name': 'Akamai', 'category': 'cdn_services'},
+                    '184.24.': {'name': 'Akamai', 'category': 'cdn_services'},
+                    '184.25.': {'name': 'Akamai', 'category': 'cdn_services'},
+                    '184.26.': {'name': 'Akamai', 'category': 'cdn_services'},
+                    '184.27.': {'name': 'Akamai', 'category': 'cdn_services'},
+                    '184.28.': {'name': 'Akamai', 'category': 'cdn_services'},
+                    '184.29.': {'name': 'Akamai', 'category': 'cdn_services'},
+                    '184.30.': {'name': 'Akamai', 'category': 'cdn_services'},
+                    '184.31.': {'name': 'Akamai', 'category': 'cdn_services'},
+                    '13.107.': {'name': 'Microsoft Azure', 'category': 'cloud_services'},
+                    '20.': {'name': 'Microsoft Azure', 'category': 'cloud_services'},
+                    '40.': {'name': 'Microsoft Azure', 'category': 'cloud_services'},
+                    '52.': {'name': 'Microsoft Azure', 'category': 'cloud_services'},
+                    '104.': {'name': 'Microsoft Azure', 'category': 'cloud_services'},
+                    '8.8.8.8': {'name': 'Google Public DNS', 'category': 'cloud_services'},
+                    '8.8.4.4': {'name': 'Google Public DNS', 'category': 'cloud_services'},
+                    '1.1.1.1': {'name': 'Cloudflare DNS', 'category': 'cloud_services'},
+                    '1.0.0.1': {'name': 'Cloudflare DNS', 'category': 'cloud_services'},
+                    '9.9.9.9': {'name': 'Quad9 DNS', 'category': 'cloud_services'},
+                    '149.112.112.112': {'name': 'Quad9 DNS', 'category': 'cloud_services'},
+                    '208.67.222.222': {'name': 'OpenDNS', 'category': 'cloud_services'},
+                    '208.67.220.220': {'name': 'OpenDNS', 'category': 'cloud_services'},
+                    '64.6.64.6': {'name': 'Verisign DNS', 'category': 'cloud_services'},
+                    '64.6.65.6': {'name': 'Verisign DNS', 'category': 'cloud_services'},
+                    '84.200.69.80': {'name': 'DNS.WATCH', 'category': 'cloud_services'},
+                    '84.200.70.40': {'name': 'DNS.WATCH', 'category': 'cloud_services'},
+                    '77.88.8.8': {'name': 'Yandex DNS', 'category': 'cloud_services'},
+                    '77.88.8.1': {'name': 'Yandex DNS', 'category': 'cloud_services'},
+                    '156.154.70.1': {'name': 'UltraDNS', 'category': 'cloud_services'},
+                    '156.154.71.1': {'name': 'UltraDNS', 'category': 'cloud_services'},
+                    '8.26.56.26': {'name': 'Comodo Secure DNS', 'category': 'cloud_services'},
+                    '8.20.247.20': {'name': 'Comodo Secure DNS', 'category': 'cloud_services'},
+                    '129.250.35.250': {'name': 'Norton ConnectSafe', 'category': 'cloud_services'},
+                    '129.250.35.251': {'name': 'Norton ConnectSafe', 'category': 'cloud_services'}
+                },
+                
+                'AAAA': {
+                    # IPv6 DNS & CDN
+                    '2606:4700:': {'name': 'Cloudflare IPv6', 'category': 'cdn_services'},
+                    '2400:cb00:': {'name': 'Cloudflare IPv6', 'category': 'cdn_services'},
+                    '2a06:98c1:': {'name': 'Cloudflare IPv6', 'category': 'cdn_services'},
+                    '2001:4860:': {'name': 'Google IPv6', 'category': 'cloud_services'},
+                    '2001:4860:4860::8888': {'name': 'Google DNS IPv6', 'category': 'cloud_services'},
+                    '2001:4860:4860::8844': {'name': 'Google DNS IPv6', 'category': 'cloud_services'},
+                    '2606:4700:4700::1111': {'name': 'Cloudflare DNS IPv6', 'category': 'cloud_services'},
+                    '2606:4700:4700::1001': {'name': 'Cloudflare DNS IPv6', 'category': 'cloud_services'},
+                    '2620:fe::fe': {'name': 'Quad9 DNS IPv6', 'category': 'cloud_services'},
+                    '2620:fe::9': {'name': 'Quad9 DNS IPv6', 'category': 'cloud_services'},
+                    '2620:119:35::35': {'name': 'OpenDNS IPv6', 'category': 'cloud_services'},
+                    '2620:119:53::53': {'name': 'OpenDNS IPv6', 'category': 'cloud_services'}
                 }
             },
             'cookies': {
@@ -3626,6 +4551,10 @@ class AdvancedTechnologyDetector:
                 console.print("[*] Analisando tecnologias de segurança...")
             self._detect_security_technologies(response, verbose)
             
+            if verbose:
+                console.print("[*] Analisando DNS e subdomínios...")
+            self._analyze_dns_and_subdomains(verbose)
+            
             # Detecção passiva adicional
             self._passive_fingerprinting(response, verbose)
             
@@ -4048,6 +4977,227 @@ class AdvancedTechnologyDetector:
         
         xml_lines.append('</technology_detection>')
         return '\n'.join(xml_lines)
+    
+    def _analyze_dns_and_subdomains(self, verbose=False):
+        """Analisa DNS e subdomínios para detecção de tecnologias."""
+        try:
+            # Extrai domínio da URL
+            domain = urlparse(self.url).netloc
+            if ':' in domain:
+                domain = domain.split(':')[0]
+            
+            if verbose:
+                console.print(f"[*] Analisando domínio: {domain}")
+            
+            # Análise de registros DNS
+            self._analyze_dns_records(domain, verbose)
+            
+            # Análise de subdomínios comuns
+            self._analyze_common_subdomains(domain, verbose)
+            
+        except Exception as e:
+            if verbose:
+                console.print(f"[bold red][!] Erro na análise DNS: {e}[/bold red]")
+    
+    def _analyze_dns_records(self, domain, verbose=False):
+        """Analisa registros DNS específicos para detecção de tecnologias."""
+        dns_types = ['CNAME', 'TXT', 'MX', 'NS', 'A', 'AAAA']
+        
+        for record_type in dns_types:
+            try:
+                if record_type == 'A':
+                    answers = dns.resolver.resolve(domain, 'A')
+                    for answer in answers:
+                        ip = str(answer)
+                        self._check_ip_patterns(ip, verbose)
+                        
+                elif record_type == 'AAAA':
+                    try:
+                        answers = dns.resolver.resolve(domain, 'AAAA')
+                        for answer in answers:
+                            ipv6 = str(answer)
+                            self._check_ipv6_patterns(ipv6, verbose)
+                    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+                        pass  # IPv6 não disponível
+                        
+                elif record_type == 'CNAME':
+                    try:
+                        answers = dns.resolver.resolve(domain, 'CNAME')
+                        for answer in answers:
+                            cname = str(answer).rstrip('.')
+                            self._check_cname_patterns(cname, verbose)
+                    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+                        pass  # Não é um CNAME
+                        
+                elif record_type == 'TXT':
+                    try:
+                        answers = dns.resolver.resolve(domain, 'TXT')
+                        for answer in answers:
+                            txt_record = str(answer).strip('"')
+                            self._check_txt_patterns(txt_record, verbose)
+                    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+                        pass
+                        
+                elif record_type == 'MX':
+                    try:
+                        answers = dns.resolver.resolve(domain, 'MX')
+                        for answer in answers:
+                            mx_record = str(answer.exchange).rstrip('.')
+                            self._check_mx_patterns(mx_record, verbose)
+                    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+                        pass
+                        
+                elif record_type == 'NS':
+                    try:
+                        answers = dns.resolver.resolve(domain, 'NS')
+                        for answer in answers:
+                            ns_record = str(answer).rstrip('.')
+                            self._check_ns_patterns(ns_record, verbose)
+                    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+                        pass
+                        
+            except Exception as e:
+                if verbose:
+                    console.print(f"[bold red][!] Erro ao consultar registro {record_type}: {e}[/bold red]")
+    
+    def _check_ip_patterns(self, ip, verbose=False):
+        """Verifica padrões de IP para detecção de CDN/Cloud."""
+        for ip_pattern, tech_info in self.tech_database['dns_records']['A'].items():
+            if ip.startswith(ip_pattern):
+                detection = {
+                    'name': tech_info['name'],
+                    'version': None,
+                    'confidence': 0.85,
+                    'method': 'dns_a_record',
+                    'evidence': f'IP: {ip}'
+                }
+                
+                self._add_detection(tech_info['category'], detection)
+                
+                if verbose:
+                    console.print(f"[bold green][+] {tech_info['name']}[/bold green] (via IP A record)")
+    
+    def _check_ipv6_patterns(self, ipv6, verbose=False):
+        """Verifica padrões de IPv6 para detecção de CDN/Cloud."""
+        for ipv6_pattern, tech_info in self.tech_database['dns_records']['AAAA'].items():
+            if ipv6.startswith(ipv6_pattern):
+                detection = {
+                    'name': tech_info['name'],
+                    'version': None,
+                    'confidence': 0.85,
+                    'method': 'dns_aaaa_record',
+                    'evidence': f'IPv6: {ipv6}'
+                }
+                
+                self._add_detection(tech_info['category'], detection)
+                
+                if verbose:
+                    console.print(f"[bold green][+] {tech_info['name']}[/bold green] (via IPv6 AAAA record)")
+    
+    def _check_cname_patterns(self, cname, verbose=False):
+        """Verifica padrões de CNAME para detecção de serviços."""
+        for cname_pattern, tech_info in self.tech_database['dns_records']['CNAME'].items():
+            if cname_pattern in cname.lower():
+                detection = {
+                    'name': tech_info['name'],
+                    'version': None,
+                    'confidence': 0.9,
+                    'method': 'dns_cname_record',
+                    'evidence': f'CNAME: {cname}'
+                }
+                
+                self._add_detection(tech_info['category'], detection)
+                
+                if verbose:
+                    console.print(f"[bold green][+] {tech_info['name']}[/bold green] (via CNAME record)")
+    
+    def _check_txt_patterns(self, txt_record, verbose=False):
+        """Verifica padrões de TXT para detecção de serviços."""
+        for txt_pattern, tech_info in self.tech_database['dns_records']['TXT'].items():
+            if txt_pattern.lower() in txt_record.lower():
+                detection = {
+                    'name': tech_info['name'],
+                    'version': None,
+                    'confidence': 0.8,
+                    'method': 'dns_txt_record',
+                    'evidence': f'TXT: {txt_record[:100]}...' if len(txt_record) > 100 else f'TXT: {txt_record}'
+                }
+                
+                self._add_detection(tech_info['category'], detection)
+                
+                if verbose:
+                    console.print(f"[bold green][+] {tech_info['name']}[/bold green] (via TXT record)")
+    
+    def _check_mx_patterns(self, mx_record, verbose=False):
+        """Verifica padrões de MX para detecção de provedores de email."""
+        for mx_pattern, tech_info in self.tech_database['dns_records']['MX'].items():
+            if mx_pattern.lower() in mx_record.lower():
+                detection = {
+                    'name': tech_info['name'],
+                    'version': None,
+                    'confidence': 0.9,
+                    'method': 'dns_mx_record',
+                    'evidence': f'MX: {mx_record}'
+                }
+                
+                self._add_detection(tech_info['category'], detection)
+                
+                if verbose:
+                    console.print(f"[bold green][+] {tech_info['name']}[/bold green] (via MX record)")
+    
+    def _check_ns_patterns(self, ns_record, verbose=False):
+        """Verifica padrões de NS para detecção de provedores DNS."""
+        for ns_pattern, tech_info in self.tech_database['dns_records']['NS'].items():
+            if ns_pattern.lower() in ns_record.lower():
+                detection = {
+                    'name': tech_info['name'],
+                    'version': None,
+                    'confidence': 0.85,
+                    'method': 'dns_ns_record',
+                    'evidence': f'NS: {ns_record}'
+                }
+                
+                self._add_detection(tech_info['category'], detection)
+                
+                if verbose:
+                    console.print(f"[bold green][+] {tech_info['name']}[/bold green] (via NS record)")
+    
+    def _analyze_common_subdomains(self, domain, verbose=False):
+        """Analisa subdomínios comuns para detecção adicional de tecnologias."""
+        common_subdomains = [
+            'www', 'api', 'app', 'cdn', 'mail', 'ftp', 'admin', 'blog', 'shop',
+            'dev', 'test', 'staging', 'demo', 'support', 'help', 'docs', 'portal',
+            'secure', 'login', 'account', 'dashboard', 'panel', 'cpanel', 'webmail',
+            'm', 'mobile', 'static', 'assets', 'media', 'images', 'files', 'download'
+        ]
+        
+        detected_subdomains = []
+        
+        for subdomain in common_subdomains:
+            try:
+                subdomain_url = f"{subdomain}.{domain}"
+                # Tenta resolver o subdomínio
+                answers = dns.resolver.resolve(subdomain_url, 'A')
+                detected_subdomains.append(subdomain_url)
+                
+                # Analisa CNAME do subdomínio se existir
+                try:
+                    cname_answers = dns.resolver.resolve(subdomain_url, 'CNAME')
+                    for cname_answer in cname_answers:
+                        cname = str(cname_answer).rstrip('.')
+                        self._check_cname_patterns(cname, verbose)
+                except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+                    pass
+                    
+            except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, Exception):
+                pass  # Subdomínio não existe ou erro
+        
+        if detected_subdomains and verbose:
+            console.print(f"[*] Subdomínios detectados: {len(detected_subdomains)}")
+            for sub in detected_subdomains[:10]:  # Mostra apenas os primeiros 10
+                console.print(f"    • {sub}")
+            if len(detected_subdomains) > 10:
+                console.print(f"    • ... e mais {len(detected_subdomains) - 10} subdomínios")
 
 def detect_technologies(url, return_findings=False, verbose=False, output_format='table'):
     """Interface para detecção avançada de tecnologias."""
