@@ -8080,7 +8080,7 @@ def command_injection_scan(url):
 # --- MÓDULO 17: SCANNER DE LFI (LOCAL FILE INCLUSION) ---
 
 class LFIScanner:
-    def __init__(self, base_url, timeout=10, threads=5):
+    def __init__(self, base_url, timeout=10, threads=5, custom_payloads=None, payload_file=None):
         self.base_url = base_url
         self.timeout = timeout
         self.threads = threads
@@ -8088,6 +8088,8 @@ class LFIScanner:
         self.fast_mode = False
         self.found_vulnerabilities = []
         self.stop_on_first = False
+        self.custom_payloads = custom_payloads
+        self.payload_file = payload_file
         
         # Session pool para melhor performance
         self.session_pool = []
@@ -8213,6 +8215,56 @@ class LFIScanner:
             "/usr/local/etc/my.cnf": ["[mysqld]", "datadir"],
             "/opt/local/etc/mysql5/my.cnf": ["[mysqld]", "datadir"]
         }
+        
+        # Processar payloads customizados
+        self._load_custom_payloads()
+
+    def _load_custom_payloads(self):
+        """Carrega payloads customizados do CLI ou arquivo"""
+        custom_payload_list = []
+        
+        # Processar payloads da linha de comando
+        if self.custom_payloads:
+            payloads_from_cli = [payload.strip() for payload in self.custom_payloads.split(',')]
+            custom_payload_list.extend(payloads_from_cli)
+            if self.verbose:
+                console.print(f"[*] Carregados {len(payloads_from_cli)} payloads da linha de comando")
+        
+        # Processar payloads de arquivo
+        if self.payload_file:
+            try:
+                with open(self.payload_file, 'r', encoding='utf-8', errors='ignore') as f:
+                    payloads_from_file = [line.strip() for line in f if line.strip() and not line.strip().startswith('#')]
+                custom_payload_list.extend(payloads_from_file)
+                if self.verbose:
+                    console.print(f"[*] Carregados {len(payloads_from_file)} payloads do arquivo: {self.payload_file}")
+            except FileNotFoundError:
+                console.print(f"[red][!] Arquivo de payloads não encontrado: {self.payload_file}[/red]")
+            except Exception as e:
+                console.print(f"[red][!] Erro ao ler arquivo de payloads: {e}[/red]")
+        
+        # Adicionar payloads customizados ao dicionário principal
+        if custom_payload_list:
+            for payload in custom_payload_list:
+                # Se o payload parece ser um caminho de arquivo, adiciona com assinaturas genéricas
+                if '/' in payload or '\\' in payload:
+                    # Tentar detectar tipo de sistema baseado no payload
+                    if payload.startswith('/'):
+                        # Unix-like path
+                        self.payloads[payload] = ["root:", "bin:", "usr:", "var:", "etc:", "proc:", "sys:", "home:", "tmp:"]
+                    elif '\\' in payload or payload.lower().startswith('c:'):
+                        # Windows path
+                        self.payloads[payload] = ["[boot loader]", "[operating systems]", "Windows Registry", "HKEY_", "C:\\Windows", "C:\\Program"]
+                    else:
+                        # Generic signatures
+                        self.payloads[payload] = ["<!DOCTYPE", "<html", "<?xml", "<?php", "root:", "admin:", "user:", "password", "config"]
+                else:
+                    # Se não parece ser um caminho, usa como payload direto com assinaturas genéricas
+                    self.payloads[payload] = ["<!DOCTYPE", "<html", "<?xml", "<?php", "error", "warning", "exception", "access", "denied"]
+            
+            if self.verbose:
+                console.print(f"[*] Total de {len(custom_payload_list)} payloads customizados adicionados")
+                console.print(f"[*] Total geral de payloads: {len(self.payloads)}")
 
     def _get_session(self):
         """Obtém uma sessão do pool de forma round-robin"""
@@ -9030,9 +9082,9 @@ class LFIScanner:
         except Exception as e:
             console.print(f"[red]Erro ao exportar resultados: {e}[/red]")
 
-def lfi_scan(url, timeout=10, threads=5, export_results=False, verbose=False, fast_mode=False, stop_on_first=False):
+def lfi_scan(url, timeout=10, threads=5, export_results=False, verbose=False, fast_mode=False, stop_on_first=False, custom_payloads=None, payload_file=None):
     """Função principal para executar scan de LFI/RFI otimizado"""
-    scanner = LFIScanner(url, timeout=timeout, threads=threads)
+    scanner = LFIScanner(url, timeout=timeout, threads=threads, custom_payloads=custom_payloads, payload_file=payload_file)
     scanner.verbose = verbose
     scanner.fast_mode = fast_mode
     scanner.stop_on_first = stop_on_first
@@ -10474,6 +10526,15 @@ Exemplos de Uso:
   
   # Scanner LFI completo com máxima performance e para na primeira vulnerabilidade
   python %(prog)s lfi-scan -u "http://dvwa.local/vulnerabilities/fi/" --threads 20 --stop-on-first --fast
+  
+  # Scanner LFI com payloads customizados via linha de comando
+  python %(prog)s lfi-scan -u "http://testphp.vulnweb.com/listproducts.php?cat=1" --custom-payloads "../../etc/passwd,../../../windows/system32/drivers/etc/hosts,../../var/log/apache2/access.log" --verbose
+  
+  # Scanner LFI usando arquivo de payloads customizados
+  python %(prog)s lfi-scan -u "https://demo.testfire.net/bank/queryxpath.aspx" --payload-file "custom_lfi_payloads.txt" --export
+  
+  # Scanner LFI combinando payloads customizados com modo rápido
+  python %(prog)s lfi-scan -u "http://dvwa.local/vulnerabilities/fi/" --custom-payloads "/proc/version,/etc/issue" --fast --threads 10
 
   # Procura por CVEs para OpenSSL, ignorando o cache e filtrando por CVSS
   python %(prog)s cve-scan --product openssl --version 1.0.2 --min-cvss 7.0 --no-cache
@@ -10603,6 +10664,8 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     parser_lfi.add_argument('--verbose', action='store_true', help='Exibe informações detalhadas sobre técnicas de bypass, detecções e progresso do scan.')
     parser_lfi.add_argument('--fast', action='store_true', help='Modo rápido: usa apenas técnicas de bypass mais eficazes (10x mais rápido)')
     parser_lfi.add_argument('--stop-on-first', action='store_true', help='Para após encontrar primeira vulnerabilidade de alto risco')
+    parser_lfi.add_argument('--custom-payloads', type=str, help='Payloads customizados separados por vírgula (ex: "../../etc/passwd,../../../windows/system32/drivers/etc/hosts")')
+    parser_lfi.add_argument('--payload-file', type=str, help='Arquivo contendo payloads customizados (um por linha)')
 
     parser_ssrf = subparsers.add_parser('ssrf-scan', help='[Scan] Procura por falhas de Server-Side Request Forgery (SSRF).')
     parser_ssrf.add_argument('-u', '--url', required=True, help='URL base para iniciar a verificação.')
@@ -10807,7 +10870,9 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
             export_results=args.export, 
             verbose=args.verbose,
             fast_mode=args.fast,
-            stop_on_first=args.stop_on_first
+            stop_on_first=args.stop_on_first,
+            custom_payloads=args.custom_payloads,
+            payload_file=args.payload_file
         )
     elif args.tool == 'ssrf-scan':
         ssrf_scan(args.url)
