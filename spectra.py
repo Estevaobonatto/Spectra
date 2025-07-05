@@ -2485,11 +2485,24 @@ def crawl_links(base_url, max_depth=2, output_file=None, verbose=False, delay=0.
 
 # --- MÓDULO 8: CONSULTA WHOIS ---
 
-def get_whois_info(domain):
-    """Obtém e exibe informações WHOIS para um domínio com análise de datas."""
+def get_whois_info(domain, verbose=False, output_format='table', security_analysis=False, threat_intel=False, check_blocklists=False, typosquatting_check=False):
+    """Obtém e exibe informações WHOIS para um domínio com análise avançada de segurança."""
     console.print("-" * 60)
     console.print(f"[*] Obtendo informações WHOIS para: [bold cyan]{domain}[/bold cyan]")
+    if verbose:
+        console.print(f"[*] Análise de segurança: [bold cyan]{security_analysis}[/bold cyan]")
+        console.print(f"[*] Threat Intelligence: [bold cyan]{threat_intel}[/bold cyan]")
+        console.print(f"[*] Verificar blocklists: [bold cyan]{check_blocklists}[/bold cyan]")
+        console.print(f"[*] Detecção typosquatting: [bold cyan]{typosquatting_check}[/bold cyan]")
+        console.print(f"[*] Formato de saída: [bold cyan]{output_format}[/bold cyan]")
     console.print("-" * 60)
+    
+    whois_data = {}
+    security_alerts = []
+    threat_intel_results = {}
+    blocklist_results = {}
+    typosquatting_results = []
+    
     try:
         with console.status(f"[bold green]Consultando servidor WHOIS para {domain}...[/bold green]"):
             w = whois.whois(domain)
@@ -2497,10 +2510,6 @@ def get_whois_info(domain):
         if not w.domain_name:
             console.print(f"[bold yellow][-] Nenhuma informação WHOIS encontrada para {domain}.[/bold yellow]")
             return
-
-        table = Table(title=f"Informações WHOIS para {w.domain_name[0] if isinstance(w.domain_name, list) else w.domain_name}")
-        table.add_column("Campo", style="cyan", no_wrap=True)
-        table.add_column("Valor", style="magenta")
 
         def format_date_entry(date_value):
             if not date_value:
@@ -2521,24 +2530,331 @@ def get_whois_info(domain):
             else:
                 return f"{date_obj.strftime('%Y-%m-%d')} ([bold blue]{duration} atrás[/bold blue])"
 
-        info_map = {
-            "Domínio": w.domain_name, "Registrador": w.registrar, "Data de Criação": format_date_entry(w.creation_date),
-            "Data de Expiração": format_date_entry(w.expiration_date), "Última Atualização": format_date_entry(w.updated_date),
-            "Servidores de Nomes": w.name_servers, "Status": w.status, "E-mail (Admin)": w.emails,
-        }
+        def get_date_obj(date_value):
+            if not date_value:
+                return None
+            return date_value[0] if isinstance(date_value, list) else date_value
 
-        for field, value in info_map.items():
-            if value:
-                value_str = "\n".join(map(str, value)) if isinstance(value, list) else str(value)
-                table.add_row(field, value_str)
+        creation_date = get_date_obj(w.creation_date)
+        expiration_date = get_date_obj(w.expiration_date)
+        updated_date = get_date_obj(w.updated_date)
         
-        console.print(table)
+        info_map = {
+            "Domínio": w.domain_name,
+            "Registrador": w.registrar,
+            "Data de Criação": format_date_entry(w.creation_date),
+            "Data de Expiração": format_date_entry(w.expiration_date),
+            "Última Atualização": format_date_entry(w.updated_date),
+            "Servidores de Nomes": w.name_servers,
+            "Status": w.status,
+            "E-mail (Admin)": w.emails,
+            "País": getattr(w, 'country', None),
+            "Organização": getattr(w, 'org', None),
+            "Registrant": getattr(w, 'registrant', None)
+        }
+        
+        whois_data = {
+            'domain': domain,
+            'creation_date': creation_date.isoformat() if creation_date else None,
+            'expiration_date': expiration_date.isoformat() if expiration_date else None,
+            'updated_date': updated_date.isoformat() if updated_date else None,
+            'registrar': w.registrar,
+            'name_servers': w.name_servers,
+            'status': w.status,
+            'emails': w.emails,
+            'country': getattr(w, 'country', None),
+            'org': getattr(w, 'org', None)
+        }
+        
+        # Análise de Segurança
+        if security_analysis:
+            now = datetime.now()
+            
+            # 1. Verificar idade do domínio
+            if creation_date:
+                domain_age = (now - creation_date).days
+                if domain_age < 30:
+                    security_alerts.append("🚨 Domínio muito recente (< 30 dias) - Possível ameaça")
+                elif domain_age < 90:
+                    security_alerts.append("⚠️ Domínio recente (< 90 dias) - Monitorar")
+                elif verbose:
+                    console.print(f"[bold green][✓][/bold green] Idade do domínio: {domain_age} dias")
+            
+            # 2. Verificar expiração próxima
+            if expiration_date:
+                days_to_expire = (expiration_date - now).days
+                if days_to_expire < 30:
+                    security_alerts.append("🚨 Domínio expira em breve (< 30 dias)")
+                elif days_to_expire < 90:
+                    security_alerts.append("⚠️ Domínio expira em menos de 90 dias")
+                elif verbose:
+                    console.print(f"[bold green][✓][/bold green] Expira em: {days_to_expire} dias")
+            
+            # 3. Detectar Privacy Protection
+            privacy_indicators = ['privacy', 'protection', 'private', 'redacted', 'whoisguard', 'domainsByProxy']
+            has_privacy = False
+            
+            for field in [w.registrar, w.emails, getattr(w, 'org', ''), getattr(w, 'registrant', '')]:
+                if field and any(indicator in str(field).lower() for indicator in privacy_indicators):
+                    has_privacy = True
+                    break
+            
+            if has_privacy:
+                security_alerts.append("🔒 Privacy Protection detectada")
+            elif verbose:
+                console.print("[bold yellow][!][/bold yellow] Sem privacy protection - dados expostos")
+            
+            # 4. Verificar registrador suspeito
+            suspicious_registrars = ['cheap', 'free', 'anonymous', 'hidden']
+            if w.registrar and any(susp in str(w.registrar).lower() for susp in suspicious_registrars):
+                security_alerts.append("⚠️ Registrador potencialmente suspeito")
+            
+            # 5. Verificar múltiplas atualizações recentes
+            if updated_date and creation_date:
+                if (now - updated_date).days < 7 and (now - creation_date).days > 30:
+                    security_alerts.append("🔄 Atualizado recentemente - Possível mudança de propriedade")
+            
+            # 6. Verificar status suspeito
+            if w.status:
+                status_str = str(w.status).lower()
+                if 'hold' in status_str or 'suspended' in status_str:
+                    security_alerts.append("🚨 Status suspeito: Domínio em hold/suspended")
+        
+        # Verificação de Threat Intelligence
+        if threat_intel:
+            if verbose:
+                console.print("\n[bold blue][INFO][/bold blue] Consultando bases de threat intelligence...")
+            
+            try:
+                # VirusTotal-like check (simulado - em produção usaria API real)
+                import socket
+                import ssl
+                
+                # Verificar se domínio resolve
+                try:
+                    ip = socket.gethostbyname(domain)
+                    threat_intel_results['ip'] = ip
+                    if verbose:
+                        console.print(f"[bold green][✓][/bold green] Domínio resolve para: {ip}")
+                    
+                    # Verificar se IP está em ranges suspeitos
+                    suspicious_ranges = ['192.168.', '10.', '172.16.', '127.']
+                    if any(ip.startswith(range_) for range_ in suspicious_ranges):
+                        security_alerts.append("⚠️ Domínio resolve para IP privado/local")
+                    
+                except socket.gaierror:
+                    security_alerts.append("🚨 Domínio não resolve - Possível domínio morto")
+                    threat_intel_results['resolution'] = 'failed'
+                
+                # Verificar certificado SSL
+                try:
+                    context = ssl.create_default_context()
+                    with socket.create_connection((domain, 443), timeout=5) as sock:
+                        with context.wrap_socket(sock, server_hostname=domain) as ssock:
+                            cert = ssock.getpeercert()
+                            threat_intel_results['ssl_cert'] = {
+                                'subject': dict(x[0] for x in cert['subject']),
+                                'issuer': dict(x[0] for x in cert['issuer']),
+                                'expiry': cert['notAfter']
+                            }
+                            if verbose:
+                                console.print(f"[bold green][✓][/bold green] Certificado SSL válido")
+                except:
+                    security_alerts.append("⚠️ Sem certificado SSL válido")
+                    threat_intel_results['ssl'] = 'invalid'
+                    
+            except Exception as e:
+                if verbose:
+                    console.print(f"[bold yellow][W][/bold yellow] Erro na verificação de threat intelligence: {e}")
+        
+        # Verificação de Blocklists
+        if check_blocklists:
+            if verbose:
+                console.print("\n[bold blue][INFO][/bold blue] Verificando blocklists...")
+            
+            try:
+                import socket
+                
+                # Lista de servidores de blocklist para verificar
+                blocklists = {
+                    'Spamhaus': 'zen.spamhaus.org',
+                    'SURBL': 'multi.surbl.org', 
+                    'URIBL': 'multi.uribl.com'
+                }
+                
+                try:
+                    domain_ip = socket.gethostbyname(domain)
+                    reversed_ip = '.'.join(domain_ip.split('.')[::-1])
+                    
+                    for bl_name, bl_server in blocklists.items():
+                        try:
+                            query = f"{reversed_ip}.{bl_server}"
+                            socket.gethostbyname(query)
+                            security_alerts.append(f"🚨 BLOCKLIST: Encontrado em {bl_name}")
+                            blocklist_results[bl_name] = 'listed'
+                        except socket.gaierror:
+                            blocklist_results[bl_name] = 'clean'
+                            if verbose:
+                                console.print(f"[bold green][✓][/bold green] Não listado em {bl_name}")
+                
+                except socket.gaierror:
+                    blocklist_results['error'] = 'domain_not_resolved'
+                    
+            except Exception as e:
+                if verbose:
+                    console.print(f"[bold yellow][W][/bold yellow] Erro na verificação de blocklists: {e}")
+        
+        # Detecção de Typosquatting
+        if typosquatting_check:
+            if verbose:
+                console.print("\n[bold blue][INFO][/bold blue] Gerando variações para detecção de typosquatting...")
+            
+            try:
+                def generate_typosquatting_variants(domain_name):
+                    """Gera variações comuns de typosquatting"""
+                    variants = set()
+                    domain_parts = domain_name.split('.')
+                    if len(domain_parts) < 2:
+                        return variants
+                    
+                    base_domain = domain_parts[0]
+                    tld = '.'.join(domain_parts[1:])
+                    
+                    # 1. Substituições de caracteres comuns
+                    common_subs = {
+                        'o': '0', '0': 'o', 'i': '1', '1': 'i', 'l': '1', 
+                        'e': '3', 'a': '@', 's': '$', 'g': '9'
+                    }
+                    
+                    for i, char in enumerate(base_domain):
+                        if char in common_subs:
+                            variant = base_domain[:i] + common_subs[char] + base_domain[i+1:]
+                            variants.add(f"{variant}.{tld}")
+                    
+                    # 2. Omissão de caracteres
+                    for i in range(len(base_domain)):
+                        if len(base_domain) > 3:  # Evitar domínios muito curtos
+                            variant = base_domain[:i] + base_domain[i+1:]
+                            variants.add(f"{variant}.{tld}")
+                    
+                    # 3. Duplicação de caracteres
+                    for i in range(len(base_domain)):
+                        variant = base_domain[:i] + base_domain[i] + base_domain[i:]
+                        variants.add(f"{variant}.{tld}")
+                    
+                    # 4. TLDs comuns
+                    common_tlds = ['com', 'org', 'net', 'info', 'biz']
+                    for tld_variant in common_tlds:
+                        variants.add(f"{base_domain}.{tld_variant}")
+                    
+                    return list(variants)[:20]  # Limitar a 20 variações
+                
+                variants = generate_typosquatting_variants(domain)
+                registered_variants = []
+                
+                for variant in variants:
+                    try:
+                        variant_whois = whois.whois(variant)
+                        if variant_whois.domain_name:
+                            registered_variants.append(variant)
+                            if len(registered_variants) < 5:  # Mostrar apenas os primeiros 5
+                                typosquatting_results.append(variant)
+                                security_alerts.append(f"⚠️ TYPOSQUATTING: Variação registrada - {variant}")
+                    except:
+                        pass  # Variação não registrada
+                
+                if verbose:
+                    console.print(f"[bold blue][INFO][/bold blue] Verificadas {len(variants)} variações, {len(registered_variants)} registradas")
+                    
+            except Exception as e:
+                if verbose:
+                    console.print(f"[bold yellow][W][/bold yellow] Erro na detecção de typosquatting: {e}")
+        
+        # Exibir resultados
+        if output_format == 'json':
+            import json
+            result = {
+                'whois_data': whois_data,
+                'security_alerts': security_alerts if security_analysis else [],
+                'threat_intelligence': threat_intel_results if threat_intel else {},
+                'blocklist_results': blocklist_results if check_blocklists else {},
+                'typosquatting_variants': typosquatting_results if typosquatting_check else []
+            }
+            console.print(json.dumps(result, indent=2, ensure_ascii=False))
+        elif output_format == 'xml':
+            console.print("<?xml version='1.0' encoding='UTF-8'?>")
+            console.print("<whois_result>")
+            console.print(f"  <domain>{domain}</domain>")
+            for key, value in whois_data.items():
+                if value:
+                    console.print(f"  <{key}>{value}</{key}>")
+            if security_analysis:
+                console.print("  <security_alerts>")
+                for alert in security_alerts:
+                    console.print(f"    <alert>{alert}</alert>")
+                console.print("  </security_alerts>")
+            console.print("</whois_result>")
+        else:
+            # Formato tabela
+            table = Table(title=f"Informações WHOIS para {w.domain_name[0] if isinstance(w.domain_name, list) else w.domain_name}")
+            table.add_column("Campo", style="cyan", no_wrap=True)
+            table.add_column("Valor", style="magenta")
+
+            for field, value in info_map.items():
+                if value:
+                    value_str = "\n".join(map(str, value)) if isinstance(value, list) else str(value)
+                    table.add_row(field, value_str)
+            
+            console.print(table)
+            
+            # Exibir análise de segurança
+            if security_analysis and security_alerts:
+                console.print("\n[bold red]🛡️ Análise de Segurança[/bold red]")
+                for alert in security_alerts:
+                    console.print(f"  {alert}")
+            elif security_analysis:
+                console.print("\n[bold green]🛡️ Nenhum alerta de segurança detectado[/bold green]")
+            
+            # Exibir resultados de threat intelligence
+            if threat_intel and threat_intel_results:
+                console.print("\n[bold magenta]🔍 Threat Intelligence[/bold magenta]")
+                if 'ip' in threat_intel_results:
+                    console.print(f"  📍 IP: {threat_intel_results['ip']}")
+                if 'ssl_cert' in threat_intel_results:
+                    cert = threat_intel_results['ssl_cert']
+                    console.print(f"  🔒 SSL Issuer: {cert['issuer'].get('organizationName', 'N/A')}")
+                    console.print(f"  📅 SSL Expiry: {cert['expiry']}")
+            
+            # Exibir resultados de blocklists
+            if check_blocklists and blocklist_results:
+                console.print("\n[bold yellow]📋 Verificação de Blocklists[/bold yellow]")
+                for bl_name, status in blocklist_results.items():
+                    if status == 'listed':
+                        console.print(f"  🚨 {bl_name}: [bold red]LISTADO[/bold red]")
+                    elif status == 'clean':
+                        console.print(f"  ✅ {bl_name}: [bold green]Limpo[/bold green]")
+            
+            # Exibir resultados de typosquatting
+            if typosquatting_check and typosquatting_results:
+                console.print("\n[bold cyan]🎭 Variações Detectadas (Typosquatting)[/bold cyan]")
+                for variant in typosquatting_results[:5]:  # Mostrar apenas os primeiros 5
+                    console.print(f"  ⚠️ {variant}")
+                if len(typosquatting_results) > 5:
+                    console.print(f"  ... e {len(typosquatting_results) - 5} mais")
 
     except whois.parser.PywhoisError:
         console.print(f"[bold red][!] Erro: Não foi possível analisar a resposta WHOIS para '{domain}'. O domínio pode não ser válido ou o TLD não é suportado.[/bold red]")
     except Exception as e:
         console.print(f"[bold red][!] Ocorreu um erro inesperado ao consultar o WHOIS: {e}[/bold red]")
     console.print("-" * 60)
+    
+    return {
+        'whois_data': whois_data,
+        'security_alerts': security_alerts,
+        'threat_intelligence': threat_intel_results,
+        'blocklist_results': blocklist_results,
+        'typosquatting_variants': typosquatting_results
+    }
 
 # --- MÓDULO 9: ANÁLISE DE CABEÇALHOS HTTP ---
 
@@ -11487,6 +11803,27 @@ Exemplos de Uso:
   
   # Crawling completo com todas as opções e output
   python %(prog)s crawl -u https://testphp.vulnweb.com/ --depth 2 --include-forms --detect-tech --verbose --delay 0.5 --max-pages 100 -o crawl_results.txt
+  
+  # Consulta WHOIS básica
+  python %(prog)s whois -d example.com
+  
+  # WHOIS com análise de segurança avançada
+  python %(prog)s whois -d suspicious-domain.com --security-analysis --verbose
+  
+  # WHOIS com output em JSON para automação
+  python %(prog)s whois -d company.com --output json --security-analysis
+  
+  # WHOIS com análise completa e output XML
+  python %(prog)s whois -d target.org --verbose --security-analysis --output xml
+  
+  # WHOIS com verificação completa de ameaças
+  python %(prog)s whois -d suspicious.com --security-analysis --threat-intel --check-blocklists --verbose
+  
+  # WHOIS com detecção de typosquatting
+  python %(prog)s whois -d google.com --typosquatting-check --verbose
+  
+  # WHOIS forense completo (todas as verificações)
+  python %(prog)s whois -d target.com --security-analysis --threat-intel --check-blocklists --typosquatting-check --verbose --output json
 
   [ Detecção de Tecnologias Web Avançada ]
   # Detecção básica de tecnologias web
@@ -11647,6 +11984,12 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
 
     parser_whois = subparsers.add_parser('whois', help='[Recon] Obtém informações de registo WHOIS de um domínio.')
     parser_whois.add_argument('-d', '--domain', required=True, help='Domínio para consultar o WHOIS.')
+    parser_whois.add_argument('--verbose', action='store_true', help='Exibe informações detalhadas durante a análise.')
+    parser_whois.add_argument('--security-analysis', action='store_true', help='Ativa análise de segurança (domínios suspeitos, idade, etc.).')
+    parser_whois.add_argument('--threat-intel', action='store_true', help='Ativa verificações de threat intelligence (IP, SSL, etc.).')
+    parser_whois.add_argument('--check-blocklists', action='store_true', help='Verifica se o domínio está em blocklists conhecidas.')
+    parser_whois.add_argument('--typosquatting-check', action='store_true', help='Detecta variações de typosquatting registradas.')
+    parser_whois.add_argument('--output', choices=['table', 'json', 'xml'], default='table', help='Formato de output (padrão: table).')
 
     parser_tech = subparsers.add_parser('tech-detect', help='[Recon] Deteta tecnologias web (servidor, framework, etc).')
     parser_tech.add_argument('-u', '--url', required=True, help='URL do site para analisar.')
@@ -11736,7 +12079,7 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     elif args.tool == 'crawl':
         crawl_links(args.url, args.depth, args.output, args.verbose, args.delay, args.max_pages, args.include_forms, args.detect_tech, args.follow_external)
     elif args.tool == 'whois':
-        get_whois_info(args.domain)
+        get_whois_info(args.domain, args.verbose, args.output, args.security_analysis, args.threat_intel, args.check_blocklists, args.typosquatting_check)
     elif args.tool == 'headers':
         get_http_headers(args.url)
     elif args.tool == 'ssl-info':
