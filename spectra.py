@@ -1713,7 +1713,7 @@ def query_dns(domain, record_type):
     console.print(f"[*] Consultando registros para [bold cyan]{domain}[/bold cyan]")
     console.print("-" * 60)
 
-    record_types = ['A', 'AAAA', 'MX', 'TXT', 'NS', 'CNAME', 'SOA'] if record_type.upper() == 'ALL' else [record_type.upper()]
+    record_types = ['A', 'AAAA', 'MX', 'TXT', 'NS', 'CNAME', 'SOA', 'CAA', 'SRV', 'PTR', 'NAPTR', 'LOC'] if record_type.upper() == 'ALL' else [record_type.upper()]
     
     resolver = dns.resolver.Resolver()
     resolver.lifetime = 10
@@ -1769,6 +1769,51 @@ def query_dns(domain, record_type):
                         table.add_row("Retry", f"{rdata.retry}s")
                         table.add_row("Expire", f"{rdata.expire}s")
                         table.add_row("TTL Mínimo", f"{rdata.minimum}s")
+                        
+                elif r_type == 'CAA':
+                    table.add_column("Flags", style="cyan")
+                    table.add_column("Tag", style="green")
+                    table.add_column("Value", style="magenta")
+                    table.add_column("Análise", style="yellow")
+                    for rdata in answers:
+                        analysis = _analyze_caa_record(rdata.tag, rdata.value)
+                        table.add_row(str(rdata.flags), rdata.tag, rdata.value, analysis)
+                        
+                elif r_type == 'SRV':
+                    table.add_column("Prioridade", style="cyan")
+                    table.add_column("Peso", style="blue")
+                    table.add_column("Porta", style="green")
+                    table.add_column("Alvo", style="magenta")
+                    table.add_column("Serviço", style="yellow")
+                    for rdata in answers:
+                        service_info = _analyze_srv_record(rdata.port, str(rdata.target))
+                        table.add_row(str(rdata.priority), str(rdata.weight), str(rdata.port), str(rdata.target), service_info)
+                        
+                elif r_type == 'PTR':
+                    table.add_column("Pointer", style="magenta")
+                    table.add_column("Análise", style="yellow")
+                    for rdata in answers:
+                        analysis = _analyze_ptr_record(str(rdata))
+                        table.add_row(str(rdata), analysis)
+                        
+                elif r_type == 'NAPTR':
+                    table.add_column("Ordem", style="cyan")
+                    table.add_column("Preferência", style="blue")
+                    table.add_column("Flags", style="green")
+                    table.add_column("Serviços", style="yellow")
+                    table.add_column("Regexp", style="red")
+                    table.add_column("Replacement", style="magenta")
+                    for rdata in answers:
+                        table.add_row(str(rdata.order), str(rdata.preference), rdata.flags, rdata.service, rdata.regexp, str(rdata.replacement))
+                        
+                elif r_type == 'LOC':
+                    table.add_column("Latitude", style="cyan")
+                    table.add_column("Longitude", style="blue")
+                    table.add_column("Altitude", style="green")
+                    table.add_column("Localização", style="yellow")
+                    for rdata in answers:
+                        location_info = _analyze_loc_record(rdata.latitude, rdata.longitude)
+                        table.add_row(f"{rdata.latitude}", f"{rdata.longitude}", f"{rdata.altitude}m", location_info)
                         
                 else:
                     table.add_column("Valor", style="magenta")
@@ -2205,6 +2250,578 @@ def _verify_forward_reverse_match(ip, hostname):
         return ip in forward_ips
     except:
         return False
+
+def _analyze_caa_record(tag, value):
+    """Analisa registro CAA para identificar política de certificado."""
+    analysis = {
+        'issue': 'Autorização para emissão de certificados',
+        'issuewild': 'Autorização para certificados wildcard',
+        'iodef': 'Relatório de violação de política'
+    }
+    
+    base_analysis = analysis.get(tag, 'Política personalizada')
+    
+    # Identifica CAs conhecidas
+    ca_providers = {
+        'letsencrypt.org': 'Let\'s Encrypt (Gratuito)',
+        'digicert.com': 'DigiCert (Premium)',
+        'sectigo.com': 'Sectigo (Comercial)',
+        'godaddy.com': 'GoDaddy (Comercial)',
+        'globalsign.com': 'GlobalSign (Enterprise)',
+        'comodo.com': 'Comodo (Comercial)',
+        'symantec.com': 'Symantec (Enterprise)',
+        'geotrust.com': 'GeoTrust (Comercial)'
+    }
+    
+    for provider, name in ca_providers.items():
+        if provider in value.lower():
+            return f"{base_analysis} - {name}"
+    
+    return f"{base_analysis} - CA: {value}"
+
+def _analyze_srv_record(port, target):
+    """Analisa registro SRV para identificar serviços."""
+    service_ports = {
+        21: 'FTP',
+        22: 'SSH',
+        25: 'SMTP',
+        53: 'DNS',
+        80: 'HTTP',
+        110: 'POP3',
+        143: 'IMAP',
+        443: 'HTTPS',
+        465: 'SMTPS',
+        587: 'SMTP Submission',
+        993: 'IMAPS',
+        995: 'POP3S',
+        1433: 'SQL Server',
+        3306: 'MySQL',
+        3389: 'RDP',
+        5432: 'PostgreSQL',
+        5060: 'SIP',
+        5061: 'SIPS',
+        8080: 'HTTP Alternate',
+        8443: 'HTTPS Alternate'
+    }
+    
+    service_name = service_ports.get(port, f'Porta {port}')
+    
+    # Analisa target para identificar serviços
+    target_lower = target.lower()
+    if 'mail' in target_lower or 'smtp' in target_lower:
+        service_name += ' (Email)'
+    elif 'sip' in target_lower or 'voip' in target_lower:
+        service_name += ' (VoIP)'
+    elif 'xmpp' in target_lower or 'jabber' in target_lower:
+        service_name += ' (XMPP)'
+    elif 'minecraft' in target_lower:
+        service_name += ' (Minecraft)'
+    elif 'teamspeak' in target_lower:
+        service_name += ' (TeamSpeak)'
+    
+    return service_name
+
+def _analyze_ptr_record(ptr_value):
+    """Analisa registro PTR para identificar tipo de host."""
+    ptr_lower = ptr_value.lower()
+    
+    patterns = {
+        'mail': 'Servidor de Email',
+        'smtp': 'Servidor SMTP',
+        'pop': 'Servidor POP',
+        'imap': 'Servidor IMAP',
+        'ns': 'Nameserver',
+        'dns': 'Servidor DNS',
+        'www': 'Servidor Web',
+        'ftp': 'Servidor FTP',
+        'proxy': 'Servidor Proxy',
+        'firewall': 'Firewall',
+        'router': 'Router',
+        'gateway': 'Gateway',
+        'vpn': 'Servidor VPN',
+        'cdn': 'CDN',
+        'cache': 'Servidor Cache',
+        'lb': 'Load Balancer',
+        'database': 'Servidor de Banco',
+        'mysql': 'Servidor MySQL',
+        'postgres': 'Servidor PostgreSQL',
+        'redis': 'Servidor Redis',
+        'elastic': 'Elasticsearch',
+        'mongo': 'MongoDB'
+    }
+    
+    for pattern, description in patterns.items():
+        if pattern in ptr_lower:
+            return description
+    
+    # Verifica se é um IP dinâmico
+    if any(x in ptr_lower for x in ['dynamic', 'dhcp', 'dyn', 'client', 'user']):
+        return 'IP Dinâmico/Cliente'
+    
+    # Verifica se é um provedor
+    if any(x in ptr_lower for x in ['aws', 'amazon', 'google', 'microsoft', 'azure']):
+        return 'Servidor Cloud'
+    
+    return 'Host Genérico'
+
+def _analyze_loc_record(latitude, longitude):
+    """Analisa registro LOC para fornecer informações de localização."""
+    # Converte coordenadas para formato legível
+    lat_deg = int(latitude[0])
+    lat_min = int(latitude[1])
+    lat_sec = latitude[2]
+    lat_dir = 'N' if latitude[3] == 1 else 'S'
+    
+    lon_deg = int(longitude[0])
+    lon_min = int(longitude[1])
+    lon_sec = longitude[2]
+    lon_dir = 'E' if longitude[3] == 1 else 'W'
+    
+    location_str = f"{lat_deg}°{lat_min}'{lat_sec:.1f}\"{lat_dir} {lon_deg}°{lon_min}'{lon_sec:.1f}\"{lon_dir}"
+    
+    # Estimativa aproximada de localização (simplified)
+    if 40.0 <= lat_deg <= 45.0 and -75.0 <= lon_deg <= -70.0:
+        return f"{location_str} (Região: Costa Leste EUA)"
+    elif 30.0 <= lat_deg <= 35.0 and -120.0 <= lon_deg <= -115.0:
+        return f"{location_str} (Região: Califórnia, EUA)"
+    elif 50.0 <= lat_deg <= 55.0 and 0.0 <= lon_deg <= 5.0:
+        return f"{location_str} (Região: Reino Unido)"
+    elif 48.0 <= lat_deg <= 52.0 and 2.0 <= lon_deg <= 8.0:
+        return f"{location_str} (Região: França/Alemanha)"
+    elif -25.0 <= lat_deg <= -20.0 and -50.0 <= lon_deg <= -40.0:
+        return f"{location_str} (Região: Brasil)"
+    else:
+        return f"{location_str} (Localização específica)"
+
+def advanced_dns_analysis(domain, output_format='table', include_security=True, custom_resolvers=None):
+    """Análise DNS avançada com múltiplas funcionalidades e formatos de saída."""
+    console.print("-" * 60)
+    console.print(f"[*] Análise DNS Avançada para: [bold cyan]{domain}[/bold cyan]")
+    console.print("-" * 60)
+    
+    results = {
+        'domain': domain,
+        'timestamp': datetime.now().isoformat(),
+        'records': {},
+        'security_analysis': {},
+        'resolver_analysis': {},
+        'advanced_features': {}
+    }
+    
+    # Lista expandida de tipos de registro
+    record_types = ['A', 'AAAA', 'MX', 'TXT', 'NS', 'CNAME', 'SOA', 'CAA', 'SRV', 'PTR', 'DNSKEY', 'DS', 'TLSA']
+    
+    # Configurar resolvers customizados se fornecidos
+    resolvers = custom_resolvers or ['8.8.8.8', '1.1.1.1', '208.67.222.222']
+    
+    console.print(f"[*] Testando com {len(resolvers)} resolvers DNS...")
+    
+    # Análise por resolver
+    for resolver_ip in resolvers:
+        resolver = dns.resolver.Resolver()
+        resolver.nameservers = [resolver_ip]
+        resolver.lifetime = 10
+        
+        resolver_results = {}
+        console.print(f"[*] Testando resolver: {resolver_ip}")
+        
+        for record_type in record_types:
+            try:
+                start_time = time.time()
+                answers = resolver.resolve(domain, record_type)
+                query_time = time.time() - start_time
+                
+                record_data = []
+                for rdata in answers:
+                    record_data.append({
+                        'value': str(rdata),
+                        'ttl': answers.rrset.ttl,
+                        'type': record_type
+                    })
+                
+                resolver_results[record_type] = {
+                    'records': record_data,
+                    'query_time': query_time,
+                    'count': len(record_data)
+                }
+                
+            except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.LifetimeTimeout):
+                resolver_results[record_type] = {'records': [], 'query_time': 0, 'count': 0}
+            except Exception as e:
+                resolver_results[record_type] = {'error': str(e), 'query_time': 0, 'count': 0}
+        
+        results['resolver_analysis'][resolver_ip] = resolver_results
+    
+    # Análise de consistência entre resolvers
+    consistency_analysis = _analyze_resolver_consistency(results['resolver_analysis'])
+    results['advanced_features']['consistency'] = consistency_analysis
+    
+    # Análise de performance
+    performance_analysis = _analyze_dns_performance(results['resolver_analysis'])
+    results['advanced_features']['performance'] = performance_analysis
+    
+    # Análise de segurança avançada
+    if include_security:
+        security_analysis = _perform_advanced_security_analysis(domain, results['resolver_analysis'])
+        results['security_analysis'] = security_analysis
+    
+    # Detecção de load balancers e CDN
+    lb_cdn_analysis = _detect_load_balancers_cdn(domain, results['resolver_analysis'])
+    results['advanced_features']['infrastructure'] = lb_cdn_analysis
+    
+    # Exibir resultados baseado no formato
+    if output_format.lower() == 'json':
+        console.print(json.dumps(results, indent=2, ensure_ascii=False))
+    elif output_format.lower() == 'table':
+        _display_advanced_dns_table(results)
+    elif output_format.lower() == 'summary':
+        _display_dns_summary(results)
+    
+    return results
+
+def _analyze_resolver_consistency(resolver_analysis):
+    """Analisa consistência de respostas entre diferentes resolvers."""
+    consistency_results = {}
+    
+    # Pega todos os tipos de registro testados
+    record_types = set()
+    for resolver_data in resolver_analysis.values():
+        record_types.update(resolver_data.keys())
+    
+    for record_type in record_types:
+        type_results = []
+        for resolver_ip, data in resolver_analysis.items():
+            if record_type in data and 'records' in data[record_type]:
+                records = [r['value'] for r in data[record_type]['records']]
+                type_results.append((resolver_ip, set(records)))
+        
+        if len(type_results) > 1:
+            # Compara conjuntos de registros
+            base_set = type_results[0][1]
+            is_consistent = all(resolver_set == base_set for _, resolver_set in type_results)
+            
+            consistency_results[record_type] = {
+                'consistent': is_consistent,
+                'resolvers_tested': len(type_results),
+                'unique_responses': len(set([frozenset(rs) for _, rs in type_results]))
+            }
+    
+    return consistency_results
+
+def _analyze_dns_performance(resolver_analysis):
+    """Analisa performance dos resolvers DNS."""
+    performance_results = {}
+    
+    for resolver_ip, data in resolver_analysis.items():
+        total_time = 0
+        successful_queries = 0
+        failed_queries = 0
+        
+        for record_type, record_data in data.items():
+            if 'query_time' in record_data:
+                total_time += record_data['query_time']
+                if record_data['count'] > 0:
+                    successful_queries += 1
+                else:
+                    failed_queries += 1
+        
+        avg_time = total_time / (successful_queries + failed_queries) if (successful_queries + failed_queries) > 0 else 0
+        
+        performance_results[resolver_ip] = {
+            'average_response_time': avg_time,
+            'successful_queries': successful_queries,
+            'failed_queries': failed_queries,
+            'success_rate': successful_queries / (successful_queries + failed_queries) if (successful_queries + failed_queries) > 0 else 0
+        }
+    
+    return performance_results
+
+def _perform_advanced_security_analysis(domain, resolver_analysis):
+    """Realiza análise de segurança DNS avançada."""
+    security_results = {}
+    
+    # Análise DNSSEC avançada
+    dnssec_analysis = _advanced_dnssec_check(domain)
+    security_results['dnssec'] = dnssec_analysis
+    
+    # Detecção de DNS amplification
+    amplification_risk = _check_dns_amplification_risk(domain, resolver_analysis)
+    security_results['amplification_risk'] = amplification_risk
+    
+    # Análise de TTL para detecção de fast-flux
+    ttl_analysis = _analyze_ttl_patterns(resolver_analysis)
+    security_results['ttl_analysis'] = ttl_analysis
+    
+    # Detecção de DNS tunneling indicators
+    tunneling_indicators = _detect_dns_tunneling_indicators(domain, resolver_analysis)
+    security_results['tunneling_indicators'] = tunneling_indicators
+    
+    return security_results
+
+def _detect_load_balancers_cdn(domain, resolver_analysis):
+    """Detecta load balancers e CDNs através de análise DNS."""
+    infrastructure_results = {}
+    
+    # Analisa registros A para múltiplos IPs (possível load balancer)
+    a_records = []
+    for resolver_data in resolver_analysis.values():
+        if 'A' in resolver_data and 'records' in resolver_data['A']:
+            for record in resolver_data['A']['records']:
+                a_records.append(record['value'])
+    
+    unique_ips = list(set(a_records))
+    if len(unique_ips) > 1:
+        infrastructure_results['load_balancer'] = {
+            'detected': True,
+            'ip_count': len(unique_ips),
+            'ips': unique_ips,
+            'type': 'DNS Round Robin' if len(unique_ips) <= 5 else 'Large Scale LB'
+        }
+    else:
+        infrastructure_results['load_balancer'] = {'detected': False}
+    
+    # Analisa CNAMEs para detecção de CDN
+    cname_indicators = []
+    for resolver_data in resolver_analysis.values():
+        if 'CNAME' in resolver_data and 'records' in resolver_data['CNAME']:
+            for record in resolver_data['CNAME']['records']:
+                cname_value = record['value'].lower()
+                if any(cdn in cname_value for cdn in ['cloudfront', 'cloudflare', 'fastly', 'akamai', 'maxcdn', 'keycdn']):
+                    cname_indicators.append(record['value'])
+    
+    if cname_indicators:
+        infrastructure_results['cdn'] = {
+            'detected': True,
+            'providers': cname_indicators
+        }
+    else:
+        infrastructure_results['cdn'] = {'detected': False}
+    
+    return infrastructure_results
+
+def _advanced_dnssec_check(domain):
+    """Verificação DNSSEC mais detalhada."""
+    dnssec_results = {
+        'enabled': False,
+        'dnskey_found': False,
+        'ds_found': False,
+        'chain_valid': False
+    }
+    
+    try:
+        # Verifica DNSKEY
+        resolver = dns.resolver.Resolver()
+        resolver.lifetime = 10
+        
+        try:
+            dnskey_answers = resolver.resolve(domain, 'DNSKEY')
+            dnssec_results['dnskey_found'] = True
+            dnssec_results['dnskey_count'] = len(dnskey_answers)
+        except:
+            pass
+        
+        # Verifica DS records
+        try:
+            ds_answers = resolver.resolve(domain, 'DS')
+            dnssec_results['ds_found'] = True
+            dnssec_results['ds_count'] = len(ds_answers)
+        except:
+            pass
+        
+        if dnssec_results['dnskey_found'] or dnssec_results['ds_found']:
+            dnssec_results['enabled'] = True
+            
+    except Exception as e:
+        dnssec_results['error'] = str(e)
+    
+    return dnssec_results
+
+def _check_dns_amplification_risk(domain, resolver_analysis):
+    """Verifica risco de amplificação DNS."""
+    amplification_risk = {
+        'risk_level': 'low',
+        'factors': []
+    }
+    
+    # Verifica tamanho das respostas TXT
+    for resolver_data in resolver_analysis.values():
+        if 'TXT' in resolver_data and 'records' in resolver_data['TXT']:
+            for record in resolver_data['TXT']['records']:
+                if len(record['value']) > 500:
+                    amplification_risk['factors'].append('Large TXT records detected')
+                    amplification_risk['risk_level'] = 'medium'
+    
+    # Verifica múltiplos registros A
+    total_a_records = 0
+    for resolver_data in resolver_analysis.values():
+        if 'A' in resolver_data and 'records' in resolver_data['A']:
+            total_a_records += len(resolver_data['A']['records'])
+    
+    if total_a_records > 10:
+        amplification_risk['factors'].append('Many A records')
+        amplification_risk['risk_level'] = 'medium'
+    
+    return amplification_risk
+
+def _analyze_ttl_patterns(resolver_analysis):
+    """Analisa padrões de TTL para detecção de anomalias."""
+    ttl_analysis = {
+        'patterns': {},
+        'suspicious': False
+    }
+    
+    for record_type in ['A', 'AAAA', 'MX', 'TXT']:
+        ttl_values = []
+        for resolver_data in resolver_analysis.values():
+            if record_type in resolver_data and 'records' in resolver_data[record_type]:
+                for record in resolver_data[record_type]['records']:
+                    if 'ttl' in record:
+                        ttl_values.append(record['ttl'])
+        
+        if ttl_values:
+            avg_ttl = sum(ttl_values) / len(ttl_values)
+            min_ttl = min(ttl_values)
+            max_ttl = max(ttl_values)
+            
+            ttl_analysis['patterns'][record_type] = {
+                'average': avg_ttl,
+                'minimum': min_ttl,
+                'maximum': max_ttl,
+                'count': len(ttl_values)
+            }
+            
+            # TTL muito baixo pode indicar fast-flux
+            if min_ttl < 300:  # 5 minutos
+                ttl_analysis['suspicious'] = True
+    
+    return ttl_analysis
+
+def _detect_dns_tunneling_indicators(domain, resolver_analysis):
+    """Detecta indicadores de DNS tunneling."""
+    tunneling_indicators = {
+        'suspicious': False,
+        'indicators': []
+    }
+    
+    # Verifica subdomínios com padrões suspeitos em TXT
+    for resolver_data in resolver_analysis.values():
+        if 'TXT' in resolver_data and 'records' in resolver_data['TXT']:
+            for record in resolver_data['TXT']['records']:
+                txt_value = record['value']
+                
+                # Base64-like patterns
+                if len(txt_value) > 100 and txt_value.replace('=', '').replace('+', '').replace('/', '').isalnum():
+                    tunneling_indicators['indicators'].append('Base64-like TXT record')
+                    tunneling_indicators['suspicious'] = True
+                
+                # Hex patterns
+                if len(txt_value) > 50 and all(c in '0123456789abcdefABCDEF' for c in txt_value):
+                    tunneling_indicators['indicators'].append('Hex-encoded TXT record')
+                    tunneling_indicators['suspicious'] = True
+    
+    return tunneling_indicators
+
+def _display_advanced_dns_table(results):
+    """Exibe resultados da análise DNS avançada em formato de tabela."""
+    console.print("\n[bold cyan]📊 ANÁLISE DNS AVANÇADA[/bold cyan]")
+    console.print("-" * 60)
+    
+    # Tabela de consistência
+    if 'consistency' in results['advanced_features']:
+        table = Table(title="Consistência entre Resolvers")
+        table.add_column("Tipo de Registro", style="cyan")
+        table.add_column("Consistente", style="green")
+        table.add_column("Resolvers Testados", style="yellow")
+        table.add_column("Respostas Únicas", style="magenta")
+        
+        for record_type, data in results['advanced_features']['consistency'].items():
+            consistent = "✅ Sim" if data['consistent'] else "❌ Não"
+            table.add_row(record_type, consistent, str(data['resolvers_tested']), str(data['unique_responses']))
+        
+        console.print(table)
+    
+    # Tabela de performance
+    if 'performance' in results['advanced_features']:
+        table = Table(title="Performance dos Resolvers")
+        table.add_column("Resolver", style="cyan")
+        table.add_column("Tempo Médio (s)", style="green")
+        table.add_column("Taxa de Sucesso", style="yellow")
+        table.add_column("Consultas Bem-sucedidas", style="blue")
+        
+        for resolver, data in results['advanced_features']['performance'].items():
+            success_rate = f"{data['success_rate']*100:.1f}%"
+            table.add_row(resolver, f"{data['average_response_time']:.3f}", success_rate, str(data['successful_queries']))
+        
+        console.print(table)
+    
+    # Análise de segurança
+    if results.get('security_analysis'):
+        console.print("\n[bold red]🔒 ANÁLISE DE SEGURANÇA[/bold red]")
+        console.print("-" * 40)
+        
+        security = results['security_analysis']
+        
+        # DNSSEC
+        if 'dnssec' in security:
+            dnssec = security['dnssec']
+            if dnssec['enabled']:
+                console.print("[green]✅ DNSSEC: Habilitado[/green]")
+                if dnssec.get('dnskey_found'):
+                    console.print(f"    • DNSKEY records encontrados: {dnssec.get('dnskey_count', 0)}")
+                if dnssec.get('ds_found'):
+                    console.print(f"    • DS records encontrados: {dnssec.get('ds_count', 0)}")
+            else:
+                console.print("[yellow]⚠️  DNSSEC: Não configurado[/yellow]")
+        
+        # Risco de amplificação
+        if 'amplification_risk' in security:
+            amp_risk = security['amplification_risk']
+            risk_color = {'low': 'green', 'medium': 'yellow', 'high': 'red'}.get(amp_risk['risk_level'], 'white')
+            console.print(f"[{risk_color}]🔊 Risco de Amplificação: {amp_risk['risk_level'].upper()}[/{risk_color}]")
+            for factor in amp_risk['factors']:
+                console.print(f"    • {factor}")
+        
+        # Indicadores de tunneling
+        if 'tunneling_indicators' in security:
+            tunneling = security['tunneling_indicators']
+            if tunneling['suspicious']:
+                console.print("[red]🚨 Indicadores de DNS Tunneling detectados:[/red]")
+                for indicator in tunneling['indicators']:
+                    console.print(f"    • {indicator}")
+            else:
+                console.print("[green]✅ Nenhum indicador de DNS Tunneling[/green]")
+
+def _display_dns_summary(results):
+    """Exibe um resumo conciso da análise DNS."""
+    console.print(f"\n[bold cyan]📋 RESUMO DNS - {results['domain']}[/bold cyan]")
+    console.print("-" * 50)
+    
+    # Contadores de registros
+    total_records = 0
+    for resolver_data in results['resolver_analysis'].values():
+        for record_type, data in resolver_data.items():
+            if 'count' in data:
+                total_records += data['count']
+    
+    console.print(f"[cyan]Total de registros encontrados:[/cyan] {total_records}")
+    
+    # Status de segurança
+    if results.get('security_analysis'):
+        security = results['security_analysis']
+        dnssec_status = "✅ Habilitado" if security.get('dnssec', {}).get('enabled') else "❌ Desabilitado"
+        console.print(f"[cyan]DNSSEC:[/cyan] {dnssec_status}")
+        
+        amp_risk = security.get('amplification_risk', {}).get('risk_level', 'unknown')
+        console.print(f"[cyan]Risco de Amplificação:[/cyan] {amp_risk.upper()}")
+    
+    # Infraestrutura
+    if 'infrastructure' in results['advanced_features']:
+        infra = results['advanced_features']['infrastructure']
+        lb_status = "✅ Detectado" if infra.get('load_balancer', {}).get('detected') else "❌ Não detectado"
+        cdn_status = "✅ Detectado" if infra.get('cdn', {}).get('detected') else "❌ Não detectado"
+        
+        console.print(f"[cyan]Load Balancer:[/cyan] {lb_status}")
+        console.print(f"[cyan]CDN:[/cyan] {cdn_status}")
 
 # --- MÓDULO 7: COLETOR DE LINKS ---
 
@@ -13709,6 +14326,12 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     parser_reverse_dns = subparsers.add_parser('reverse-dns', help='[Recon] Análise avançada de DNS reverso.')
     parser_reverse_dns.add_argument('-t', '--target', required=True, help='IP ou domínio para análise de DNS reverso.')
 
+    parser_dns_advanced = subparsers.add_parser('dns-advanced', help='[Recon] Análise DNS avançada com múltiplos resolvers, análise de segurança e detecção de infraestrutura.')
+    parser_dns_advanced.add_argument('-d', '--domain', required=True, help='O domínio para análise avançada.')
+    parser_dns_advanced.add_argument('--output', choices=['table', 'json', 'summary'], default='table', help='Formato de saída (padrão: table).')
+    parser_dns_advanced.add_argument('--no-security', action='store_true', help='Desabilita análise de segurança avançada.')
+    parser_dns_advanced.add_argument('--resolvers', nargs='+', help='Lista de resolvers DNS customizados (ex: 8.8.8.8 1.1.1.1).')
+
     parser_crawl = subparsers.add_parser('crawl', help='[Recon] Extrai todos os links e recursos de uma página web.')
     parser_crawl.add_argument('-u', '--url', required=True, help='URL inicial para o crawling.')
     parser_crawl.add_argument('--depth', type=int, default=1, help='Profundidade máxima do crawling (padrão: 1).')
@@ -13818,6 +14441,8 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
         query_dns(args.domain, args.type)
     elif args.tool == 'reverse-dns':
         analyze_reverse_dns(args.target)
+    elif args.tool == 'dns-advanced':
+        advanced_dns_analysis(args.domain, args.output, not args.no_security, args.resolvers)
     elif args.tool == 'crawl':
         crawl_links(args.url, args.depth, args.output, args.verbose, args.delay, args.max_pages, args.include_forms, args.detect_tech, args.follow_external)
     elif args.tool == 'whois':
