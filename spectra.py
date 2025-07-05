@@ -98,13 +98,14 @@ import struct
 import platform
 
 class AdvancedPortScanner:
-    def __init__(self, target, scan_type='tcp', timeout=1.0, delay=0, max_workers=50):
+    def __init__(self, target, scan_type='tcp', timeout=1.0, delay=0, max_workers=50, verbose=False):
         self.target = target
         self.target_ip = None
         self.scan_type = scan_type.lower()
         self.timeout = timeout
         self.delay = delay
         self.max_workers = max_workers
+        self.verbose = verbose
         self.results = {}
         
         # Service signatures para detecção
@@ -143,23 +144,94 @@ class AdvancedPortScanner:
             514: 'Syslog',
             1900: 'UPnP'
         }
+        
+        # Top ports ordenadas por frequência (baseadas em dados do nmap)
+        self.top_ports = [
+            22, 23, 21, 25, 53, 80, 110, 111, 135, 139, 143, 443, 993, 995, 1723, 3306, 3389, 5432, 5900, 6000,
+            6001, 6002, 6003, 6004, 6005, 6006, 6007, 6009, 6025, 6059, 6100, 6101, 6106, 6112, 6123, 6129, 6156,
+            6346, 6389, 6502, 6510, 6543, 6547, 6565, 6566, 6567, 6580, 6646, 6666, 6667, 6668, 6669, 6689, 6692,
+            6699, 6779, 6788, 6789, 6792, 6839, 6881, 6901, 6969, 7000, 7001, 7002, 7004, 7007, 7019, 7025, 7070,
+            7100, 7103, 7106, 7200, 7201, 7402, 7435, 7443, 7496, 7512, 7625, 7627, 7676, 7741, 7777, 7778, 7800,
+            7911, 7920, 7921, 7937, 7938, 7999, 8000, 8001, 8002, 8007, 8008, 8009, 8010, 8011, 8021, 8022, 8031,
+            8042, 8045, 8080, 8081, 8082, 8083, 8084, 8085, 8086, 8087, 8088, 8089, 8090, 8093, 8099, 8100, 8180,
+            8181, 8192, 8193, 8194, 8200, 8222, 8254, 8290, 8291, 8292, 8300, 8333, 8383, 8400, 8402, 8443, 8500,
+            8600, 8649, 8651, 8652, 8654, 8701, 8800, 8873, 8888, 8899, 8994, 9000, 9001, 9002, 9003, 9009, 9010,
+            9011, 9040, 9050, 9071, 9080, 9081, 9090, 9091, 9099, 9100, 9101, 9102, 9103, 9110, 9111, 9200, 9207,
+            9220, 9290, 9415, 9418, 9485, 9500, 9502, 9503, 9535, 9575, 9593, 9594, 9595, 9618, 9666, 9876, 9877,
+            9878, 9898, 9900, 9917, 9929, 9943, 9944, 9968, 9998, 9999, 10000, 10001, 10002, 10003, 10004, 10009,
+            10010, 10012, 10024, 10025, 10082, 10180, 10215, 10243, 10566, 10616, 10617, 10621, 10626, 10628, 10629,
+            10778, 11110, 11111, 11967, 12000, 12174, 12265, 12345, 13456, 13722, 13782, 13783, 14000, 14238, 14441,
+            14442, 15000, 15002, 15003, 15004, 15660, 15742, 16000, 16001, 16012, 16016, 16018, 16080, 16113, 16992,
+            16993, 17877, 17988, 18040, 18101, 18988, 19101, 19283, 19315, 19350, 19780, 19801, 19842, 20000, 20005,
+            20031, 20221, 20222, 20828, 21571, 22939, 23502, 24444, 24800, 25734, 25735, 26214, 27000, 27352, 27353,
+            27355, 27356, 27715, 28201, 30000, 30718, 30951, 31038, 31337, 32768, 32769, 32770, 32771, 32772, 32773,
+            32774, 32775, 32776, 32777, 32778, 32779, 32780, 32781, 32782, 32783, 32784, 32785, 33354, 33899, 34571,
+            34572, 34573, 35500, 38292, 40193, 40911, 41511, 42510, 44176, 44442, 44443, 44501, 45100, 48080, 49152,
+            49153, 49154, 49155, 49156, 49157, 49158, 49159, 49160, 49161, 49163, 49165, 49167, 49175, 49176, 49400,
+            49999, 50000, 50001, 50002, 50003, 50006, 50300, 50389, 50500, 50636, 50800, 51103, 51493, 52673, 52822,
+            52848, 52869, 54045, 54328, 55055, 55056, 55555, 55600, 56737, 56738, 57294, 57797, 58080, 60020, 60443,
+            61532, 61900, 62078, 63331, 64623, 64680, 65000, 65129, 65389
+        ]
     
     def resolve_target(self):
         """Resolve hostname para IP."""
         try:
             self.target_ip = socket.gethostbyname(self.target)
+            if self.verbose:
+                console.print(f"[dim cyan]→[/dim cyan] [dim]DNS resolvido: {self.target} → {self.target_ip}[/dim]")
             return True
         except socket.gaierror as e:
             console.print(f"[red]Erro ao resolver '{self.target}': {e}[/red]")
             return False
     
+    def get_top_ports(self, count):
+        """Retorna as N portas mais comuns."""
+        return self.top_ports[:count]
+    
+    def host_discovery(self):
+        """Verifica se o host está ativo usando ping."""
+        if self.verbose:
+            console.print(f"[dim cyan]→[/dim cyan] [dim]Verificando conectividade: {self.target}[/dim]")
+        
+        try:
+            import subprocess
+            result = subprocess.run(['ping', '-c', '1', '-W', '1', self.target], 
+                                  capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                if self.verbose:
+                    console.print(f"  [dim green]✓[/dim green] [dim]Ping bem-sucedido[/dim]")
+                return True
+        except:
+            if self.verbose:
+                console.print(f"  [dim yellow]⚠[/dim yellow] [dim]Ping falhou, testando portas TCP[/dim]")
+        
+        # Fallback: tenta conectar na porta 80 ou 443
+        for port in [80, 443, 22, 21]:
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.settimeout(1)
+                    if s.connect_ex((self.target_ip, port)) == 0:
+                        if self.verbose:
+                            console.print(f"  [dim green]✓[/dim green] [dim]Conectou na porta {port}[/dim]")
+                        return True
+            except:
+                continue
+        
+        if self.verbose:
+            console.print(f"  [dim red]✗[/dim red] [dim]Host não respondeu em nenhuma porta[/dim]")
+        return False
+    
     def tcp_connect_scan(self, port):
         """TCP Connect scan - mais compatível mas detectável."""
+        # Verbose será mostrado apenas quando encontrar porta aberta
+        
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.settimeout(self.timeout)
                 result = s.connect_ex((self.target_ip, port))
                 if result == 0:
+                    if self.verbose:
+                        console.print(f"[dim cyan]•[/dim cyan] [dim]Porta {port}/tcp[/dim] [green]ABERTA[/green]")
                     return {'status': 'open', 'method': 'tcp_connect'}
                 else:
                     return {'status': 'closed', 'method': 'tcp_connect'}
@@ -177,6 +249,8 @@ class AdvancedPortScanner:
     
     def udp_scan(self, port):
         """UDP scan - envia payload específico por serviço."""
+        # Verbose apenas para UDP open/filtered
+        
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
                 s.settimeout(max(self.timeout, 2.0))  # Mínimo 2s para UDP
@@ -208,6 +282,8 @@ class AdvancedPortScanner:
                         data, addr = s.recvfrom(1024)
                         # Analisa a resposta para determinar o serviço
                         service_info = self._analyze_udp_response(port, data)
+                        if self.verbose:
+                            console.print(f"[dim cyan]•[/dim cyan] [dim]Porta {port}/udp[/dim] [green]RESPOSTA[/green]")
                         return {
                             'status': 'open', 
                             'method': 'udp', 
@@ -264,6 +340,9 @@ class AdvancedPortScanner:
         if scan_result.get('status') != 'open':
             return scan_result
         
+        if self.verbose:
+            console.print(f"[dim cyan]→[/dim cyan] [dim]Capturando banner: {port}[/dim]")
+        
         banner = ""
         service_info = {}
         
@@ -302,7 +381,12 @@ class AdvancedPortScanner:
                 
                 # Detecção de serviço por análise de banner
                 if banner:
+                    if self.verbose:
+                        truncated_banner = banner.replace('\n', ' ').strip()[:60]
+                        console.print(f"  [dim green]✓[/dim green] [dim]Banner: {truncated_banner}{'...' if len(banner) > 60 else ''}[/dim]")
                     service_info.update(self._analyze_banner(banner, port))
+                elif self.verbose:
+                    console.print(f"  [dim yellow]⚠[/dim yellow] [dim]Nenhum banner recebido[/dim]")
                 
         except Exception as e:
             service_info['banner_error'] = str(e)
@@ -404,6 +488,9 @@ class AdvancedPortScanner:
         console.print(f"[*] Workers: [bold cyan]{self.max_workers}[/bold cyan]")
         if self.delay > 0:
             console.print(f"[*] Delay: [bold cyan]{self.delay}ms[/bold cyan]")
+        if self.verbose:
+            console.print(f"[*] Modo verbose: [bold cyan]Ativado[/bold cyan]")
+            console.print("[dim]  → Mostrando apenas portas abertas e banners[/dim]")
         console.print(f"[*] Início: [bold cyan]{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}[/bold cyan]")
         console.print("-" * 60)
         
@@ -611,19 +698,42 @@ def scan_ports_threaded(host, port_spec, verbose, grab_banner_flag, workers=100,
     results = scanner.scan_ports(ports_to_scan)
     return results
 
-def advanced_port_scan(host, port_spec, scan_type='tcp', timeout=1.0, delay=0, workers=50, output_format='table'):
+def advanced_port_scan(host, port_spec, scan_type='tcp', timeout=1.0, delay=0, workers=50, output_format='table', 
+                      top_ports=None, host_discovery=False, verbose=False, **kwargs):
     """Scanner de portas avançado com múltiplas funcionalidades."""
-    ports_to_scan = parse_ports(port_spec)
-    if not ports_to_scan:
-        return {}
-    
     scanner = AdvancedPortScanner(
         target=host,
         scan_type=scan_type,
         timeout=timeout,
         delay=delay,
-        max_workers=workers
+        max_workers=workers,
+        verbose=verbose
     )
+    
+    # Resolve o target
+    if not scanner.resolve_target():
+        return {}
+    
+    # Host discovery se solicitado
+    if host_discovery:
+        console.print(f"[*] Verificando se {host} está ativo...")
+        if not scanner.host_discovery():
+            console.print(f"[yellow]Host {host} não responde - prosseguindo mesmo assim[/yellow]")
+    
+    # Determina portas para escanear
+    if top_ports:
+        ports_to_scan = scanner.get_top_ports(top_ports)
+        console.print(f"[*] Escaneando top {top_ports} portas mais comuns")
+        if verbose:
+            ports_preview = ", ".join(map(str, ports_to_scan[:10]))
+            console.print(f"[dim cyan]→[/dim cyan] [dim]Portas: {ports_preview}{'...' if len(ports_to_scan) > 10 else ''}[/dim]")
+    else:
+        ports_to_scan = parse_ports(port_spec)
+        if not ports_to_scan:
+            return {}
+        if verbose:
+            ports_preview = ", ".join(map(str, ports_to_scan[:10]))
+            console.print(f"[dim cyan]→[/dim cyan] [dim]Portas: {ports_preview}{'...' if len(ports_to_scan) > 10 else ''}[/dim]")
     
     results = scanner.scan_ports(ports_to_scan)
     
@@ -14291,9 +14401,9 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
 
 
     # --- Grupo de Reconhecimento & Enumeração ---
-    parser_scan = subparsers.add_parser('scan', help='[Recon] Scanner avançado de portas com detecção de serviços.')
+    parser_scan = subparsers.add_parser('port-scan', help='[Recon] Scanner avançado de portas com detecção de serviços.')
     parser_scan.add_argument('-t', '--target', required=True, help='Host ou endereço IP do alvo.')
-    parser_scan.add_argument('-p', '--ports', required=True, help="Portas para escanear (ex: '1-1024', '80,443', '22').")
+    parser_scan.add_argument('-p', '--ports', help="Portas para escanear (ex: '1-1024', '80,443', '22'). Obrigatório exceto quando --top-ports é usado.")
     parser_scan.add_argument('--workers', type=int, default=50, help='Número de threads (padrão: 50).')
     parser_scan.add_argument('--grab-banner', action='store_true', help='Captura banners automaticamente (sempre ativo no modo avançado).')
     parser_scan.add_argument('--scan-type', choices=['tcp', 'syn', 'udp'], default='tcp', help='Tipo de scan (padrão: tcp).')
@@ -14301,6 +14411,16 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     parser_scan.add_argument('--delay', type=int, default=0, help='Delay entre scans em ms (padrão: 0).')
     parser_scan.add_argument('--output', choices=['table', 'json', 'xml'], default='table', help='Formato de output (padrão: table).')
     parser_scan.add_argument('--stealth', action='store_true', help='Modo stealth (timeout alto, delay, menos workers).')
+    parser_scan.add_argument('--top-ports', type=int, help='Escanear apenas as N portas mais comuns (ex: --top-ports 1000).')
+    parser_scan.add_argument('--host-discovery', action='store_true', help='Realiza descoberta de hosts ativos antes do scan.')
+    parser_scan.add_argument('--service-detection', action='store_true', default=True, help='Ativa detecção avançada de serviços (padrão: ativo).')
+    parser_scan.add_argument('--version-detection', action='store_true', help='Tenta detectar versões dos serviços.')
+    parser_scan.add_argument('--os-detection', action='store_true', help='Tentativa de detecção do sistema operacional.')
+    parser_scan.add_argument('--vuln-scan', action='store_true', help='Escanea vulnerabilidades conhecidas nas portas abertas.')
+    parser_scan.add_argument('--ipv6', action='store_true', help='Força uso de IPv6.')
+    parser_scan.add_argument('--resume', help='Arquivo para resumir scan interrompido.')
+    parser_scan.add_argument('--save-scan', help='Salva progresso do scan em arquivo para possível resumo.')
+    parser_scan.add_argument('--verbose', action='store_true', help='Exibe informações detalhadas durante o scan.')
 
     parser_discover = subparsers.add_parser('discover', help='[Recon] Scanner avançado de diretórios e arquivos com detecção inteligente.')
     parser_discover.add_argument('-u', '--url', required=True, help='URL base do site alvo.')
@@ -14384,7 +14504,12 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
 
     args = parser.parse_args()
 
-    if args.tool == 'scan':
+    if args.tool == 'port-scan':
+        # Validação: pelo menos --ports ou --top-ports deve ser especificado
+        if not args.ports and not args.top_ports:
+            console.print("[red]Erro: Especifique --ports ou --top-ports[/red]")
+            return
+        
         # Modo stealth ajusta parâmetros para ser menos detectável
         if args.stealth:
             timeout = max(args.timeout, 2.0)  # mínimo 2s
@@ -14395,15 +14520,26 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
             delay = args.delay
             workers = args.workers
         
+        # Verifica se deve usar top ports ou ports especificadas
+        if args.top_ports:
+            if args.ports:
+                console.print("[yellow]Aviso: --top-ports especificado, ignorando --ports[/yellow]")
+            port_spec = None
+        else:
+            port_spec = args.ports
+        
         # Usa o scanner avançado
         results = advanced_port_scan(
             host=args.target,
-            port_spec=args.ports,
+            port_spec=port_spec,
             scan_type=args.scan_type,
             timeout=timeout,
             delay=delay,
             workers=workers,
-            output_format=args.output
+            output_format=args.output,
+            top_ports=args.top_ports,
+            host_discovery=args.host_discovery,
+            verbose=args.verbose
         )
         
         # Output especial para JSON/XML
