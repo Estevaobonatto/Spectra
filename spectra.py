@@ -2214,22 +2214,51 @@ def normalize_url(url):
     path = p.path.rstrip('/') if len(p.path) > 1 else p.path
     return urlunparse((p.scheme, p.netloc, path, p.params, p.query, '')).lower()
 
-def crawl_links(base_url, max_depth=2, output_file=None):
-    """Coleta todos os links e recursos de uma página web, respeitando o domínio original."""
+def crawl_links(base_url, max_depth=2, output_file=None, verbose=False, delay=0.5, max_pages=None, include_forms=False, detect_tech=False, follow_external=False):
+    """Coleta todos os links e recursos de uma página web com funcionalidades avançadas.
+    
+    Args:
+        base_url: URL inicial para crawling
+        max_depth: Profundidade máxima de crawling
+        output_file: Arquivo para salvar resultados
+        verbose: Exibe informações detalhadas
+        delay: Delay entre requisições em segundos
+        max_pages: Número máximo de páginas para visitar
+        include_forms: Inclui extração de formulários
+        detect_tech: Detecta tecnologias web
+        follow_external: Segue links externos
+    """
     console.print("-" * 60)
     console.print(f"[*] A iniciar o crawling em: [bold cyan]{base_url}[/bold cyan]")
     console.print(f"[*] Profundidade máxima: [bold cyan]{max_depth}[/bold cyan]")
+    if verbose:
+        console.print(f"[*] Delay entre requisições: [bold cyan]{delay}s[/bold cyan]")
+        console.print(f"[*] Máximo de páginas: [bold cyan]{max_pages or 'Ilimitado'}[/bold cyan]")
+        console.print(f"[*] Incluir formulários: [bold cyan]{include_forms}[/bold cyan]")
+        console.print(f"[*] Detectar tecnologias: [bold cyan]{detect_tech}[/bold cyan]")
+        console.print(f"[*] Seguir links externos: [bold cyan]{follow_external}[/bold cyan]")
     console.print("-" * 60)
 
     to_visit = [(base_url, 0)]
     visited_normalized = set()
     all_resources = set()
+    forms_found = []
+    technologies = set()
+    page_metadata = {}
+    stats = {'pages_visited': 0, 'resources_found': 0, 'forms_found': 0, 'errors': 0}
+    
     base_netloc = urlparse(base_url).netloc
-    tag_attrs = {'a': 'href', 'script': 'src', 'link': 'href', 'img': 'src', 'source': 'src'}
+    tag_attrs = {'a': 'href', 'script': 'src', 'link': 'href', 'img': 'src', 'source': 'src', 'iframe': 'src', 'embed': 'src', 'object': 'data'}
+    
+    session = requests.Session()
+    session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'})
     
     with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
         task = progress.add_task("[green]Crawling...", total=None)
         while to_visit:
+            if max_pages and stats['pages_visited'] >= max_pages:
+                break
+                
             current_url, depth = to_visit.pop(0)
             normalized_url = normalize_url(current_url)
 
@@ -2237,11 +2266,29 @@ def crawl_links(base_url, max_depth=2, output_file=None):
                 continue
                 
             visited_normalized.add(normalized_url)
+            stats['pages_visited'] += 1
             progress.update(task, advance=1, description=f"Visitando: {current_url[:70]}...")
+            
+            if verbose:
+                console.print(f"\n[bold blue][INFO][/bold blue] Visitando página {stats['pages_visited']}: {current_url}")
 
             try:
-                response = requests.get(current_url, timeout=5, headers={'User-Agent': 'Mozilla/5.0'}, verify=False)
+                if delay > 0:
+                    time.sleep(delay)
+                    
+                response = session.get(current_url, timeout=15, verify=False, allow_redirects=True)
                 soup = BeautifulSoup(response.content, 'html.parser')
+                
+                page_metadata[current_url] = {
+                    'status_code': response.status_code,
+                    'content_type': response.headers.get('content-type', ''),
+                    'content_length': len(response.content),
+                    'title': soup.title.string if soup.title else '',
+                    'depth': depth
+                }
+                
+                if verbose:
+                    console.print(f"[bold green][+][/bold green] Status: {response.status_code}, Tamanho: {len(response.content)} bytes")
                 
                 for tag, attr in tag_attrs.items():
                     for t in soup.find_all(tag, **{attr: True}):
@@ -2251,37 +2298,190 @@ def crawl_links(base_url, max_depth=2, output_file=None):
                         
                         if parsed_full_url.scheme in ['http', 'https']:
                             all_resources.add(full_url)
-                            if tag == 'a' and parsed_full_url.netloc == base_netloc:
+                            stats['resources_found'] += 1
+                            
+                            if verbose:
+                                console.print(f"[dim]  - Recurso {tag}: {full_url}[/dim]")
+                            
+                            should_follow = False
+                            if follow_external:
+                                should_follow = True
+                            elif parsed_full_url.netloc == base_netloc:
+                                should_follow = True
+                                
+                            if tag == 'a' and should_follow:
                                 normalized_found_url = normalize_url(full_url)
                                 if normalized_found_url not in visited_normalized:
                                     to_visit.append((full_url, depth + 1))
+                
+                if include_forms:
+                    forms = soup.find_all('form')
+                    for form in forms:
+                        form_data = {
+                            'action': urljoin(current_url, form.get('action', '')),
+                            'method': form.get('method', 'GET').upper(),
+                            'inputs': []
+                        }
+                        
+                        for input_tag in form.find_all(['input', 'textarea', 'select']):
+                            form_data['inputs'].append({
+                                'name': input_tag.get('name', ''),
+                                'type': input_tag.get('type', 'text'),
+                                'value': input_tag.get('value', '')
+                            })
+                        
+                        forms_found.append(form_data)
+                        stats['forms_found'] += 1
+                        
+                        if verbose:
+                            console.print(f"[bold yellow][F][/bold yellow] Formulário encontrado: {form_data['method']} {form_data['action']}")
+                
+                if detect_tech:
+                    try:
+                        tech_results = detect_technologies(current_url, return_findings=True, verbose=False, output_format='legacy')
+                        
+                        for category, techs in tech_results.items():
+                            for tech in techs:
+                                technologies.add(tech)
+                                if verbose:
+                                    console.print(f"[bold magenta][T][/bold magenta] {category}: {tech}")
+                    except Exception as e:
+                        if verbose:
+                            console.print(f"[bold yellow][W][/bold yellow] Erro na detecção de tecnologias: {e}")
+                        
+                        tech_indicators = {
+                            'WordPress': ['wp-content', 'wp-includes', 'wp-admin'],
+                            'Joomla': ['joomla', 'index.php?option=com_'],
+                            'Drupal': ['sites/default', 'misc/drupal.js'],
+                            'Laravel': ['laravel_session', 'laravel_token'],
+                            'React': ['react.js', 'react.min.js'],
+                            'Angular': ['angular.js', 'angular.min.js'],
+                            'Vue.js': ['vue.js', 'vue.min.js'],
+                            'Bootstrap': ['bootstrap.css', 'bootstrap.min.css'],
+                            'jQuery': ['jquery.js', 'jquery.min.js']
+                        }
+                        
+                        page_content = response.text.lower()
+                        for tech, indicators in tech_indicators.items():
+                            if any(indicator in page_content for indicator in indicators):
+                                technologies.add(tech)
+                                if verbose:
+                                    console.print(f"[bold magenta][T][/bold magenta] Tecnologia detectada: {tech}")
                                     
+            except requests.exceptions.Timeout:
+                stats['errors'] += 1
+                console.print(f"\n[bold red][!] Timeout ao aceder a {current_url}[/bold red]")
+            except requests.exceptions.ConnectionError:
+                stats['errors'] += 1
+                console.print(f"\n[bold red][!] Erro de conexão com {current_url}[/bold red]")
             except requests.RequestException as e:
-                console.print(f"\n[bold red][!] Erro ao aceder a {current_url}: {e}[/bold red]")
+                stats['errors'] += 1
+                if verbose:
+                    console.print(f"\n[bold red][!] Erro ao aceder a {current_url}: {e}[/bold red]")
+                else:
+                    console.print(f"\n[bold red][!] Erro ao aceder a {current_url}[/bold red]")
+            except Exception as e:
+                stats['errors'] += 1
+                if verbose:
+                    console.print(f"\n[bold red][!] Erro inesperado em {current_url}: {e}[/bold red]")
 
     console.print("-" * 60)
-    console.print(f"[*] Crawling concluído. Encontrados {len(all_resources)} recursos únicos.")
+    console.print(f"[*] Crawling concluído!")
+    console.print(f"[*] Páginas visitadas: [bold cyan]{stats['pages_visited']}[/bold cyan]")
+    console.print(f"[*] Recursos encontrados: [bold cyan]{stats['resources_found']}[/bold cyan]")
+    console.print(f"[*] Formulários encontrados: [bold cyan]{stats['forms_found']}[/bold cyan]")
+    console.print(f"[*] Erros: [bold cyan]{stats['errors']}[/bold cyan]")
+    if technologies:
+        console.print(f"[*] Tecnologias detectadas: [bold cyan]{', '.join(technologies)}[/bold cyan]")
     
     sorted_resources = sorted(list(all_resources))
     
     if sorted_resources:
         table = Table(title=f"Recursos Encontrados em {base_url}")
-        table.add_column("Recurso Encontrado", style="cyan")
+        table.add_column("Tipo", style="yellow", width=12)
+        table.add_column("Recurso", style="cyan")
+        
         for link in sorted_resources:
-            table.add_row(link)
+            resource_type = "Externo" if urlparse(link).netloc != base_netloc else "Interno"
+            if any(ext in link.lower() for ext in ['.js', '.css', '.png', '.jpg', '.jpeg', '.gif', '.ico']):
+                resource_type += " (Estático)"
+            table.add_row(resource_type, link)
         console.print(table)
+        
+        if verbose and forms_found:
+            forms_table = Table(title="Formulários Encontrados")
+            forms_table.add_column("Método", style="green")
+            forms_table.add_column("Ação", style="cyan")
+            forms_table.add_column("Campos", style="yellow")
+            
+            for form in forms_found:
+                inputs = ", ".join([f"{inp['name']} ({inp['type']})" for inp in form['inputs'] if inp['name']])
+                forms_table.add_row(form['method'], form['action'], inputs)
+            console.print(forms_table)
+        
+        if verbose and technologies:
+            tech_table = Table(title="Tecnologias Detectadas")
+            tech_table.add_column("Tecnologia", style="magenta")
+            tech_table.add_column("Categoria", style="cyan")
+            
+            for tech in sorted(technologies):
+                category = "Não categorizada"
+                if any(word in tech.lower() for word in ['apache', 'nginx', 'iis']):
+                    category = "Servidor Web"
+                elif any(word in tech.lower() for word in ['wordpress', 'joomla', 'drupal']):
+                    category = "CMS"
+                elif any(word in tech.lower() for word in ['react', 'angular', 'vue', 'jquery']):
+                    category = "Frontend"
+                elif any(word in tech.lower() for word in ['php', 'python', 'java', 'node']):
+                    category = "Backend"
+                elif any(word in tech.lower() for word in ['bootstrap', 'css']):
+                    category = "Estilo/CSS"
+                    
+                tech_table.add_row(tech, category)
+            console.print(tech_table)
         
         if output_file:
             try:
                 with open(output_file, 'w', encoding='utf-8') as f:
+                    f.write(f"# Crawl Results for {base_url}\n")
+                    f.write(f"# Pages visited: {stats['pages_visited']}\n")
+                    f.write(f"# Resources found: {stats['resources_found']}\n")
+                    f.write(f"# Forms found: {stats['forms_found']}\n")
+                    f.write(f"# Errors: {stats['errors']}\n")
+                    if technologies:
+                        f.write(f"# Technologies: {', '.join(technologies)}\n")
+                    f.write("\n# Resources:\n")
                     for link in sorted_resources:
                         f.write(link + '\n')
+                    
+                    if forms_found:
+                        f.write("\n# Forms:\n")
+                        for form in forms_found:
+                            f.write(f"{form['method']} {form['action']}\n")
+                            for inp in form['inputs']:
+                                if inp['name']:
+                                    f.write(f"  - {inp['name']} ({inp['type']})\n")
+                            f.write("\n")
+                            
                 console.print(f"\n[bold green][+] Resultados salvos em: {output_file}[/bold green]")
             except IOError as e:
                 console.print(f"\n[bold red][!] Erro ao salvar o arquivo: {e}[/bold red]")
     else:
         console.print("[bold yellow][-] Nenhum recurso encontrado.[/bold yellow]")
+        
+    if verbose:
+        console.print("\n[bold blue][INFO][/bold blue] Metadados das páginas:")
+        for url, metadata in page_metadata.items():
+            console.print(f"  {url}: {metadata['status_code']} - {metadata['title'][:50]}{'...' if len(metadata['title']) > 50 else ''}")
     console.print("-" * 60)
+    
+    return {
+        'resources': sorted_resources,
+        'forms': forms_found,
+        'technologies': list(technologies),
+        'metadata': page_metadata,
+        'stats': stats
+    }
 
 # --- MÓDULO 8: CONSULTA WHOIS ---
 
@@ -11275,6 +11475,18 @@ Exemplos de Uso:
   
   # Análise de DNS reverso para domínio (resolve IPs automaticamente)
   python %(prog)s reverse-dns -t cloudflare.com
+  
+  # Crawling básico de website (profundidade 1)
+  python %(prog)s crawl -u https://httpbin.org/
+  
+  # Crawling avançado com extração de formulários e detecção de tecnologias
+  python %(prog)s crawl -u https://example.com --depth 3 --include-forms --detect-tech --verbose
+  
+  # Crawling com controle de velocidade e limite de páginas
+  python %(prog)s crawl -u https://httpbin.org/ --delay 1.0 --max-pages 50 --follow-external
+  
+  # Crawling completo com todas as opções e output
+  python %(prog)s crawl -u https://testphp.vulnweb.com/ --depth 2 --include-forms --detect-tech --verbose --delay 0.5 --max-pages 100 -o crawl_results.txt
 
   [ Detecção de Tecnologias Web Avançada ]
   # Detecção básica de tecnologias web
@@ -11426,6 +11638,12 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     parser_crawl.add_argument('-u', '--url', required=True, help='URL inicial para o crawling.')
     parser_crawl.add_argument('--depth', type=int, default=1, help='Profundidade máxima do crawling (padrão: 1).')
     parser_crawl.add_argument('-o', '--output', help='Arquivo para salvar a lista de recursos encontrados.')
+    parser_crawl.add_argument('--verbose', action='store_true', help='Exibe informações detalhadas durante o crawling.')
+    parser_crawl.add_argument('--delay', type=float, default=0.5, help='Delay entre requisições em segundos (padrão: 0.5).')
+    parser_crawl.add_argument('--max-pages', type=int, help='Número máximo de páginas para visitar.')
+    parser_crawl.add_argument('--include-forms', action='store_true', help='Inclui extração de formulários.')
+    parser_crawl.add_argument('--detect-tech', action='store_true', help='Detecta tecnologias web.')
+    parser_crawl.add_argument('--follow-external', action='store_true', help='Segue links externos ao domínio.')
 
     parser_whois = subparsers.add_parser('whois', help='[Recon] Obtém informações de registo WHOIS de um domínio.')
     parser_whois.add_argument('-d', '--domain', required=True, help='Domínio para consultar o WHOIS.')
@@ -11516,7 +11734,7 @@ Para ajuda sobre um comando específico, use: python %(prog)s [comando] --help
     elif args.tool == 'reverse-dns':
         analyze_reverse_dns(args.target)
     elif args.tool == 'crawl':
-        crawl_links(args.url, args.depth, args.output)
+        crawl_links(args.url, args.depth, args.output, args.verbose, args.delay, args.max_pages, args.include_forms, args.detect_tech, args.follow_external)
     elif args.tool == 'whois':
         get_whois_info(args.domain)
     elif args.tool == 'headers':
