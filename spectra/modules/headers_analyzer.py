@@ -279,6 +279,44 @@ class AdvancedHeadersAnalyzer:
                 })
                 score -= 15
         
+        # Verifica configurações específicas importantes
+        if 'object-src' in directives and "'none'" not in directives['object-src']:
+            findings.append({
+                'type': 'WEAK_OBJECT_SRC',
+                'severity': 'MEDIUM',
+                'description': "object-src não está definido como 'none', permitindo plugins",
+                'recommendation': "Configure object-src 'none' para bloquear plugins perigosos"
+            })
+            score -= 10
+        
+        # Verifica se há diretivas duplicadas ou conflitantes
+        if 'script-src' in directives and 'default-src' in directives:
+            script_values = set(directives['script-src'])
+            default_values = set(directives['default-src'])
+            if script_values == default_values:
+                findings.append({
+                    'type': 'REDUNDANT_CSP_DIRECTIVE',
+                    'severity': 'INFO',
+                    'description': "script-src tem mesmos valores que default-src (redundante)",
+                    'recommendation': "Remova script-src redundante ou especialize-o"
+                })
+        
+        # Verifica uso de nonces e hashes
+        for directive, values in directives.items():
+            for value in values:
+                if value.startswith("'nonce-") and len(value) < 20:
+                    findings.append({
+                        'type': 'WEAK_CSP_NONCE',
+                        'severity': 'MEDIUM',
+                        'directive': directive,
+                        'description': f"Nonce muito curto em {directive}: {value}",
+                        'recommendation': "Use nonces com pelo menos 16 bytes (32 caracteres base64)"
+                    })
+                    score -= 10
+                elif value.startswith("'sha256-") or value.startswith("'sha384-") or value.startswith("'sha512-"):
+                    # Hash detectado - isso é bom
+                    pass
+        
         self.csp_analysis = {
             'score': max(0, score),
             'findings': findings,
@@ -293,10 +331,46 @@ class AdvancedHeadersAnalyzer:
         cookies_findings = []
         cookies_info = {}
         
-        # Obtém cookies da resposta
-        set_cookies = response.headers.get_list('Set-Cookie') if hasattr(response.headers, 'get_list') else []
-        if not set_cookies and 'Set-Cookie' in response.headers:
-            set_cookies = [response.headers['Set-Cookie']]
+        # Obtém cookies da resposta - suporte melhorado para múltiplos cookies
+        set_cookies = []
+        
+        # Tenta método moderno primeiro
+        if hasattr(response.headers, 'get_list'):
+            set_cookies = response.headers.get_list('Set-Cookie')
+        else:
+            # Fallback para método tradicional
+            set_cookie_header = response.headers.get('Set-Cookie')
+            if set_cookie_header:
+                # Verifica se há múltiplos cookies (alguns servidores concatenam com vírgulas)
+                if ',' in set_cookie_header and '=' in set_cookie_header:
+                    # Heurística para separar múltiplos cookies
+                    potential_cookies = set_cookie_header.split(',')
+                    for potential_cookie in potential_cookies:
+                        if '=' in potential_cookie:
+                            set_cookies.append(potential_cookie.strip())
+                else:
+                    set_cookies = [set_cookie_header]
+        
+        # Se ainda não encontrou cookies, verifica no objeto de cookies da response
+        if not set_cookies and hasattr(response, 'cookies') and response.cookies:
+            for cookie in response.cookies:
+                cookie_str = f"{cookie.name}={cookie.value}"
+                attrs = []
+                if cookie.secure:
+                    attrs.append("Secure")
+                if hasattr(cookie, 'httponly') and cookie.httponly:
+                    attrs.append("HttpOnly")
+                if hasattr(cookie, 'samesite') and cookie.samesite:
+                    attrs.append(f"SameSite={cookie.samesite}")
+                if cookie.domain:
+                    attrs.append(f"Domain={cookie.domain}")
+                if cookie.path:
+                    attrs.append(f"Path={cookie.path}")
+                
+                if attrs:
+                    cookie_str += "; " + "; ".join(attrs)
+                
+                set_cookies.append(cookie_str)
         
         for cookie_header in set_cookies:
             cookie_analysis = self._parse_cookie_header(cookie_header)
@@ -340,6 +414,16 @@ class AdvancedHeadersAnalyzer:
                     'cookie': cookie_name,
                     'description': f"Cookie {cookie_name} usa SameSite=None sem Secure",
                     'recommendation': "SameSite=None requer atributo Secure"
+                })
+            
+            # Verifica cookies de sessão sem expiração
+            if not cookie_analysis.get('expires') and not cookie_analysis.get('max_age'):
+                cookies_findings.append({
+                    'type': 'SESSION_COOKIE_NO_EXPIRY',
+                    'severity': 'INFO',
+                    'cookie': cookie_name,
+                    'description': f"Cookie {cookie_name} é cookie de sessão sem expiração explícita",
+                    'recommendation': "Considere definir expiração para cookies sensíveis"
                 })
         
         self.cookie_analysis = {
@@ -690,6 +774,230 @@ class AdvancedHeadersAnalyzer:
         
         return cache_findings
     
+    def _analyze_permissions_policy(self, policy_header_value):
+        """Análise avançada de Permissions Policy / Feature Policy."""
+        if not policy_header_value:
+            return {
+                'score': 0,
+                'findings': [],
+                'policies': {},
+                'analysis': 'Permissions Policy não configurado'
+            }
+        
+        findings = []
+        policies = {}
+        score = 100
+        
+        # Parse das políticas
+        policy_parts = [part.strip() for part in policy_header_value.split(',') if part.strip()]
+        
+        for part in policy_parts:
+            if '=' in part:
+                feature, values = part.split('=', 1)
+                feature = feature.strip()
+                
+                # Remove parênteses e parse dos valores
+                values = values.strip()
+                if values.startswith('(') and values.endswith(')'):
+                    values = values[1:-1]
+                
+                # Split pelos valores permitidos
+                allowed_origins = [v.strip().strip('"\'') for v in values.split() if v.strip()]
+                policies[feature] = allowed_origins
+            else:
+                # Formato sem valores (disable)
+                policies[part.strip()] = []
+        
+        # Análise de recursos perigosos
+        dangerous_features = {
+            'camera': 'Acesso à câmera pode comprometer privacidade',
+            'microphone': 'Acesso ao microfone pode comprometer privacidade',
+            'geolocation': 'Acesso à localização pode comprometer privacidade',
+            'payment': 'API de pagamento requer cuidado especial',
+            'usb': 'Acesso USB pode ser perigoso',
+            'midi': 'Acesso MIDI pode revelar informações do hardware'
+        }
+        
+        for feature, description in dangerous_features.items():
+            if feature in policies:
+                allowed = policies[feature]
+                if '*' in allowed:
+                    findings.append({
+                        'type': 'PERMISSIVE_FEATURE_POLICY',
+                        'severity': 'MEDIUM',
+                        'feature': feature,
+                        'description': f"Feature '{feature}' permite qualquer origem (*)",
+                        'recommendation': f"Restrinja {feature} a origens específicas. {description}"
+                    })
+                    score -= 15
+                elif 'self' not in allowed and allowed:
+                    # Permite origens externas
+                    findings.append({
+                        'type': 'EXTERNAL_FEATURE_POLICY',
+                        'severity': 'LOW',
+                        'feature': feature,
+                        'description': f"Feature '{feature}' permite origens externas: {', '.join(allowed)}",
+                        'recommendation': f"Verifique se origens externas são confiáveis para {feature}"
+                    })
+                    score -= 5
+        
+        # Verifica features importantes não configuradas
+        recommended_features = ['camera', 'microphone', 'geolocation', 'payment']
+        for feature in recommended_features:
+            if feature not in policies:
+                findings.append({
+                    'type': 'MISSING_FEATURE_POLICY',
+                    'severity': 'LOW',
+                    'feature': feature,
+                    'description': f"Feature '{feature}' não tem política definida",
+                    'recommendation': f"Configure política para {feature} se não for utilizado"
+                })
+                score -= 5
+        
+        return {
+            'score': max(0, score),
+            'findings': findings,
+            'policies': policies,
+            'analysis': 'Permissions Policy configurado' if policies else 'Permissions Policy não configurado'
+        }
+
+    def _analyze_feature_policy_legacy(self, policy_header_value):
+        """Análise de Feature-Policy (formato legado)."""
+        if not policy_header_value:
+            return {
+                'score': 0,
+                'findings': [],
+                'policies': {},
+                'analysis': 'Feature Policy (legado) não configurado'
+            }
+        
+        findings = []
+        policies = {}
+        score = 100
+        
+        # Parse do formato legado: feature 'origin1' 'origin2'; feature2 'none'
+        policy_parts = [part.strip() for part in policy_header_value.split(';') if part.strip()]
+        
+        for part in policy_parts:
+            tokens = part.split()
+            if tokens:
+                feature = tokens[0]
+                origins = [token.strip('\'"') for token in tokens[1:]]
+                policies[feature] = origins
+        
+        # Análise similar à Permissions Policy
+        dangerous_features = {
+            'camera': 'Acesso à câmera pode comprometer privacidade',
+            'microphone': 'Acesso ao microfone pode comprometer privacidade',
+            'geolocation': 'Acesso à localização pode comprometer privacidade',
+            'payment': 'API de pagamento requer cuidado especial'
+        }
+        
+        for feature, description in dangerous_features.items():
+            if feature in policies:
+                allowed = policies[feature]
+                if '*' in allowed:
+                    findings.append({
+                        'type': 'PERMISSIVE_FEATURE_POLICY_LEGACY',
+                        'severity': 'MEDIUM',
+                        'feature': feature,
+                        'description': f"Feature '{feature}' (legado) permite qualquer origem (*)",
+                        'recommendation': f"Migre para Permissions-Policy e restrinja {feature}. {description}"
+                    })
+                    score -= 15
+        
+        # Aviso sobre deprecação
+        if policies:
+            findings.append({
+                'type': 'DEPRECATED_FEATURE_POLICY',
+                'severity': 'INFO',
+                'description': "Feature-Policy está deprecated, migre para Permissions-Policy",
+                'recommendation': "Substitua Feature-Policy por Permissions-Policy para compatibilidade futura"
+            })
+        
+        return {
+            'score': max(0, score),
+            'findings': findings,
+            'policies': policies,
+            'analysis': 'Feature Policy (legado) configurado' if policies else 'Feature Policy (legado) não configurado'
+        }
+
+    def _analyze_advanced_cors_security(self, headers):
+        """Análise avançada de segurança CORS."""
+        cors_findings = []
+        
+        # Verifica cabeçalhos CORS
+        allow_origin = headers.get('Access-Control-Allow-Origin')
+        allow_credentials = headers.get('Access-Control-Allow-Credentials')
+        allow_methods = headers.get('Access-Control-Allow-Methods')
+        allow_headers = headers.get('Access-Control-Allow-Headers')
+        expose_headers = headers.get('Access-Control-Expose-Headers')
+        max_age = headers.get('Access-Control-Max-Age')
+        
+        # Análise de Access-Control-Allow-Origin
+        if allow_origin:
+            if allow_origin == "*":
+                severity = 'HIGH' if (allow_credentials and allow_credentials.lower() == 'true') else 'MEDIUM'
+                cors_findings.append({
+                    'type': 'WILDCARD_CORS_ORIGIN',
+                    'severity': severity,
+                    'description': "CORS permite qualquer origem (*)",
+                    'recommendation': "Especifique origens confiáveis ao invés de wildcard"
+                })
+            elif allow_origin.startswith('null'):
+                cors_findings.append({
+                    'type': 'NULL_ORIGIN_CORS',
+                    'severity': 'HIGH',
+                    'description': "CORS permite origem null, potencialmente perigoso",
+                    'recommendation': "Evite permitir origem null em produção"
+                })
+        
+        # Análise de métodos perigosos
+        if allow_methods:
+            dangerous_methods = ['DELETE', 'PUT', 'PATCH', 'TRACE', 'CONNECT']
+            for method in dangerous_methods:
+                if method.upper() in allow_methods.upper():
+                    severity = 'MEDIUM' if method in ['DELETE', 'PUT', 'PATCH'] else 'HIGH'
+                    cors_findings.append({
+                        'type': 'DANGEROUS_CORS_METHOD',
+                        'severity': severity,
+                        'description': f"CORS permite método potencialmente perigoso: {method}",
+                        'recommendation': f"Avalie se {method} é realmente necessário via CORS"
+                    })
+        
+        # Análise de cabeçalhos expostos
+        if expose_headers:
+            sensitive_headers = ['authorization', 'cookie', 'set-cookie', 'x-csrf-token']
+            for header in sensitive_headers:
+                if header.lower() in expose_headers.lower():
+                    cors_findings.append({
+                        'type': 'SENSITIVE_HEADER_EXPOSED',
+                        'severity': 'MEDIUM',
+                        'description': f"CORS expõe cabeçalho sensível: {header}",
+                        'recommendation': f"Evite expor {header} via CORS"
+                    })
+        
+        # Análise de Max-Age
+        if max_age:
+            try:
+                max_age_value = int(max_age)
+                if max_age_value > 86400:  # 24 horas
+                    cors_findings.append({
+                        'type': 'LONG_CORS_MAX_AGE',
+                        'severity': 'LOW',
+                        'description': f"CORS Max-Age muito alto: {max_age_value} segundos",
+                        'recommendation': "Considere usar Max-Age menor para melhor controle"
+                    })
+            except ValueError:
+                cors_findings.append({
+                    'type': 'INVALID_CORS_MAX_AGE',
+                    'severity': 'LOW',
+                    'description': f"CORS Max-Age inválido: {max_age}",
+                    'recommendation': "Use valor numérico válido para Max-Age"
+                })
+        
+        return cors_findings
+    
     def analyze_headers(self, verbose=False, include_advanced=True):
         """Executa análise completa dos cabeçalhos."""
         try:
@@ -712,6 +1020,10 @@ class AdvancedHeadersAnalyzer:
             # Análise CORS
             cors_findings = self._analyze_cors_configuration()
             
+            # Análise CORS avançada
+            advanced_cors_findings = self._analyze_advanced_cors_security(self.headers_info['headers'])
+            cors_findings.extend(advanced_cors_findings)
+            
             # Análise de cache
             cache_findings = self._analyze_cache_configuration()
             
@@ -720,6 +1032,7 @@ class AdvancedHeadersAnalyzer:
             cookie_findings = []
             redirect_findings = []
             suspicious_findings = []
+            permissions_findings = []
             
             if include_advanced:
                 console.print("[cyan]Executando análises avançadas...[/cyan]")
@@ -728,6 +1041,16 @@ class AdvancedHeadersAnalyzer:
                 csp_header = self.headers_info['headers'].get('Content-Security-Policy', '')
                 csp_analysis = self._analyze_csp_advanced(csp_header)
                 csp_findings = csp_analysis['findings']
+                
+                # Análise de Permissions Policy
+                permissions_header = self.headers_info['headers'].get('Permissions-Policy', '')
+                permissions_analysis = self._analyze_permissions_policy(permissions_header)
+                permissions_findings.extend(permissions_analysis['findings'])
+                
+                # Análise de Feature Policy (legado)
+                feature_header = self.headers_info['headers'].get('Feature-Policy', '')
+                feature_analysis = self._analyze_feature_policy_legacy(feature_header)
+                permissions_findings.extend(feature_analysis['findings'])
                 
                 # Análise de cookies seguros
                 cookie_analysis = self._analyze_cookies_security(response)
@@ -742,7 +1065,8 @@ class AdvancedHeadersAnalyzer:
             
             # Combina todos os findings
             all_findings = (security_analysis['findings'] + cors_findings + cache_findings + 
-                          csp_findings + cookie_findings + redirect_findings + suspicious_findings)
+                          csp_findings + cookie_findings + redirect_findings + suspicious_findings + 
+                          permissions_findings)
             
             # Recalcula pontuação considerando novas análises
             final_score = security_analysis['security_score']
@@ -768,7 +1092,8 @@ class AdvancedHeadersAnalyzer:
                     'csp': len(csp_findings),
                     'cookies': len(cookie_findings),
                     'redirects': len(redirect_findings),
-                    'suspicious': len(suspicious_findings)
+                    'suspicious': len(suspicious_findings),
+                    'permissions': len(permissions_findings)
                 }
             }
             
@@ -868,6 +1193,7 @@ class AdvancedHeadersAnalyzer:
                     console.print(f"  • Redirecionamentos: [bold cyan]{categories.get('redirects', 0)}[/bold cyan]")
                     console.print(f"  • Headers Suspeitos: [bold cyan]{categories.get('suspicious', 0)}[/bold cyan]")
                     console.print(f"  • Cache: [bold cyan]{categories.get('cache', 0)}[/bold cyan]")
+                    console.print(f"  • Permissions Policy: [bold cyan]{categories.get('permissions', 0)}[/bold cyan]")
                 
                 # Tabela de findings
                 if self.security_analysis['findings']:
