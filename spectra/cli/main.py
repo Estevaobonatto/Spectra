@@ -19,6 +19,7 @@ from ..modules.headers_analyzer import get_http_headers
 from ..modules.sql_injection_scanner import sql_injection_scan
 from ..modules.xss_scanner import xss_scan
 from ..modules.command_injection_scanner import command_injection_scan
+from ..modules.lfi_scanner import lfi_scan
 
 def create_parser():
     """Cria o parser de argumentos da linha de comando."""
@@ -195,6 +196,24 @@ Exemplos de uso:
                        type=float,
                        default=5.0,
                        help='Delay em segundos para técnicas time-based (padrão: 5.0)')
+    
+    # === LFI/RFI SCANNER ===
+    parser.add_argument('-lfi', '--lfi-scan',
+                       metavar='URL',
+                       help='Executa scan de Local File Inclusion (LFI) e Remote File Inclusion (RFI)')
+    
+    parser.add_argument('--lfi-fast',
+                       action='store_true',
+                       help='Modo rápido para LFI (menos técnicas de bypass)')
+    
+    parser.add_argument('--lfi-stop-first',
+                       action='store_true',
+                       help='Para na primeira vulnerabilidade LFI encontrada')
+    
+    parser.add_argument('--lfi-depth',
+                       type=int,
+                       default=10,
+                       help='Profundidade de path traversal para LFI (padrão: 10)')
     
     # === OPÇÕES GERAIS ===
     parser.add_argument('--timeout',
@@ -410,6 +429,19 @@ def main():
                 target_os=args.cmdi_os,
                 time_delay=args.cmdi_time_delay,
                 verbose=args.verbose
+            )
+        
+        # === LFI/RFI SCANNER ===
+        elif args.lfi_scan:
+            print_info(f"Executando scan de LFI/RFI em: {args.lfi_scan}")
+            
+            results = lfi_scan(
+                url=args.lfi_scan,
+                timeout=args.timeout,
+                threads=args.workers,
+                verbose=args.verbose,
+                fast_mode=args.lfi_fast,
+                stop_on_first=args.lfi_stop_first
             )
         
         else:
