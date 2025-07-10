@@ -221,6 +221,269 @@ class AdvancedHeadersAnalyzer:
             'accelerometer', 'gyroscope', 'magnetometer', 'fullscreen'
         ]
     
+    def _analyze_csp_advanced(self, csp_header_value):
+        """Análise avançada de Content Security Policy."""
+        if not csp_header_value:
+            return {
+                'score': 0,
+                'findings': [],
+                'directives': {},
+                'analysis': 'CSP não configurado'
+            }
+        
+        findings = []
+        directives = {}
+        score = 100
+        
+        # Parse das diretivas CSP
+        csp_parts = [part.strip() for part in csp_header_value.split(';') if part.strip()]
+        
+        for part in csp_parts:
+            if ' ' in part:
+                directive, *values = part.split()
+                directives[directive] = values
+            else:
+                directives[part] = []
+        
+        # Análise de cada diretiva
+        for directive, values in directives.items():
+            if directive in self.csp_directives:
+                directive_info = self.csp_directives[directive]
+                
+                # Verifica padrões inseguros
+                for value in values:
+                    for insecure_pattern in directive_info['insecure_patterns']:
+                        if insecure_pattern in value:
+                            severity = 'HIGH' if insecure_pattern in ['*', 'unsafe-eval'] else 'MEDIUM'
+                            findings.append({
+                                'type': 'INSECURE_CSP_DIRECTIVE',
+                                'severity': severity,
+                                'directive': directive,
+                                'value': value,
+                                'description': f"Diretiva {directive} usa valor inseguro: {value}",
+                                'recommendation': f"Evite usar {value} em {directive}. {directive_info['description']}"
+                            })
+                            
+                            score -= 20 if severity == 'HIGH' else 10
+        
+        # Verifica diretivas importantes ausentes
+        critical_directives = ['default-src', 'script-src', 'object-src']
+        for critical_dir in critical_directives:
+            if critical_dir not in directives:
+                findings.append({
+                    'type': 'MISSING_CSP_DIRECTIVE',
+                    'severity': 'MEDIUM',
+                    'directive': critical_dir,
+                    'description': f"Diretiva crítica {critical_dir} não configurada",
+                    'recommendation': f"Configure {critical_dir} para melhor segurança"
+                })
+                score -= 15
+        
+        self.csp_analysis = {
+            'score': max(0, score),
+            'findings': findings,
+            'directives': directives,
+            'analysis': 'CSP configurado' if directives else 'CSP não configurado'
+        }
+        
+        return self.csp_analysis
+    
+    def _analyze_cookies_security(self, response):
+        """Analisa segurança dos cookies."""
+        cookies_findings = []
+        cookies_info = {}
+        
+        # Obtém cookies da resposta
+        set_cookies = response.headers.get_list('Set-Cookie') if hasattr(response.headers, 'get_list') else []
+        if not set_cookies and 'Set-Cookie' in response.headers:
+            set_cookies = [response.headers['Set-Cookie']]
+        
+        for cookie_header in set_cookies:
+            cookie_analysis = self._parse_cookie_header(cookie_header)
+            cookie_name = cookie_analysis.get('name', 'unknown')
+            cookies_info[cookie_name] = cookie_analysis
+            
+            # Verifica se é HTTPS mas cookie não tem Secure
+            if self.url.startswith('https://') and not cookie_analysis.get('secure', False):
+                cookies_findings.append({
+                    'type': 'INSECURE_COOKIE',
+                    'severity': 'MEDIUM',
+                    'cookie': cookie_name,
+                    'description': f"Cookie {cookie_name} enviado via HTTPS sem atributo Secure",
+                    'recommendation': "Adicione atributo Secure a cookies em conexões HTTPS"
+                })
+            
+            # Verifica HttpOnly
+            if not cookie_analysis.get('httponly', False):
+                cookies_findings.append({
+                    'type': 'MISSING_HTTPONLY',
+                    'severity': 'LOW',
+                    'cookie': cookie_name,
+                    'description': f"Cookie {cookie_name} sem atributo HttpOnly",
+                    'recommendation': "Adicione HttpOnly para proteger contra XSS"
+                })
+            
+            # Verifica SameSite
+            samesite = cookie_analysis.get('samesite')
+            if not samesite:
+                cookies_findings.append({
+                    'type': 'MISSING_SAMESITE',
+                    'severity': 'LOW',
+                    'cookie': cookie_name,
+                    'description': f"Cookie {cookie_name} sem atributo SameSite",
+                    'recommendation': "Configure SameSite para proteção contra CSRF"
+                })
+            elif samesite.lower() == 'none' and not cookie_analysis.get('secure', False):
+                cookies_findings.append({
+                    'type': 'INSECURE_SAMESITE',
+                    'severity': 'MEDIUM',
+                    'cookie': cookie_name,
+                    'description': f"Cookie {cookie_name} usa SameSite=None sem Secure",
+                    'recommendation': "SameSite=None requer atributo Secure"
+                })
+        
+        self.cookie_analysis = {
+            'cookies': cookies_info,
+            'findings': cookies_findings,
+            'total_cookies': len(cookies_info)
+        }
+        
+        return self.cookie_analysis
+    
+    def _parse_cookie_header(self, cookie_header):
+        """Parse de um cabeçalho Set-Cookie."""
+        parts = [part.strip() for part in cookie_header.split(';')]
+        
+        # Primeiro part é nome=valor
+        if '=' in parts[0]:
+            name, value = parts[0].split('=', 1)
+        else:
+            name, value = parts[0], ''
+        
+        cookie_info = {
+            'name': name,
+            'value': value,
+            'secure': False,
+            'httponly': False,
+            'samesite': None,
+            'domain': None,
+            'path': None,
+            'expires': None,
+            'max_age': None
+        }
+        
+        # Parse dos atributos
+        for part in parts[1:]:
+            part_lower = part.lower()
+            
+            if part_lower == 'secure':
+                cookie_info['secure'] = True
+            elif part_lower == 'httponly':
+                cookie_info['httponly'] = True
+            elif part_lower.startswith('samesite='):
+                cookie_info['samesite'] = part.split('=', 1)[1]
+            elif part_lower.startswith('domain='):
+                cookie_info['domain'] = part.split('=', 1)[1]
+            elif part_lower.startswith('path='):
+                cookie_info['path'] = part.split('=', 1)[1]
+            elif part_lower.startswith('expires='):
+                cookie_info['expires'] = part.split('=', 1)[1]
+            elif part_lower.startswith('max-age='):
+                cookie_info['max_age'] = part.split('=', 1)[1]
+        
+        return cookie_info
+    
+    def _analyze_redirect_security(self, response):
+        """Analisa segurança dos redirecionamentos."""
+        redirect_findings = []
+        redirect_info = {
+            'total_redirects': len(response.history),
+            'redirect_chain': [],
+            'final_url': response.url,
+            'https_enforced': False,
+            'open_redirect_risk': False
+        }
+        
+        # Analisa cadeia de redirecionamentos
+        for i, redirect_response in enumerate(response.history):
+            redirect_info['redirect_chain'].append({
+                'step': i + 1,
+                'from_url': redirect_response.url,
+                'to_url': redirect_response.headers.get('Location', ''),
+                'status_code': redirect_response.status_code,
+                'is_https': redirect_response.url.startswith('https://')
+            })
+        
+        # Verifica se há enforcing de HTTPS
+        for redirect in redirect_info['redirect_chain']:
+            if (redirect['from_url'].startswith('http://') and 
+                redirect['to_url'].startswith('https://')):
+                redirect_info['https_enforced'] = True
+                break
+        
+        # Verifica risco de open redirect
+        for redirect in redirect_info['redirect_chain']:
+            location = redirect['to_url']
+            if location:
+                parsed_location = urlparse(location)
+                original_domain = urlparse(self.url).netloc
+                
+                if parsed_location.netloc and parsed_location.netloc != original_domain:
+                    redirect_info['open_redirect_risk'] = True
+                    redirect_findings.append({
+                        'type': 'POTENTIAL_OPEN_REDIRECT',
+                        'severity': 'MEDIUM',
+                        'description': f"Redirecionamento para domínio externo: {parsed_location.netloc}",
+                        'recommendation': "Valide destinos de redirecionamento para evitar open redirects"
+                    })
+        
+        # Verifica se site HTTP não redireciona para HTTPS
+        if (self.url.startswith('http://') and 
+            not redirect_info['https_enforced'] and 
+            not response.url.startswith('https://')):
+            redirect_findings.append({
+                'type': 'NO_HTTPS_REDIRECT',
+                'severity': 'HIGH',
+                'description': "Site HTTP não redireciona para HTTPS",
+                'recommendation': "Configure redirecionamento automático para HTTPS"
+            })
+        
+        self.redirect_analysis = {
+            'info': redirect_info,
+            'findings': redirect_findings
+        }
+        
+        return self.redirect_analysis
+    
+    def _detect_suspicious_headers(self, headers):
+        """Detecta cabeçalhos suspeitos ou que revelam informações."""
+        suspicious_findings = []
+        
+        for header_name, header_value in headers.items():
+            # Verifica cabeçalhos na lista de suspeitos
+            if header_name in self.suspicious_headers:
+                suspicious_findings.append({
+                    'type': 'SUSPICIOUS_HEADER',
+                    'severity': 'INFO',
+                    'header': header_name,
+                    'value': header_value,
+                    'description': f"Cabeçalho suspeito detectado: {header_name}",
+                    'recommendation': "Verifique se este cabeçalho é necessário em produção"
+                })
+            
+            # Verifica cabeçalhos customizados que podem revelar informações
+            if header_name.startswith('X-') and header_name not in self.security_headers:
+                suspicious_findings.append({
+                    'type': 'CUSTOM_HEADER',
+                    'severity': 'INFO',
+                    'header': header_name,
+                    'value': header_value,
+                    'description': f"Cabeçalho customizado detectado: {header_name}",
+                    'recommendation': "Avalie se informações sensíveis estão sendo expostas"
+                })
+        
+        return suspicious_findings
+    
     def _analyze_response(self, response):
         """Analisa a resposta HTTP e seus cabeçalhos."""
         headers = dict(response.headers)
