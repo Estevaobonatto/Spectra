@@ -6,7 +6,7 @@ Utility functions and helpers for Spectra
 from .network import (
     is_valid_ip, is_valid_domain, resolve_hostname, normalize_url,
     extract_domain, extract_scheme, extract_port, ping_host, test_port_open,
-    get_local_ip, is_private_ip, expand_cidr, validate_port_range
+    get_local_ip, is_private_ip, expand_cidr, validate_port_range, create_session
 )
 
 from .parsers import (
@@ -26,7 +26,7 @@ __all__ = [
     'is_valid_ip', 'is_valid_domain', 'resolve_hostname', 'normalize_url',
     'extract_domain', 'extract_scheme', 'extract_port', 'ping_host', 
     'test_port_open', 'get_local_ip', 'is_private_ip', 'expand_cidr', 
-    'validate_port_range',
+    'validate_port_range', 'create_session',
     
     # Parsers
     'parse_ports', 'get_common_ports', 'get_top_ports', 

@@ -7,8 +7,43 @@ import socket
 import subprocess
 import os
 import re
+import requests
 from urllib.parse import urlparse, urljoin
 from ..core.console import console
+
+def create_session(timeout=10, max_retries=3):
+    """
+    Cria uma sessão HTTP configurada com headers padrão e retry policy.
+    
+    Args:
+        timeout (int): Timeout em segundos.
+        max_retries (int): Número máximo de tentativas.
+        
+    Returns:
+        requests.Session: Sessão HTTP configurada.
+    """
+    session = requests.Session()
+    
+    # Headers padrão
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1'
+    })
+    
+    # Configurações de adapter
+    adapter = requests.adapters.HTTPAdapter(
+        pool_connections=10,
+        pool_maxsize=20,
+        max_retries=max_retries
+    )
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+    
+    return session
 
 def is_valid_ip(ip_string):
     """Verifica se uma string é um IP válido."""

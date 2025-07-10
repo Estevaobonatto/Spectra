@@ -19,16 +19,19 @@ from .core.banner import display_banner
 # Importa os módulos principais
 from .modules import (
     port_scanner,
+    banner_grabber,
     directory_scanner,
-    dns_scanner,
+    dns_analyzer,
     subdomain_scanner,
     metadata_extractor,
-    vulnerability_scanner,
-    bruteforce_scanner,
-    http_analyzer,
-    ssl_analyzer,
-    technology_detector,
-    waf_detector
+    whois_analyzer
+    # Módulos ainda não migrados:
+    # vulnerability_scanner,
+    # bruteforce_scanner,
+    # http_analyzer,
+    # ssl_analyzer,
+    # technology_detector,
+    # waf_detector
 )
 
 __all__ = [
@@ -40,13 +43,16 @@ __all__ = [
     'display_banner',
     'port_scanner',
     'directory_scanner',
-    'dns_scanner',
+    'dns_analyzer',
     'subdomain_scanner',
     'metadata_extractor',
-    'vulnerability_scanner',
-    'bruteforce_scanner',
-    'http_analyzer',
-    'ssl_analyzer',
-    'technology_detector',
-    'waf_detector'
+    'banner_grabber',
+    'whois_analyzer'
+    # Módulos ainda não migrados:
+    # 'vulnerability_scanner',
+    # 'bruteforce_scanner',
+    # 'http_analyzer',
+    # 'ssl_analyzer',
+    # 'technology_detector',
+    # 'waf_detector'
 ]

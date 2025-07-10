@@ -1,14 +1,20 @@
 Metadata-Version: 2.4
 Name: spectra-suite
-Version: 2.8
-Summary: Spectra - Uma ferramenta de hacking ético para análise de segurança web.
-Author: Seu Nome
-Author-email: seu.email@example.com
+Version: 3.2.6
+Summary: Spectra - Web Security Suite - Uma ferramenta de hacking ético para análise de segurança web.
+Home-page: https://github.com/spectra-team/spectra
+Author: Spectra Team
+Author-email: 
+Keywords: security,web,hacking,penetration testing,vulnerability scanner
 Classifier: Programming Language :: Python :: 3
 Classifier: License :: OSI Approved :: MIT License
 Classifier: Operating System :: OS Independent
 Classifier: Environment :: Console
 Classifier: Topic :: Security
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Information Technology
+Classifier: Topic :: Security :: Cryptography
+Classifier: Topic :: Internet :: WWW/HTTP
 Requires-Python: >=3.6
 Description-Content-Type: text/markdown
 Requires-Dist: requests
@@ -19,11 +25,13 @@ Requires-Dist: dnspython
 Requires-Dist: beautifulsoup4
 Requires-Dist: python-whois
 Requires-Dist: pyOpenSSL
+Requires-Dist: selenium
 Dynamic: author
-Dynamic: author-email
 Dynamic: classifier
 Dynamic: description
 Dynamic: description-content-type
+Dynamic: home-page
+Dynamic: keywords
 Dynamic: requires-dist
 Dynamic: requires-python
 Dynamic: summary
