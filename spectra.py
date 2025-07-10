@@ -18,6 +18,11 @@ import json
 import os
 import itertools
 import logging
+import subprocess
+import uuid
+import hashlib
+import string
+import random
 
 # Tenta importar bibliotecas de terceiros e avisa se não estiverem instaladas
 try:
@@ -195,11 +200,11 @@ class AdvancedPortScanner:
         
         try:
             import subprocess
-            result = subprocess.run(['ping', '-c', '1', '-W', '1', self.target], 
+            result = subprocess.run(['ping', '-c', '1', '-W', '1', self.target] if os.name != 'nt' else ['ping', '-n', '1', '-w', '1000', self.target], 
                                   capture_output=True, text=True, timeout=5)
             if result.returncode == 0:
                 if self.verbose:
-                    console.print(f"  [dim green]✓[/dim green] [dim]Ping bem-sucedido[/dim]")
+                    console.print(f"  [dim green]✓[/dim green] [dim]Host responde ao ping[/dim]")
                 return True
         except:
             if self.verbose:

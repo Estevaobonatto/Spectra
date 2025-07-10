@@ -1,5 +1,5 @@
 # setup.py
-from setuptools import setup
+from setuptools import setup, find_packages
 
 # Lê as dependências do requirements.txt
 with open('requirements.txt') as f:
@@ -14,39 +14,55 @@ setup(
     name='spectra-suite',
 
     # Versão do seu pacote
-    version='2.8',
+    version='3.2.6',
 
     # Autor e email
-    author='Spectra',
+    author='Spectra Team',
     author_email='',
 
     # Breve descrição
-    description='Spectra - Análise de segurança web.',
+    description='Spectra - Web Security Suite - Uma ferramenta de hacking ético para análise de segurança web.',
 
     # Descrição longa (do README)
     long_description=long_description,
     long_description_content_type='text/markdown',
 
-    # Em vez de 'packages', usamos 'py_modules' para um único arquivo Python
-    py_modules=['spectra'],
+    # Usa find_packages para descobrir automaticamente os módulos
+    packages=find_packages(),
 
     # Lista de dependências necessárias
     install_requires=required,
 
-    # O entry_point agora aponta diretamente para o módulo
+    # O entry_point agora aponta para a estrutura modular
     entry_points={
         'console_scripts': [
-            'spectra = spectra:main',
+            'spectra = spectra.cli.main:main',
         ],
     },
 
     # Classificadores para ajudar a descrever seu pacote
     classifiers=[
         'Programming Language :: Python :: 3',
-        'License :: OSI Approved :: MIT License', # Ou a licença que você preferir
+        'License :: OSI Approved :: MIT License',
         'Operating System :: OS Independent',
         'Environment :: Console',
         'Topic :: Security',
+        'Development Status :: 4 - Beta',
+        'Intended Audience :: Information Technology',
+        'Topic :: Security :: Cryptography',
+        'Topic :: Internet :: WWW/HTTP',
     ],
     python_requires='>=3.6',
+    
+    # Inclui arquivos adicionais
+    include_package_data=True,
+    package_data={
+        'spectra': ['*.txt', '*.md'],
+    },
+    
+    # Keywords para busca
+    keywords='security, web, hacking, penetration testing, vulnerability scanner',
+    
+    # URL do projeto
+    url='https://github.com/spectra-team/spectra',
 )
