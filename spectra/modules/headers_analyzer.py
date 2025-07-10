@@ -5,9 +5,10 @@ Analisa cabeçalhos de resposta HTTP e configurações de segurança
 """
 
 import json
+import re
 from typing import Dict, List, Optional, Union
+from urllib.parse import urlparse, parse_qs
 import requests
-from urllib.parse import urlparse
 from ..core.console import console
 from ..core.logger import get_logger
 from ..utils.network import create_session
@@ -26,11 +27,15 @@ class AdvancedHeadersAnalyzer:
         self.headers_info = {}
         self.security_analysis = {}
         self.recommendations = []
+        self.csp_analysis = {}
+        self.cookie_analysis = {}
+        self.redirect_analysis = {}
         
         logger.info(f"Headers Analyzer inicializado para {self.url}")
         
         # Inicializa database de cabeçalhos
         self._init_headers_database()
+        self._init_advanced_databases()
     
     def _init_headers_database(self):
         """Inicializa a base de dados de cabeçalhos de segurança."""
@@ -145,6 +150,77 @@ class AdvancedHeadersAnalyzer:
             "Access-Control-Max-Age", "Access-Control-Allow-Credentials"
         ]
     
+    def _init_advanced_databases(self):
+        """Inicializa bases de dados avançadas para análises específicas."""
+        
+        # CSP Directives e suas configurações seguras
+        self.csp_directives = {
+            'default-src': {
+                'description': 'Política padrão para carregamento de recursos',
+                'secure_values': ["'none'", "'self'"],
+                'insecure_patterns': ['*', 'data:', 'unsafe-inline', 'unsafe-eval']
+            },
+            'script-src': {
+                'description': 'Política para scripts JavaScript',
+                'secure_values': ["'self'", "'none'"],
+                'insecure_patterns': ['*', 'unsafe-inline', 'unsafe-eval']
+            },
+            'object-src': {
+                'description': 'Política para plugins (flash, java)',
+                'secure_values': ["'none'"],
+                'insecure_patterns': ['*', 'data:']
+            },
+            'style-src': {
+                'description': 'Política para folhas de estilo CSS',
+                'secure_values': ["'self'", "'none'"],
+                'insecure_patterns': ['*', 'unsafe-inline']
+            },
+            'img-src': {
+                'description': 'Política para carregamento de imagens',
+                'secure_values': ["'self'", 'data:'],
+                'insecure_patterns': ['*']
+            },
+            'frame-src': {
+                'description': 'Política para frames e iframes',
+                'secure_values': ["'none'", "'self'"],
+                'insecure_patterns': ['*']
+            },
+            'frame-ancestors': {
+                'description': 'Controla quem pode incorporar a página em frames',
+                'secure_values': ["'none'", "'self'"],
+                'insecure_patterns': ['*']
+            }
+        }
+        
+        # Padrões de cookies seguros
+        self.cookie_security_attributes = {
+            'Secure': {
+                'description': 'Cookie só enviado via HTTPS',
+                'required_for_https': True
+            },
+            'HttpOnly': {
+                'description': 'Cookie inacessível via JavaScript',
+                'recommended': True
+            },
+            'SameSite': {
+                'description': 'Proteção contra CSRF',
+                'secure_values': ['Strict', 'Lax'],
+                'insecure_values': ['None']
+            }
+        }
+        
+        # Cabeçalhos suspeitos ou customizados
+        self.suspicious_headers = [
+            'X-Debug', 'X-Debug-Token', 'X-Forwarded-For', 'X-Real-IP',
+            'X-Original-URL', 'X-Rewrite-URL', 'X-Admin', 'X-Test'
+        ]
+        
+        # Políticas de Feature/Permissions
+        self.permissions_policy_features = [
+            'camera', 'microphone', 'geolocation', 'payment', 'usb',
+            'accelerometer', 'gyroscope', 'magnetometer', 'fullscreen'
+        ]
+    
     def _analyze_response(self, response):
         """Analisa a resposta HTTP e seus cabeçalhos."""
         headers = dict(response.headers)
@@ -257,7 +333,6 @@ class AdvancedHeadersAnalyzer:
                 })
             else:
                 # Extrai max-age
-                import re
                 max_age_match = re.search(r'max-age=(\d+)', header_value)
                 if max_age_match:
                     max_age = int(max_age_match.group(1))
@@ -352,9 +427,11 @@ class AdvancedHeadersAnalyzer:
         
         return cache_findings
     
-    def analyze_headers(self, verbose=False):
+    def analyze_headers(self, verbose=False, include_advanced=True):
         """Executa análise completa dos cabeçalhos."""
         try:
+            console.print("[cyan]Iniciando análise de cabeçalhos HTTP...[/cyan]")
+            
             # Faz requisição
             response = self.session.get(
                 self.url, 
@@ -366,7 +443,7 @@ class AdvancedHeadersAnalyzer:
             # Analisa resposta
             self._analyze_response(response)
             
-            # Análise de segurança
+            # Análise de segurança básica
             security_analysis = self._analyze_security_headers()
             
             # Análise CORS
@@ -375,11 +452,44 @@ class AdvancedHeadersAnalyzer:
             # Análise de cache
             cache_findings = self._analyze_cache_configuration()
             
+            # Análises avançadas
+            csp_findings = []
+            cookie_findings = []
+            redirect_findings = []
+            suspicious_findings = []
+            
+            if include_advanced:
+                console.print("[cyan]Executando análises avançadas...[/cyan]")
+                
+                # Análise avançada de CSP
+                csp_header = self.headers_info['headers'].get('Content-Security-Policy', '')
+                csp_analysis = self._analyze_csp_advanced(csp_header)
+                csp_findings = csp_analysis['findings']
+                
+                # Análise de cookies seguros
+                cookie_analysis = self._analyze_cookies_security(response)
+                cookie_findings = cookie_analysis['findings']
+                
+                # Análise de redirecionamentos
+                redirect_analysis = self._analyze_redirect_security(response)
+                redirect_findings = redirect_analysis['findings']
+                
+                # Detecção de cabeçalhos suspeitos
+                suspicious_findings = self._detect_suspicious_headers(self.headers_info['headers'])
+            
             # Combina todos os findings
-            all_findings = security_analysis['findings'] + cors_findings + cache_findings
+            all_findings = (security_analysis['findings'] + cors_findings + cache_findings + 
+                          csp_findings + cookie_findings + redirect_findings + suspicious_findings)
+            
+            # Recalcula pontuação considerando novas análises
+            final_score = security_analysis['security_score']
+            if include_advanced and hasattr(self, 'csp_analysis'):
+                # Ajusta pontuação baseado na análise CSP
+                csp_score = self.csp_analysis.get('score', 100)
+                final_score = (final_score + csp_score) // 2
             
             self.security_analysis = {
-                'security_score': security_analysis['security_score'],
+                'security_score': final_score,
                 'total_findings': len(all_findings),
                 'findings_by_severity': {
                     'HIGH': len([f for f in all_findings if f.get('severity') == 'HIGH']),
@@ -387,18 +497,32 @@ class AdvancedHeadersAnalyzer:
                     'LOW': len([f for f in all_findings if f.get('severity') == 'LOW']),
                     'INFO': len([f for f in all_findings if f.get('severity') == 'INFO'])
                 },
-                'findings': all_findings
+                'findings': all_findings,
+                'categories': {
+                    'security_headers': len(security_analysis['findings']),
+                    'cors': len(cors_findings),
+                    'cache': len(cache_findings),
+                    'csp': len(csp_findings),
+                    'cookies': len(cookie_findings),
+                    'redirects': len(redirect_findings),
+                    'suspicious': len(suspicious_findings)
+                }
             }
             
             if verbose:
                 console.print(f"[*] Analisados {len(self.headers_info['headers'])} cabeçalhos")
                 console.print(f"[*] Encontrados {len(all_findings)} problemas de segurança")
+                if include_advanced:
+                    console.print(f"[*] Análises avançadas: CSP, Cookies, Redirects, Headers Suspeitos")
             
             logger.info(f"Análise de cabeçalhos concluída para {self.url}")
             
             return {
                 'headers_info': self.headers_info,
-                'security_analysis': self.security_analysis
+                'security_analysis': self.security_analysis,
+                'csp_analysis': getattr(self, 'csp_analysis', {}),
+                'cookie_analysis': getattr(self, 'cookie_analysis', {}),
+                'redirect_analysis': getattr(self, 'redirect_analysis', {})
             }
             
         except requests.RequestException as e:
@@ -470,6 +594,18 @@ class AdvancedHeadersAnalyzer:
                 console.print(f"  • Low: [bold cyan]{findings_by_severity['LOW']}[/bold cyan]")
                 console.print(f"  • Info: [bold blue]{findings_by_severity['INFO']}[/bold blue]")
                 
+                # Resumo por categoria (se disponível)
+                if 'categories' in self.security_analysis:
+                    categories = self.security_analysis['categories']
+                    console.print(f"\nProblemas por Categoria:")
+                    console.print(f"  • Cabeçalhos de Segurança: [bold cyan]{categories.get('security_headers', 0)}[/bold cyan]")
+                    console.print(f"  • CSP (Content Security Policy): [bold cyan]{categories.get('csp', 0)}[/bold cyan]")
+                    console.print(f"  • Cookies: [bold cyan]{categories.get('cookies', 0)}[/bold cyan]")
+                    console.print(f"  • CORS: [bold cyan]{categories.get('cors', 0)}[/bold cyan]")
+                    console.print(f"  • Redirecionamentos: [bold cyan]{categories.get('redirects', 0)}[/bold cyan]")
+                    console.print(f"  • Headers Suspeitos: [bold cyan]{categories.get('suspicious', 0)}[/bold cyan]")
+                    console.print(f"  • Cache: [bold cyan]{categories.get('cache', 0)}[/bold cyan]")
+                
                 # Tabela de findings
                 if self.security_analysis['findings']:
                     findings_table = Table(title="Problemas de Segurança Detectados")
@@ -497,6 +633,100 @@ class AdvancedHeadersAnalyzer:
                     console.print(findings_table)
                 else:
                     console.print(f"[bold green]✅ Nenhum problema de segurança detectado[/bold green]")
+            
+            # Análise avançada de CSP
+            if hasattr(self, 'csp_analysis') and self.csp_analysis:
+                console.print(f"\n[bold cyan]📋 ANÁLISE DE CSP (CONTENT SECURITY POLICY)[/bold cyan]")
+                console.print("-" * 60)
+                
+                csp_table = Table(title="Content Security Policy")
+                csp_table.add_column("Aspecto", style="cyan")
+                csp_table.add_column("Status", style="white")
+                
+                csp_score = self.csp_analysis.get('score', 0)
+                if csp_score >= 80:
+                    csp_status = f"[bold green]✅ {csp_score}/100[/bold green]"
+                elif csp_score >= 60:
+                    csp_status = f"[bold yellow]⚠️ {csp_score}/100[/bold yellow]"
+                else:
+                    csp_status = f"[bold red]❌ {csp_score}/100[/bold red]"
+                
+                csp_table.add_row("Pontuação CSP", csp_status)
+                csp_table.add_row("Status", self.csp_analysis.get('analysis', 'N/A'))
+                
+                directives = self.csp_analysis.get('directives', {})
+                csp_table.add_row("Diretivas Configuradas", str(len(directives)))
+                
+                # Mostra algumas diretivas importantes
+                important_directives = ['default-src', 'script-src', 'object-src', 'style-src']
+                for directive in important_directives:
+                    if directive in directives:
+                        values = ' '.join(directives[directive])
+                        status = f"[bold green]✅ {values}[/bold green]"
+                    else:
+                        status = "[bold red]❌ Não configurado[/bold red]"
+                    csp_table.add_row(directive, status)
+                
+                console.print(csp_table)
+            
+            # Análise de Cookies
+            if hasattr(self, 'cookie_analysis') and self.cookie_analysis:
+                console.print(f"\n[bold cyan]🍪 ANÁLISE DE COOKIES[/bold cyan]")
+                console.print("-" * 60)
+                
+                cookie_table = Table(title="Segurança de Cookies")
+                cookie_table.add_column("Cookie", style="cyan")
+                cookie_table.add_column("Secure", style="white")
+                cookie_table.add_column("HttpOnly", style="white")
+                cookie_table.add_column("SameSite", style="white")
+                
+                cookies = self.cookie_analysis.get('cookies', {})
+                for cookie_name, cookie_info in cookies.items():
+                    secure_status = "[bold green]✅[/bold green]" if cookie_info.get('secure') else "[bold red]❌[/bold red]"
+                    httponly_status = "[bold green]✅[/bold green]" if cookie_info.get('httponly') else "[bold red]❌[/bold red]"
+                    samesite_value = cookie_info.get('samesite', 'Não definido')
+                    
+                    cookie_table.add_row(cookie_name, secure_status, httponly_status, samesite_value)
+                
+                if not cookies:
+                    console.print("[bold blue]ℹ️ Nenhum cookie detectado na resposta[/bold blue]")
+                else:
+                    console.print(cookie_table)
+            
+            # Análise de Redirecionamentos
+            if hasattr(self, 'redirect_analysis') and self.redirect_analysis:
+                redirect_info = self.redirect_analysis.get('info', {})
+                if redirect_info.get('total_redirects', 0) > 0:
+                    console.print(f"\n[bold cyan]🔄 ANÁLISE DE REDIRECIONAMENTOS[/bold cyan]")
+                    console.print("-" * 60)
+                    
+                    redirect_table = Table(title="Cadeia de Redirecionamentos")
+                    redirect_table.add_column("Passo", style="cyan")
+                    redirect_table.add_column("De", style="white")
+                    redirect_table.add_column("Para", style="white")
+                    redirect_table.add_column("Status", style="white")
+                    redirect_table.add_column("HTTPS", style="white")
+                    
+                    for redirect in redirect_info.get('redirect_chain', []):
+                        https_status = "[bold green]✅[/bold green]" if redirect.get('is_https') else "[bold red]❌[/bold red]"
+                        redirect_table.add_row(
+                            str(redirect.get('step', '')),
+                            redirect.get('from_url', '')[:50] + '...' if len(redirect.get('from_url', '')) > 50 else redirect.get('from_url', ''),
+                            redirect.get('to_url', '')[:50] + '...' if len(redirect.get('to_url', '')) > 50 else redirect.get('to_url', ''),
+                            str(redirect.get('status_code', '')),
+                            https_status
+                        )
+                    
+                    console.print(redirect_table)
+                    
+                    # Status de segurança dos redirecionamentos
+                    https_enforced = redirect_info.get('https_enforced', False)
+                    https_status = "[bold green]✅ HTTPS Enforced[/bold green]" if https_enforced else "[bold red]❌ HTTPS Not Enforced[/bold red]"
+                    console.print(f"HTTPS Enforcement: {https_status}")
+                    
+                    open_redirect_risk = redirect_info.get('open_redirect_risk', False)
+                    open_redirect_status = "[bold red]⚠️ Risco Detectado[/bold red]" if open_redirect_risk else "[bold green]✅ Sem Risco[/bold green]"
+                    console.print(f"Open Redirect Risk: {open_redirect_status}")
         
         elif output_format == 'json':
             import json

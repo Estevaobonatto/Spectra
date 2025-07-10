@@ -6,6 +6,7 @@ Main CLI interface for Spectra
 import sys
 import argparse
 from ..core import display_banner, display_legal_warning, console, print_error, print_info
+from ..core.report_generator import ReportGenerator
 from ..modules.port_scanner import scan_ports
 from ..modules.banner_grabber import BannerGrabber
 from ..modules.directory_scanner import advanced_directory_scan
@@ -20,6 +21,7 @@ from ..modules.sql_injection_scanner import sql_injection_scan
 from ..modules.xss_scanner import xss_scan
 from ..modules.command_injection_scanner import command_injection_scan
 from ..modules.lfi_scanner import lfi_scan
+from ..modules.cve_integrator import integrate_cve_data, CVEIntegrator
 
 def create_parser():
     """Cria o parser de argumentos da linha de comando."""
@@ -215,6 +217,24 @@ Exemplos de uso:
                        default=10,
                        help='Profundidade de path traversal para LFI (padrão: 10)')
     
+    # === INTEGRAÇÃO CVE ===
+    parser.add_argument('--enrich-cve',
+                       action='store_true',
+                       help='Enriquecer resultados com dados de CVE')
+    
+    parser.add_argument('--cve-search',
+                       metavar='KEYWORD',
+                       help='Buscar CVEs por palavra-chave')
+    
+    parser.add_argument('--cve-details',
+                       metavar='CVE_ID',
+                       help='Obter detalhes específicos de um CVE')
+    
+    parser.add_argument('--trending-cves',
+                       type=int,
+                       metavar='DAYS',
+                       help='Mostrar CVEs em tendência dos últimos N dias')
+    
     # === OPÇÕES GERAIS ===
     parser.add_argument('--timeout',
                        type=float,
@@ -240,6 +260,14 @@ Exemplos de uso:
                        default='table',
                        help='Formato de saída')
     
+    parser.add_argument('--generate-report',
+                       choices=['json', 'xml', 'html', 'all'],
+                       help='Gera relatório no formato especificado')
+    
+    parser.add_argument('--report-file',
+                       metavar='FILENAME',
+                       help='Nome do arquivo de relatório (sem extensão se --generate-report=all)')
+    
     parser.add_argument('--verbose', '-v',
                        action='store_true',
                        help='Modo verbose')
@@ -253,6 +281,42 @@ Exemplos de uso:
                        version='Spectra v3.2.6')
     
     return parser
+
+def generate_report_wrapper(scan_results, target_url, scan_type, output_format, output_file=None):
+    """Wrapper para geração de relatórios."""
+    try:
+        # Garantir que scan_results é uma lista de dicionários válida
+        if not isinstance(scan_results, list):
+            scan_results = []
+        
+        # Filtrar apenas itens que são dicionários (vulnerabilidades)
+        valid_results = []
+        for item in scan_results:
+            if isinstance(item, dict) and any(key in item for key in ['Risco', 'Tipo', 'Detalhe']):
+                valid_results.append(item)
+        
+        generator = ReportGenerator(valid_results, target_url, scan_type)
+        
+        if output_format == 'all':
+            # Gerar todos os formatos
+            base_name = output_file or f"spectra_report_{scan_type.lower().replace(' ', '_')}"
+            results = {}
+            
+            results['json'] = generator.generate_json_report(f"{base_name}.json")
+            results['xml'] = generator.generate_xml_report(f"{base_name}.xml")
+            results['html'] = generator.generate_html_report(f"{base_name}.html")
+            
+            return results
+        else:
+            # Gerar formato específico
+            if output_format == 'json':
+                return generator.generate_json_report(output_file)
+            elif output_format == 'xml':
+                return generator.generate_xml_report(output_file)
+            elif output_format == 'html':
+                return generator.generate_html_report(output_file)
+    except Exception as e:
+        raise Exception(f"Erro na geração do relatório: {e}")
 
 def main():
     """Função principal do CLI."""
@@ -272,6 +336,120 @@ def main():
         display_banner()
     
     try:
+        # === INTEGRAÇÃO CVE (verificar primeiro) ===
+        if args.cve_search:
+            print_info(f"Buscando CVEs para: {args.cve_search}")
+            
+            integrator = CVEIntegrator()
+            cves = integrator.search_cve_by_keyword(args.cve_search, limit=10)
+            
+            if cves:
+                console.print(f"\n[bold green]Encontrados {len(cves)} CVEs:[/bold green]")
+                
+                from rich.table import Table
+                table = Table(title=f"CVEs relacionados a '{args.cve_search}'")
+                table.add_column("CVE ID", style="cyan")
+                table.add_column("Severity", style="yellow")
+                table.add_column("Description", style="white", max_width=50)
+                table.add_column("Published", style="green")
+                
+                for cve in cves:
+                    severity = "N/A"
+                    if cve.get('cvss_v3') and 'baseScore' in cve['cvss_v3']:
+                        score = cve['cvss_v3']['baseScore']
+                        if score >= 9.0:
+                            severity = f"[red]CRITICAL ({score})[/red]"
+                        elif score >= 7.0:
+                            severity = f"[orange1]HIGH ({score})[/orange1]"
+                        elif score >= 4.0:
+                            severity = f"[yellow]MEDIUM ({score})[/yellow]"
+                        else:
+                            severity = f"[green]LOW ({score})[/green]"
+                    
+                    table.add_row(
+                        cve.get('id', 'N/A'),
+                        severity,
+                        cve.get('description', 'N/A')[:100] + "..." if len(cve.get('description', '')) > 100 else cve.get('description', 'N/A'),
+                        cve.get('published', 'N/A')[:10]
+                    )
+                
+                console.print(table)
+            else:
+                print_info("Nenhum CVE encontrado para o termo buscado.")
+            
+            return
+        
+        elif args.cve_details:
+            print_info(f"Obtendo detalhes do CVE: {args.cve_details}")
+            
+            integrator = CVEIntegrator()
+            cve_details = integrator.get_cve_details(args.cve_details)
+            
+            if cve_details:
+                console.print(f"\n[bold green]Detalhes do {args.cve_details}:[/bold green]")
+                console.print(f"[cyan]Descrição:[/cyan] {cve_details.get('description', 'N/A')}")
+                console.print(f"[cyan]Publicado:[/cyan] {cve_details.get('published', 'N/A')}")
+                console.print(f"[cyan]Modificado:[/cyan] {cve_details.get('modified', 'N/A')}")
+                
+                if cve_details.get('cvss_v3'):
+                    cvss = cve_details['cvss_v3']
+                    console.print(f"[cyan]CVSS v3:[/cyan] {cvss.get('baseScore', 'N/A')} ({cvss.get('baseSeverity', 'N/A')})")
+                    console.print(f"[cyan]Vector:[/cyan] {cvss.get('vectorString', 'N/A')}")
+                
+                if cve_details.get('weaknesses'):
+                    console.print(f"[cyan]Weaknesses:[/cyan] {', '.join(cve_details['weaknesses'])}")
+                
+                if cve_details.get('references'):
+                    console.print("[cyan]Referências:[/cyan]")
+                    for ref in cve_details['references'][:5]:  # Mostrar apenas as primeiras 5
+                        console.print(f"  • {ref.get('url', 'N/A')}")
+            else:
+                print_error(f"CVE {args.cve_details} não encontrado.")
+            
+            return
+        
+        elif args.trending_cves:
+            print_info(f"Buscando CVEs em tendência dos últimos {args.trending_cves} dias...")
+            
+            integrator = CVEIntegrator()
+            trending = integrator.get_trending_vulnerabilities(args.trending_cves)
+            
+            if trending:
+                console.print(f"\n[bold green]CVEs em tendência ({len(trending)} encontrados):[/bold green]")
+                
+                from rich.table import Table
+                table = Table(title=f"CVEs dos últimos {args.trending_cves} dias")
+                table.add_column("CVE ID", style="cyan")
+                table.add_column("Severity", style="yellow")
+                table.add_column("Description", style="white", max_width=60)
+                table.add_column("Published", style="green")
+                
+                for cve in trending[:20]:  # Mostrar apenas os primeiros 20
+                    severity = "N/A"
+                    if cve.get('cvss_v3') and 'baseScore' in cve['cvss_v3']:
+                        score = cve['cvss_v3']['baseScore']
+                        if score >= 9.0:
+                            severity = f"[red]CRITICAL ({score})[/red]"
+                        elif score >= 7.0:
+                            severity = f"[orange1]HIGH ({score})[/orange1]"
+                        elif score >= 4.0:
+                            severity = f"[yellow]MEDIUM ({score})[/yellow]"
+                        else:
+                            severity = f"[green]LOW ({score})[/green]"
+                    
+                    table.add_row(
+                        cve.get('id', 'N/A'),
+                        severity,
+                        cve.get('description', 'N/A')[:120] + "..." if len(cve.get('description', '')) > 120 else cve.get('description', 'N/A'),
+                        cve.get('published', 'N/A')[:10]
+                    )
+                
+                console.print(table)
+            else:
+                print_info("Nenhum CVE em tendência encontrado.")
+            
+            return
+
         # === SCANNER DE PORTAS ===
         if args.port_scan:
             print_info(f"Iniciando scan de portas em: {args.port_scan}")
@@ -447,6 +625,62 @@ def main():
         else:
             print_error("Nenhuma operação especificada")
             parser.print_help()
+            return
+        
+        # Enriquecer resultados com CVE se solicitado
+        if args.enrich_cve and 'results' in locals() and results:
+            print_info("Enriquecendo resultados com dados de CVE...")
+            results = integrate_cve_data(results)
+        
+        # Gerar relatório se solicitado
+        if args.generate_report and 'results' in locals() and results:
+            try:
+                # Determinar o tipo de scan baseado nos argumentos
+                scan_type = "unknown"
+                target_url = "unknown"
+                
+                if args.sql_injection:
+                    scan_type = "SQL Injection"
+                    target_url = args.sql_injection
+                elif args.xss_scan:
+                    scan_type = "XSS"
+                    target_url = args.xss_scan
+                elif args.command_injection:
+                    scan_type = "Command Injection"
+                    target_url = args.command_injection
+                elif args.lfi_scan:
+                    scan_type = "LFI/RFI"
+                    target_url = args.lfi_scan
+                elif args.port_scan:
+                    scan_type = "Port Scan"
+                    target_url = args.port_scan
+                
+                print_info(f"Gerando relatório em formato {args.generate_report}...")
+                
+                # Garantir que results é uma lista
+                if not isinstance(results, list):
+                    results = []
+                
+                report_file = generate_report_wrapper(
+                    scan_results=results,
+                    target_url=target_url,
+                    scan_type=scan_type,
+                    output_format=args.generate_report,
+                    output_file=args.report_file
+                )
+                
+                if args.generate_report == 'all':
+                    print_info("Relatórios gerados:")
+                    for format_type, file_path in report_file.items():
+                        print_info(f"  {format_type.upper()}: {file_path}")
+                else:
+                    print_info(f"Relatório gerado: {report_file}")
+                    
+            except Exception as e:
+                print_error(f"Erro ao gerar relatório: {e}")
+                if args.verbose:
+                    import traceback
+                    traceback.print_exc()
             
     except KeyboardInterrupt:
         print_error("Operação cancelada pelo usuário")

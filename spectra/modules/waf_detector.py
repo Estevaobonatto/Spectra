@@ -405,16 +405,24 @@ class AdvancedWAFDetector:
     
     def _classify_waf_type(self, waf_name):
         """Classifica o tipo de WAF."""
-        cloud_wafs = ['Cloudflare', 'AWS WAF', 'Akamai', 'Fastly', 'Azure Front Door', 'Google Cloud Armor']
-        commercial_wafs = ['Sucuri', 'Incapsula', 'Barracuda', 'F5 BIG-IP', 'Imperva', 'Fortinet FortiWeb']
+        cloud_wafs = ['Cloudflare', 'AWS WAF', 'Akamai', 'Fastly', 'Azure Front Door', 'Google Cloud Armor',
+                     'Yunjiasu', 'Baidu Cloud', 'Tencent Cloud', 'Alibaba Cloud']
+        commercial_wafs = ['Sucuri', 'Incapsula', 'Barracuda', 'F5 BIG-IP', 'Imperva', 'Fortinet FortiWeb',
+                          'Wallarm', 'Radware', 'Cisco ASA', 'Palo Alto', 'SonicWall', 'CheckPoint']
         open_source = ['ModSecurity', 'Wordfence', 'Nginx ModSecurity', 'NAXSI', 'Shadow Daemon']
+        cdn_wafs = ['StackPath', 'KeyCDN', 'BunnyCDN', 'MaxCDN']
+        security_services = ['Comodo', 'SiteLock', 'Malcare', 'WebKnight', 'DotDefender', 'Profense']
         
         if waf_name in cloud_wafs:
             return 'Cloud WAF'
         elif waf_name in commercial_wafs:
             return 'Commercial WAF'
         elif waf_name in open_source:
-            return 'Open Source'
+            return 'Open Source WAF'
+        elif waf_name in cdn_wafs:
+            return 'CDN Protection'
+        elif waf_name in security_services:
+            return 'Security Service'
         else:
             return 'Enterprise/Hardware'
     

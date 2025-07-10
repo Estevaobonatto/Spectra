@@ -1,0 +1,52 @@
+{
+  "scan_info": {
+    "target_url": "8.8.8.8",
+    "scan_type": "Port Scan",
+    "timestamp": "2025-07-10T17:13:43.011978",
+    "total_vulnerabilities": 0,
+    "scanner_version": "Spectra v3.2.6",
+    "duration": "N/A"
+  },
+  "summary": {
+    "risk_distribution": {
+      "Crítico": 0,
+      "Alto": 0,
+      "Médio": 0,
+      "Baixo": 0
+    },
+    "vulnerability_types": {},
+    "confidence_levels": {
+      "High": 0,
+      "Medium": 0,
+      "Low": 0
+    }
+  },
+  "vulnerabilities": [],
+  "recommendations": {
+    "Ações Imediatas": [
+      "Revisar e corrigir vulnerabilidades de risco crítico e alto",
+      "Implementar validação de entrada em todos os parâmetros",
+      "Atualizar bibliotecas e frameworks para versões mais recentes",
+      "Configurar Web Application Firewall (WAF)"
+    ],
+    "Melhorias de Segurança": [
+      "Implementar Content Security Policy (CSP)",
+      "Configurar headers de segurança HTTP",
+      "Estabelecer processo de code review",
+      "Implementar testes de segurança automatizados",
+      "Configurar monitoramento de segurança em tempo real"
+    ],
+    "Boas Práticas": [
+      "Princípio do menor privilégio",
+      "Segregação de ambientes (dev/test/prod)",
+      "Backup regular dos dados",
+      "Documentação de configurações de segurança",
+      "Treinamento de segurança para desenvolvedores"
+    ]
+  },
+  "metadata": {
+    "report_format": "JSON",
+    "generated_by": "Spectra Security Scanner",
+    "report_id": "SPECTRA-20250710171343"
+  }
+}
