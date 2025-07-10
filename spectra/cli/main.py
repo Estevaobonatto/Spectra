@@ -16,6 +16,9 @@ from ..modules.whois_analyzer import get_whois_info
 from ..modules.waf_detector import detect_waf
 from ..modules.ssl_analyzer import get_ssl_info
 from ..modules.headers_analyzer import get_http_headers
+from ..modules.sql_injection_scanner import sql_injection_scan
+from ..modules.xss_scanner import xss_scan
+from ..modules.command_injection_scanner import command_injection_scan
 
 def create_parser():
     """Cria o parser de argumentos da linha de comando."""
@@ -117,33 +120,81 @@ Exemplos de uso:
                        help='Captura banner do serviço (host porta)')
     
     # === EXTRATOR DE METADADOS ===
-    parser.add_argument('-md', '--metadata-extract',
-                       metavar='IMAGE_URL',
-                       help='Extrai metadados da imagem especificada')
+    parser.add_argument('-md', '--metadata',
+                       metavar='URL',
+                       help='Extrai metadados de uma imagem')
     
-    # === DETECTOR DE WAF ===
+    # === WAF DETECTOR ===
     parser.add_argument('-waf', '--waf-detect',
                        metavar='URL',
-                       help='Detecta presença de WAF na URL especificada')
-    
-    parser.add_argument('--test-bypasses',
-                       action='store_true',
-                       help='Testar técnicas de bypass de WAF')
-    
-    parser.add_argument('--timing-analysis',
-                       action='store_true',
-                       help='Realizar análise de timing para detecção de WAF')
+                       help='Detecta WAF (Web Application Firewall)')
     
     # === ANALISADOR SSL/TLS ===
-    parser.add_argument('-ssl', '--ssl-analyze',
-                       nargs=2,
-                       metavar=('HOSTNAME', 'PORT'),
-                       help='Analisa certificado SSL/TLS (hostname porta)')
+    parser.add_argument('-ssl', '--ssl-info',
+                       metavar='HOSTNAME',
+                       help='Analisa certificado SSL/TLS')
     
-    # === ANALISADOR DE CABEÇALHOS ===
-    parser.add_argument('-headers', '--headers-analyze',
+    # === ANALISADOR DE HEADERS HTTP ===
+    parser.add_argument('-headers', '--http-headers',
                        metavar='URL',
-                       help='Analisa cabeçalhos HTTP da URL especificada')
+                       help='Analisa headers de segurança HTTP')
+    
+    # === SCANNER DE SQL INJECTION ===
+    parser.add_argument('-sqli', '--sql-injection',
+                       metavar='URL',
+                       help='Executa scan de SQL Injection')
+    
+    parser.add_argument('--sqli-level',
+                       type=int,
+                       choices=[1, 2, 3],
+                       default=1,
+                       help='Nível de agressividade do scan SQLi (1-3)')
+    
+    parser.add_argument('--sqli-dbms',
+                       choices=['mysql', 'postgresql', 'mssql', 'oracle', 'sqlite'],
+                       help='SGBD específico para o scan SQLi')
+    
+    parser.add_argument('--sqli-collaborator',
+                       metavar='URL',
+                       help='URL do servidor OAST para testes out-of-band')
+    
+    # === XSS SCANNER ===
+    parser.add_argument('-xss', '--xss-scan',
+                       metavar='URL',
+                       help='Executa scan de XSS (Cross-Site Scripting)')
+    
+    parser.add_argument('--xss-payloads',
+                       metavar='FILE',
+                       help='Arquivo com payloads customizados para XSS')
+    
+    parser.add_argument('--xss-stored',
+                       action='store_true',
+                       help='Ativar detecção de XSS armazenado')
+    
+    parser.add_argument('--xss-dom',
+                       action='store_true',
+                       help='Ativar fuzzing de DOM XSS')
+    
+    # === COMMAND INJECTION SCANNER ===
+    parser.add_argument('-cmdi', '--command-injection',
+                       metavar='URL',
+                       help='Executa scan de Command Injection')
+    
+    parser.add_argument('--cmdi-level',
+                       type=int,
+                       choices=[1, 2, 3],
+                       default=1,
+                       help='Nível de agressividade do scan Command Injection (1-3)')
+    
+    parser.add_argument('--cmdi-os',
+                       choices=['linux', 'windows', 'auto'],
+                       default='auto',
+                       help='Sistema operacional alvo para Command Injection')
+    
+    parser.add_argument('--cmdi-time-delay',
+                       type=float,
+                       default=5.0,
+                       help='Delay em segundos para técnicas time-based (padrão: 5.0)')
     
     # === OPÇÕES GERAIS ===
     parser.add_argument('--timeout',
@@ -288,10 +339,10 @@ def main():
             banner = grabber.grab_banner(host, int(port))
         
         # === EXTRATOR DE METADADOS ===
-        elif args.metadata_extract:
-            print_info(f"Extraindo metadados de: {args.metadata_extract}")
+        elif args.metadata:
+            print_info(f"Extraindo metadados de: {args.metadata}")
             
-            metadata = extract_metadata(args.metadata_extract)
+            metadata = extract_metadata(args.metadata)
         
         # === DETECTOR DE WAF ===
         elif args.waf_detect:
@@ -306,8 +357,8 @@ def main():
             )
         
         # === ANALISADOR SSL/TLS ===
-        elif args.ssl_analyze:
-            hostname, port = args.ssl_analyze
+        elif args.ssl_info:
+            hostname, port = args.ssl_info
             print_info(f"Analisando SSL/TLS de {hostname}:{port}")
             
             results = get_ssl_info(
@@ -316,14 +367,49 @@ def main():
                 output_format=args.output_format
             )
         
-        # === ANALISADOR DE CABEÇALHOS ===
-        elif args.headers_analyze:
-            print_info(f"Analisando cabeçalhos de: {args.headers_analyze}")
+        # === ANALISADOR DE HEADERS HTTP ===
+        elif args.http_headers:
+            print_info(f"Analisando cabeçalhos de: {args.http_headers}")
             
             results = get_http_headers(
-                url=args.headers_analyze,
+                url=args.http_headers,
                 verbose=args.verbose,
                 output_format=args.output_format
+            )
+        
+        # === SCANNER DE SQL INJECTION ===
+        elif args.sql_injection:
+            print_info(f"Executando scan de SQL Injection em: {args.sql_injection}")
+            
+            results = sql_injection_scan(
+                url=args.sql_injection,
+                level=args.sqli_level,
+                dbms=args.sqli_dbms,
+                collaborator_url=args.sqli_collaborator
+            )
+        
+        # === SCANNER DE XSS ===
+        elif args.xss_scan:
+            print_info(f"Executando scan de XSS em: {args.xss_scan}")
+            
+            results = xss_scan(
+                url=args.xss_scan,
+                custom_payloads_file=args.xss_payloads,
+                scan_stored=args.xss_stored,
+                fuzz_dom=args.xss_dom,
+                verbose=args.verbose
+            )
+        
+        # === COMMAND INJECTION SCANNER ===
+        elif args.command_injection:
+            print_info(f"Executando scan de Command Injection em: {args.command_injection}")
+            
+            results = command_injection_scan(
+                url=args.command_injection,
+                level=args.cmdi_level,
+                target_os=args.cmdi_os,
+                time_delay=args.cmdi_time_delay,
+                verbose=args.verbose
             )
         
         else:
