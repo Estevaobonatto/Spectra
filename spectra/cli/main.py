@@ -13,6 +13,9 @@ from ..modules.metadata_extractor import extract_metadata
 from ..modules.subdomain_scanner import discover_subdomains
 from ..modules.dns_analyzer import query_dns
 from ..modules.whois_analyzer import get_whois_info
+from ..modules.waf_detector import detect_waf
+from ..modules.ssl_analyzer import get_ssl_info
+from ..modules.headers_analyzer import get_http_headers
 
 def create_parser():
     """Cria o parser de argumentos da linha de comando."""
@@ -117,6 +120,30 @@ Exemplos de uso:
     parser.add_argument('-md', '--metadata-extract',
                        metavar='IMAGE_URL',
                        help='Extrai metadados da imagem especificada')
+    
+    # === DETECTOR DE WAF ===
+    parser.add_argument('-waf', '--waf-detect',
+                       metavar='URL',
+                       help='Detecta presença de WAF na URL especificada')
+    
+    parser.add_argument('--test-bypasses',
+                       action='store_true',
+                       help='Testar técnicas de bypass de WAF')
+    
+    parser.add_argument('--timing-analysis',
+                       action='store_true',
+                       help='Realizar análise de timing para detecção de WAF')
+    
+    # === ANALISADOR SSL/TLS ===
+    parser.add_argument('-ssl', '--ssl-analyze',
+                       nargs=2,
+                       metavar=('HOSTNAME', 'PORT'),
+                       help='Analisa certificado SSL/TLS (hostname porta)')
+    
+    # === ANALISADOR DE CABEÇALHOS ===
+    parser.add_argument('-headers', '--headers-analyze',
+                       metavar='URL',
+                       help='Analisa cabeçalhos HTTP da URL especificada')
     
     # === OPÇÕES GERAIS ===
     parser.add_argument('--timeout',
@@ -265,6 +292,39 @@ def main():
             print_info(f"Extraindo metadados de: {args.metadata_extract}")
             
             metadata = extract_metadata(args.metadata_extract)
+        
+        # === DETECTOR DE WAF ===
+        elif args.waf_detect:
+            print_info(f"Detectando WAF em: {args.waf_detect}")
+            
+            results = detect_waf(
+                url=args.waf_detect,
+                verbose=args.verbose,
+                output_format=args.output_format,
+                test_bypasses=args.test_bypasses,
+                timing_analysis=args.timing_analysis
+            )
+        
+        # === ANALISADOR SSL/TLS ===
+        elif args.ssl_analyze:
+            hostname, port = args.ssl_analyze
+            print_info(f"Analisando SSL/TLS de {hostname}:{port}")
+            
+            results = get_ssl_info(
+                hostname=hostname,
+                port=int(port),
+                output_format=args.output_format
+            )
+        
+        # === ANALISADOR DE CABEÇALHOS ===
+        elif args.headers_analyze:
+            print_info(f"Analisando cabeçalhos de: {args.headers_analyze}")
+            
+            results = get_http_headers(
+                url=args.headers_analyze,
+                verbose=args.verbose,
+                output_format=args.output_format
+            )
         
         else:
             print_error("Nenhuma operação especificada")

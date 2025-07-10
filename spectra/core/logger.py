@@ -86,3 +86,7 @@ class SpectraLogger:
 
 # Logger global
 logger = SpectraLogger()
+
+def get_logger(name="spectra"):
+    """Retorna uma instância do logger para o módulo especificado."""
+    return SpectraLogger(name)
