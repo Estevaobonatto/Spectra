@@ -66,8 +66,8 @@ class AdvancedTechnologyDetector:
             'headers': {
                 'Server': {
                     # Web Servers
-                    'nginx': {'name': 'Nginx', 'category': 'web_servers', 'version_regex': r'nginx/([\\d\\.]+)'},
-                    'apache': {'name': 'Apache HTTP Server', 'category': 'web_servers', 'version_regex': r'Apache/([\\d\\.]+)'},
+                    'nginx': {'name': 'Nginx', 'category': 'web_servers', 'version_regex': r'nginx/([\d\.]+)'},
+                    'apache': {'name': 'Apache HTTP Server', 'category': 'web_servers', 'version_regex': r'Apache/([\d\.]+)'},
                     'microsoft-iis': {'name': 'Microsoft IIS', 'category': 'web_servers', 'version_regex': r'Microsoft-IIS/([\\d\\.]+)'},
                     'litespeed': {'name': 'LiteSpeed', 'category': 'web_servers', 'version_regex': r'LiteSpeed/([\\d\\.]+)'},
                     'caddy': {'name': 'Caddy', 'category': 'web_servers', 'version_regex': r'Caddy/([\\d\\.]+)'},
@@ -252,7 +252,7 @@ class AdvancedTechnologyDetector:
                 
                 # JavaScript Libraries
                 'jquery': {'name': 'jQuery', 'category': 'javascript_libraries', 'patterns': [
-                    r'jquery', r'jQuery', r'\\$\\(document\\)\\.ready',
+                    r'jquery', r'jQuery', r'\$\(document\)\.ready',
                     r'jquery.min.js', r'jquery-ui', r'jQuery.fn.jquery'
                 ]},
                 'lodash': {'name': 'Lodash', 'category': 'javascript_libraries', 'patterns': [
@@ -298,7 +298,7 @@ class AdvancedTechnologyDetector:
                     r'axios', r'Axios', r'axios.min.js'
                 ]},
                 'fetch': {'name': 'Fetch API', 'category': 'javascript_libraries', 'patterns': [
-                    r'fetch\\(', r'window.fetch'
+                    r'fetch\(', r'window.fetch'
                 ]},
                 
                 # CSS Frameworks
@@ -330,7 +330,7 @@ class AdvancedTechnologyDetector:
                 
                 # Analytics & Tracking
                 'google_analytics': {'name': 'Google Analytics', 'category': 'analytics_tools', 'patterns': [
-                    r'google-analytics', r'ga\\(', r'gtag\\(', r'GoogleAnalyticsObject',
+                    r'google-analytics', r'ga\(', r'gtag\(', r'GoogleAnalyticsObject',
                     r'analytics.js', r'gtag/js', r'UA-\\d+-\\d+'
                 ]},
                 'gtm': {'name': 'Google Tag Manager', 'category': 'analytics_tools', 'patterns': [
@@ -341,7 +341,7 @@ class AdvancedTechnologyDetector:
                     r'googleadservices', r'google.com/pagead', r'googlesyndication'
                 ]},
                 'facebook_pixel': {'name': 'Facebook Pixel', 'category': 'analytics_tools', 'patterns': [
-                    r'fbq\\(', r'facebook.com/tr', r'FacebookPixel'
+                    r'fbq\(', r'facebook.com/tr', r'FacebookPixel'
                 ]},
                 'hotjar': {'name': 'Hotjar', 'category': 'analytics_tools', 'patterns': [
                     r'hotjar', r'Hotjar', r'static.hotjar.com'
@@ -620,6 +620,15 @@ class AdvancedTechnologyDetector:
         self.file_fingerprints = {
             # Common JS/CSS file paths to check
             'common_files': [
+                # Modern Frontend Frameworks
+                '/_next/static/chunks/main.js',  # Next.js
+                '/_nuxt/',  # Nuxt.js
+                '/js/chunk-vendors.js',  # Vue CLI
+                '/static/js/main.js',  # Create React App
+                '/assets/index.js',  # Vite
+                '/js/app.js',  # Laravel Mix
+                
+                # Traditional Libraries
                 '/js/jquery.min.js',
                 '/js/jquery.js',
                 '/js/bootstrap.min.js',
@@ -632,17 +641,41 @@ class AdvancedTechnologyDetector:
                 '/js/vue.js',
                 '/js/angular.min.js',
                 '/js/angular.js',
+                
+                # Framework-specific assets
                 '/assets/js/app.js',
                 '/static/js/main.js',
-                '/wp-includes/js/jquery/jquery.min.js',
-                '/wp-content/themes/',
-                '/wp-content/plugins/',
-                '/sites/all/modules/',
-                '/modules/system/system.js',
-                '/media/system/js/core.js',
-                '/skin/frontend/',
-                '/js/mage/',
-                '/assets/shopify_common.js'
+                '/dist/js/main.js',
+                '/build/static/js/main.js',
+                
+                # CMS Detection
+                '/wp-includes/js/jquery/jquery.min.js',  # WordPress
+                '/wp-content/themes/',  # WordPress
+                '/wp-content/plugins/',  # WordPress
+                '/sites/all/modules/',  # Drupal
+                '/modules/system/system.js',  # Drupal
+                '/media/system/js/core.js',  # Joomla
+                '/administrator/templates/',  # Joomla
+                '/skin/frontend/',  # Magento
+                '/js/mage/',  # Magento
+                '/assets/shopify_common.js',  # Shopify
+                
+                # Modern Build Tools
+                '/webpack-runtime.js',
+                '/vendor.js',
+                '/manifest.js',
+                '/.vite/',
+                '/dist/assets/',
+                
+                # Common CDN patterns
+                '/libs/',
+                '/vendor/',
+                '/node_modules/',
+                
+                # API/Service Workers
+                '/sw.js',
+                '/service-worker.js',
+                '/workbox-sw.js'
             ]
         }
     
@@ -670,12 +703,14 @@ class AdvancedTechnologyDetector:
         return detections
     
     def _check_file_hash(self, file_url):
-        """Verifica hash de um arquivo específico."""
+        """Verifica hash e conteúdo de um arquivo específico."""
         try:
             response = self.session.get(file_url, timeout=5, verify=False)
             if response.status_code == 200:
-                file_hash = self._calculate_file_hash(response.text)
+                content = response.text
+                file_hash = self._calculate_file_hash(content)
                 
+                # Check hash primeiro (mais preciso)
                 if file_hash in self.tech_database['file_hashes']:
                     tech_info = self.tech_database['file_hashes'][file_hash]
                     return {
@@ -685,8 +720,123 @@ class AdvancedTechnologyDetector:
                         'confidence': 99,
                         'source': f'File Hash: {file_url}'
                     }
+                
+                # Fallback: análise de conteúdo baseada no path
+                return self._analyze_file_content(file_url, content)
+            
+            elif response.status_code == 403:
+                # Arquivo existe mas está protegido - pode indicar tecnologia
+                return self._analyze_file_access(file_url, response.text)
+                
         except:
             pass
+        return None
+    
+    def _analyze_file_content(self, file_url, content):
+        """Analisa conteúdo de arquivo para detectar tecnologias."""
+        content_lower = content.lower()
+        
+        # Padrões baseados no path e conteúdo
+        detections = []
+        
+        # Next.js detection
+        if '_next/' in file_url or 'next.js' in content_lower:
+            detections.append({
+                'name': 'Next.js',
+                'category': 'frontend_frameworks',
+                'version': None,
+                'confidence': 85,
+                'source': f'File Content: {file_url}'
+            })
+        
+        # Nuxt.js detection
+        elif '_nuxt/' in file_url or 'nuxt' in content_lower:
+            detections.append({
+                'name': 'Nuxt.js',
+                'category': 'frontend_frameworks',
+                'version': None,
+                'confidence': 85,
+                'source': f'File Content: {file_url}'
+            })
+        
+        # Vue CLI detection
+        elif 'chunk-vendors' in file_url or 'vue' in content_lower:
+            detections.append({
+                'name': 'Vue.js',
+                'category': 'frontend_frameworks',
+                'version': None,
+                'confidence': 80,
+                'source': f'File Content: {file_url}'
+            })
+        
+        # Create React App detection
+        elif ('static/js/main' in file_url or 'build/static' in file_url) and 'react' in content_lower:
+            detections.append({
+                'name': 'Create React App',
+                'category': 'frontend_frameworks',
+                'version': None,
+                'confidence': 80,
+                'source': f'File Content: {file_url}'
+            })
+        
+        # Vite detection
+        elif 'vite' in file_url or 'import.meta' in content_lower:
+            detections.append({
+                'name': 'Vite',
+                'category': 'development_tools',
+                'version': None,
+                'confidence': 85,
+                'source': f'File Content: {file_url}'
+            })
+        
+        # Webpack detection
+        elif 'webpack' in content_lower or '__webpack' in content_lower:
+            detections.append({
+                'name': 'Webpack',
+                'category': 'development_tools',
+                'version': None,
+                'confidence': 85,
+                'source': f'File Content: {file_url}'
+            })
+        
+        # Service Worker detection
+        elif ('sw.js' in file_url or 'service-worker' in file_url) and 'workbox' in content_lower:
+            detections.append({
+                'name': 'Workbox',
+                'category': 'development_tools',
+                'version': None,
+                'confidence': 90,
+                'source': f'File Content: {file_url}'
+            })
+        
+        return detections[0] if detections else None
+    
+    def _analyze_file_access(self, file_url, content):
+        """Analisa resposta 403 de arquivos específicos."""
+        content_lower = content.lower()
+        
+        # WordPress protection patterns - deve ter evidência clara
+        if ('wp-' in file_url and 'wordpress' in content_lower) or ('wp-content' in file_url and len(content) < 1000):
+            # Baixa confiança para páginas genéricas de erro 403
+            confidence = 40 if len(content) > 5000 else 80
+            return {
+                'name': 'WordPress',
+                'category': 'cms_platforms',
+                'version': None,
+                'confidence': confidence,
+                'source': f'Protected File: {file_url}'
+            }
+        
+        # Drupal protection patterns - só se for URL específica do Drupal
+        elif ('/sites/all/modules' in file_url or '/modules/system' in file_url) and len(content) < 1000:
+            return {
+                'name': 'Drupal',
+                'category': 'cms_platforms',
+                'version': None,
+                'confidence': 80,
+                'source': f'Protected File: {file_url}'
+            }
+        
         return None
     
     def _detect_passive_scan(self, base_url):
@@ -885,23 +1035,56 @@ class AdvancedTechnologyDetector:
         """Analisa páginas 403 para detectar tecnologias."""
         detections = []
         
-        # Padrões específicos de servidores web em páginas 403
-        if 'nginx' in content:
-            detections.append({
-                'name': 'Nginx',
-                'category': 'web_servers',
-                'version': None,
-                'confidence': 70,
-                'source': '403 page analysis'
-            })
-        elif 'apache' in content:
-            detections.append({
-                'name': 'Apache HTTP Server',
-                'category': 'web_servers',
-                'version': None,
-                'confidence': 70,
-                'source': '403 page analysis'
-            })
+        # Padrões específicos de tecnologias em páginas 403/bloqueio
+        tech_patterns = {
+            # Web Servers
+            'nginx': {'name': 'Nginx', 'category': 'web_servers'},
+            'apache': {'name': 'Apache HTTP Server', 'category': 'web_servers'},
+            'iis': {'name': 'Microsoft IIS', 'category': 'web_servers'},
+            'litespeed': {'name': 'LiteSpeed', 'category': 'web_servers'},
+            
+            # Cloud Services/CDN
+            'vercel': {'name': 'Vercel', 'category': 'cloud_services'},
+            'netlify': {'name': 'Netlify', 'category': 'cloud_services'},
+            'cloudflare': {'name': 'Cloudflare', 'category': 'cdn_services'},
+            'aws': {'name': 'Amazon AWS', 'category': 'cloud_services'},
+            'azure': {'name': 'Microsoft Azure', 'category': 'cloud_services'},
+            'google cloud': {'name': 'Google Cloud', 'category': 'cloud_services'},
+            'heroku': {'name': 'Heroku', 'category': 'cloud_services'},
+            'github pages': {'name': 'GitHub Pages', 'category': 'cloud_services'},
+            'gitlab pages': {'name': 'GitLab Pages', 'category': 'cloud_services'},
+            
+            # Security/WAF
+            'sucuri': {'name': 'Sucuri WAF', 'category': 'security_technologies'},
+            'incapsula': {'name': 'Incapsula WAF', 'category': 'security_technologies'},
+            'akamai': {'name': 'Akamai WAF', 'category': 'security_technologies'},
+            'mod_security': {'name': 'ModSecurity', 'category': 'security_technologies'},
+            
+            # Frameworks/CMS indicators
+            'wordpress': {'name': 'WordPress', 'category': 'cms_platforms'},
+            'drupal': {'name': 'Drupal', 'category': 'cms_platforms'},
+            'joomla': {'name': 'Joomla', 'category': 'cms_platforms'},
+            'laravel': {'name': 'Laravel', 'category': 'backend_technologies'},
+            'django': {'name': 'Django', 'category': 'backend_technologies'},
+            'express': {'name': 'Express.js', 'category': 'backend_technologies'},
+            'nextjs': {'name': 'Next.js', 'category': 'frontend_frameworks'},
+            'nuxt': {'name': 'Nuxt.js', 'category': 'frontend_frameworks'},
+            
+            # Load Balancers
+            'haproxy': {'name': 'HAProxy', 'category': 'web_servers'},
+            'traefik': {'name': 'Traefik', 'category': 'web_servers'},
+            'envoy': {'name': 'Envoy Proxy', 'category': 'web_servers'}
+        }
+        
+        for pattern, tech_info in tech_patterns.items():
+            if pattern in content:
+                detections.append({
+                    'name': tech_info['name'],
+                    'category': tech_info['category'],
+                    'version': None,
+                    'confidence': 75,
+                    'source': f'403/Security page: {pattern}'
+                })
         
         return detections
     
@@ -1041,16 +1224,25 @@ class AdvancedTechnologyDetector:
         """Detecta tecnologias a partir do conteúdo HTML."""
         detections = []
         
+        # Verifica se é uma página de checkpoint/bloqueio (baixa confiabilidade)
+        is_checkpoint = any(keyword in html_content.lower() for keyword in [
+            'security checkpoint', 'vercel security', 'checking browser',
+            'browser verification', 'please wait', 'loading...', 'redirect'
+        ])
+        
         # Detecta por padrões no HTML
         for tech_key, tech_info in self.tech_database['html_content'].items():
             for pattern in tech_info['patterns']:
                 if re.search(pattern, html_content, re.IGNORECASE):
+                    # Reduz confiança drasticamente se for página de checkpoint
+                    confidence = 30 if is_checkpoint else 80
+                    
                     detection = {
                         'name': tech_info['name'],
                         'category': tech_info['category'],
                         'version': None,
-                        'confidence': 80,
-                        'source': f'HTML Content: {pattern}'
+                        'confidence': confidence,
+                        'source': f'HTML Content: {pattern}' + (' (checkpoint page)' if is_checkpoint else '')
                     }
                     detections.append(detection)
                     break
@@ -1170,14 +1362,15 @@ class AdvancedTechnologyDetector:
             cache_key = f"{self.url}_{enable_passive_scan}_{enable_file_fingerprinting}"
             if cache_key in self.cache:
                 if verbose:
-                    console.print(f"[*] Usando resultado em cache para {self.url}")
+                    console.print(f"[*] Cache: Resultado encontrado para [cyan]{self.url}[/cyan]")
                 return self.cache[cache_key]
             
             start_time = time.time()
             
             # Faz requisição inicial com análise de tempo de resposta
             if verbose:
-                console.print(f"[*] Iniciando análise de {self.url}")
+                console.print(f"[*] Alvo: [cyan]{self.url}[/cyan]")
+                console.print(f"[*] Iniciando detecção de tecnologias...")
             
             response = self.session.get(self.url, timeout=self.timeout, verify=False)
             response_time = time.time() - start_time
@@ -1214,8 +1407,10 @@ class AdvancedTechnologyDetector:
                         if detections:
                             all_detections.extend(detections)
                         if verbose:
-                            console.print(f"[*] {detection_type}: {len(detections)} detecções")
+                            console.print(f"[*] {detection_type.title()}: [cyan]{len(detections)}[/cyan] detecções")
                     except Exception as e:
+                        if verbose:
+                            console.print(f"[bold yellow][!] Erro em {detection_type}: {e}[/bold yellow]")
                         logger.warning(f"Erro em {detection_type}: {e}")
                 
                 # Coleta resultados avançados
@@ -1225,8 +1420,10 @@ class AdvancedTechnologyDetector:
                         if detections:
                             all_detections.extend(detections)
                         if verbose:
-                            console.print(f"[*] {detection_type}: {len(detections)} detecções")
+                            console.print(f"[*] {detection_type.title()}: [cyan]{len(detections)}[/cyan] detecções")
                     except Exception as e:
+                        if verbose:
+                            console.print(f"[bold yellow][!] Erro em {detection_type}: {e}[/bold yellow]")
                         logger.warning(f"Erro em análise avançada {detection_type}: {e}")
             
             # Remove duplicatas com priorização por confiança
@@ -1252,7 +1449,7 @@ class AdvancedTechnologyDetector:
             self.cache[cache_key] = self.detections.copy()
             
             if verbose:
-                console.print(f"[*] Análise concluída: {len(unique_detections)} tecnologias detectadas em {total_time:.2f}s")
+                console.print(f"[*] Detecção concluída em [cyan]{total_time:.2f}s[/cyan]")
             
             return self.detections
             
@@ -1267,8 +1464,25 @@ class AdvancedTechnologyDetector:
             return self.detections
     
     def _deduplicate_detections(self, detections):
-        """Remove duplicatas priorizando por confiança."""
+        """Remove duplicatas priorizando por confiança e qualidade da fonte."""
         seen = {}
+        
+        # Ranking de qualidade das fontes (maior = melhor)
+        source_quality = {
+            'File Hash': 100,
+            'Meta Generator': 90,
+            'Server Header': 85,
+            'Response Headers': 80,
+            'HTML Content': 75,
+            'File Content': 70,
+            'JavaScript Pattern': 65,
+            '403/Security page': 60,
+            'Protected File': 55,
+            'WAF Pattern': 50,
+            'Cookie': 45,
+            'API Response': 40,
+            'Fast response time': 30
+        }
         
         for detection in detections:
             key = (detection['name'].lower(), detection['category'])
@@ -1276,12 +1490,21 @@ class AdvancedTechnologyDetector:
             if key not in seen:
                 seen[key] = detection
             else:
-                # Mantém o de maior confiança
-                if detection['confidence'] > seen[key]['confidence']:
+                current = seen[key]
+                
+                # Calcula score combinado (confiança + qualidade da fonte)
+                current_source_key = current.get('source', '').split(':')[0].strip()
+                new_source_key = detection.get('source', '').split(':')[0].strip()
+                
+                current_score = current['confidence'] + source_quality.get(current_source_key, 0)
+                new_score = detection['confidence'] + source_quality.get(new_source_key, 0)
+                
+                # Substitui se score for melhor
+                if new_score > current_score:
                     seen[key] = detection
-                elif detection['confidence'] == seen[key]['confidence']:
-                    # Se confiança igual, mantém o que tem versão
-                    if detection.get('version') and not seen[key].get('version'):
+                elif new_score == current_score:
+                    # Se scores iguais, prioriza quem tem versão
+                    if detection.get('version') and not current.get('version'):
                         seen[key] = detection
         
         return list(seen.values())
@@ -1475,43 +1698,69 @@ class AdvancedTechnologyDetector:
         return self.detections
     
     def _present_table_format(self):
-        """Apresenta resultados em formato de tabela colorida."""
-        console.print("\\n[bold cyan]🔍 TECNOLOGIAS DETECTADAS[/bold cyan]")
-        console.print("=" * 80)
+        """Apresenta resultados em formato de tabela seguindo padrão dos outros módulos."""
+        console.print("-" * 60)
+        console.print(f"[*] Tecnologias Detectadas: [bold cyan]{self.url}[/bold cyan]")
+        console.print("-" * 60)
         
         # Mostra métricas de scan se disponíveis
         if 'scan_metrics' in self.detections:
             metrics = self.detections['scan_metrics'][0]
-            console.print(f"[dim]📊 {metrics['total_detections']} tecnologias detectadas em {metrics['scan_time']}s[/dim]")
+            console.print(f"[*] Scan concluído em [cyan]{metrics['scan_time']}s[/cyan] - [cyan]{metrics['total_detections']}[/cyan] tecnologias detectadas")
+            console.print(f"[*] Tempo de resposta: [cyan]{metrics['response_time']}s[/cyan] - Métodos utilizados: [cyan]{metrics['methods_used']}[/cyan]")
             console.print("")
         
         total_detections = 0
-        for category, detections in self.detections.items():
-            if detections and category != 'scan_metrics':
+        has_findings = False
+        
+        # Ordenar categorias por relevância
+        category_order = {
+            'cms_platforms': 1, 'backend_technologies': 2, 'frontend_frameworks': 3,
+            'web_servers': 4, 'javascript_libraries': 5, 'css_frameworks': 6,
+            'security_technologies': 7, 'cdn_services': 8, 'analytics_tools': 9,
+            'databases': 10, 'cloud_services': 11
+        }
+        
+        # Filtra detecções de baixa confiança (< 50%) e agrupa por categoria
+        filtered_detections = {}
+        for cat, detections in self.detections.items():
+            if detections and cat != 'scan_metrics':
+                # Filtra apenas detecções com confiança >= 50%
+                high_confidence = [d for d in detections if d.get('confidence', 0) >= 50]
+                if high_confidence:
+                    filtered_detections[cat] = high_confidence
+        
+        sorted_categories = sorted(
+            filtered_detections.items(),
+            key=lambda x: category_order.get(x[0], 99)
+        )
+        
+        for category, detections in sorted_categories:
+            if detections:
+                has_findings = True
                 category_name = category.replace('_', ' ').title()
-                console.print(f"\\n[bold yellow]📂 {category_name} ({len(detections)}):[/bold yellow]")
+                console.print(f"")
+                console.print(f"[*] {category_name}:")
                 
                 for detection in sorted(detections, key=lambda x: x['confidence'], reverse=True):
-                    # Ícone baseado na confiança
-                    if detection['confidence'] >= 90:
-                        icon = "🟢"
-                    elif detection['confidence'] >= 70:
-                        icon = "🟡"
-                    else:
-                        icon = "🔴"
+                    # Status baseado na confiança seguindo padrão dos outros módulos
+                    version_info = f" v{detection['version']}" if detection.get('version') else ""
+                    confidence_info = f" [cyan]({detection['confidence']}%)[/cyan]"
                     
-                    version_info = f" [dim]v{detection['version']}[/dim]" if detection.get('version') else ""
-                    confidence = f" [dim]({detection['confidence']}%)[/dim]"
-                    
-                    console.print(f"  {icon} [bold]{detection['name']}[/bold]{version_info}{confidence}")
+                    console.print(f"[bold green][+] {detection['name']}{version_info}{confidence_info}[/bold green]")
                     
                     if detection.get('source'):
-                        console.print(f"     [dim]↳ {detection['source']}[/dim]")
+                        console.print(f"    [dim]└─ Detecção: {detection['source']}[/dim]")
                 
                 total_detections += len(detections)
         
-        console.print(f"\\n[bold green]✅ Total: {total_detections} tecnologias detectadas[/bold green]")
-        console.print("=" * 80)
+        if not has_findings:
+            console.print("[bold yellow][-] Nenhuma tecnologia específica foi detectada.[/bold yellow]")
+        else:
+            console.print(f"")
+            console.print(f"[*] Total encontrado: [bold cyan]{total_detections}[/bold cyan] tecnologias")
+        
+        console.print("-" * 60)
     
     def _export_json(self):
         """Exporta resultados em formato JSON."""
@@ -1751,21 +2000,21 @@ class AdvancedTechnologyDetector:
         return '\\n'.join(markdown_output)
     
     def save_report(self, filename, format='json'):
-        """Salva relatório em arquivo."""
+        """Salva relatório em arquivo seguindo padrão dos outros módulos."""
         try:
             content = self.present_results(output_format=format)
             
             if content:
                 with open(filename, 'w', encoding='utf-8') as f:
                     f.write(content)
-                console.print(f"[bold green]✅ Relatório salvo em: {filename}[/bold green]")
+                console.print(f"[bold green][+] Relatório salvo: {filename}[/bold green]")
                 return True
             else:
-                console.print(f"[bold red]❌ Erro ao gerar conteúdo do relatório[/bold red]")
+                console.print(f"[bold red][!] Erro ao gerar conteúdo do relatório[/bold red]")
                 return False
                 
         except Exception as e:
-            console.print(f"[bold red]❌ Erro ao salvar relatório: {e}[/bold red]")
+            console.print(f"[bold red][!] Erro ao salvar relatório: {e}[/bold red]")
             return False
 
 # Funções de compatibilidade legacy
@@ -1794,7 +2043,7 @@ def quick_tech_scan(url, verbose=False):
     return detect_technologies(
         url, 
         verbose=verbose, 
-        output_format='raw',
+        output_format='table',
         enable_passive_scan=False,
         enable_file_fingerprinting=False
     )
