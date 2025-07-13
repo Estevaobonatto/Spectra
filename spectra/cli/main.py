@@ -25,6 +25,7 @@ from ..modules.command_injection_scanner import command_injection_scan
 from ..modules.lfi_scanner import lfi_scan
 from ..modules.cve_integrator import integrate_cve_data, CVEIntegrator
 from ..modules.hash_cracker import AdvancedHashCracker, crack_hash, detect_hash_type
+from ..modules.network_monitor import network_monitor_interface
 
 def create_parser():
     """Cria o parser de argumentos da linha de comando."""
@@ -99,6 +100,17 @@ Exemplos de uso:
   • Support para multi-GPU systems
   • Performance estimation e estatísticas detalhadas
 
+[ Network Monitor - Wireshark-like Interface ]
+  • Captura de pacotes em tempo real com interface TUI avançada
+  • Análise detalhada de protocolos (TCP, UDP, ICMP, ARP, DNS)
+  • Filtros BPF (Berkeley Packet Filter) interativos
+  • Busca em tempo real com navegação por setas
+  • Múltiplas visualizações: pacotes, estatísticas, hex, detalhes
+  • Identificação automática de serviços (HTTP, HTTPS, SSH, FTP, DNS, etc.)
+  • Análise de flags TCP (SYN, ACK, FIN, RST, PSH, URG)
+  • Exportação para JSON e estatísticas de tráfego
+  • Seleção de interfaces de rede com troca em tempo real
+
 [ Detecção de Tecnologias Avançada - 500+ Tecnologias ]
   %(prog)s -tech https://example.com
   %(prog)s -tech https://target.com --tech-quick --verbose
@@ -134,6 +146,10 @@ Exemplos de uso:
   %(prog)s --rainbow-info md5_1_6_36chars.rt
   %(prog)s -hc d41d8cd98f00b204e9800998ecf8427e --attack-mode rainbow --rainbow-charset "abc123" --rainbow-max-length 4
   %(prog)s -hc 356a192b7913b04c54574d18c28d46e6395428ab --attack-mode all
+
+[ Network Monitor - Análise de Tráfego em Tempo Real ]
+  %(prog)s -nm
+  %(prog)s --network-monitor
 
 [ Análise de Segurança ]
   %(prog)s -waf https://example.com
@@ -486,6 +502,11 @@ Exemplos de uso:
     parser.add_argument('--show-hash-stats',
                        action='store_true',
                        help='Mostra estatísticas detalhadas durante quebra de hash')
+    
+    # === NETWORK MONITOR ===
+    parser.add_argument('-nm', '--network-monitor',
+                       action='store_true',
+                       help='Inicia monitor de rede similar ao Wireshark')
     
     # === GPU ACCELERATION ===
     parser.add_argument('--use-gpu',
@@ -1339,6 +1360,12 @@ def main():
                     console.print(f"    • Tente --attack-mode all")
             
             results = results or {'success': False}
+        
+        # === NETWORK MONITOR ===
+        elif args.network_monitor:
+            print_info("Iniciando Network Monitor...")
+            network_monitor_interface()
+            return
         
         else:
             print_error("Nenhuma operação especificada")

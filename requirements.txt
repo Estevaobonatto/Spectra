@@ -8,3 +8,4 @@ python-whois
 pyOpenSSL
 selenium
 pyopencl
+scapy
