@@ -50,6 +50,12 @@ Exemplos de uso:
   %(prog)s -ds https://webapp.com -w common.txt --response-time-max 2.0 --content-length-max 10000
   %(prog)s -ds https://backup.com -w files.txt --no-backup-discovery --no-content-discovery
 
+[ Performance Otimizada - Auto-ajuste de Threads & Connection Pooling ]
+  %(prog)s -ds https://fast.com -w dirs.txt --performance-mode fast --workers 100
+  %(prog)s -ds https://extreme.com -w big.txt --performance-mode aggressive --show-performance-stats
+  %(prog)s -ds https://balanced.com -w wordlist.txt --connection-pool-size 150 --verbose
+  %(prog)s -ds https://custom.com -w files.txt --workers 200 --adaptive-delay --show-performance-stats
+
 [ Funcionalidades Únicas do Directory Scanner ]
   • Múltiplos métodos HTTP simultâneos (GET,POST,PUT,HEAD,OPTIONS,DELETE,PATCH)
   • Filtragem avançada por status codes, tamanho de conteúdo e tempo de resposta
@@ -61,6 +67,16 @@ Exemplos de uso:
   • False positive filtering avançado com baseline 404 detection
   • Scan recursivo com controle de profundidade
   • Threading otimizado com progress bars em tempo real
+
+[ Performance & Otimizações Avançadas ]
+  • Auto-ajuste inteligente de workers baseado em CPUs disponíveis (até 500 threads)
+  • Connection pooling HTTP otimizado com retry strategy integrada
+  • 3 modos de performance: balanced, fast (8x CPUs), aggressive (10x CPUs)
+  • Estatísticas detalhadas de performance com score calculado automaticamente
+  • Detecção de GPU disponível (informacional - HTTP é I/O bound, não CPU bound)
+  • Pool de conexões configurável para máxima eficiência de rede
+  • Controle granular de workers via CLI (--workers 1-500)
+  • Taxa de sucesso e métricas de rate limiting em tempo real
 
 [ Detecção de Tecnologias Avançada - 500+ Tecnologias ]
   %(prog)s -tech https://example.com
@@ -168,6 +184,21 @@ Exemplos de uso:
     parser.add_argument('--adaptive-delay',
                        action='store_true',
                        help='Ativa rate limiting adaptativo inteligente (ajusta velocidade baseado em 429/503)')
+    
+    # Performance avançada
+    parser.add_argument('--performance-mode',
+                       choices=['balanced', 'fast', 'aggressive'],
+                       default='balanced',
+                       help='Modo de performance: balanced (padrão), fast (threads otimizadas), aggressive (máxima velocidade)')
+    
+    parser.add_argument('--connection-pool-size',
+                       type=int,
+                       metavar='SIZE',
+                       help='Tamanho do pool de conexões HTTP (padrão: workers * 2)')
+    
+    parser.add_argument('--show-performance-stats',
+                       action='store_true',
+                       help='Mostra estatísticas detalhadas de performance durante o scan')
     
     # === SCANNER DE SUBDOMÍNIOS ===
     parser.add_argument('-ss', '--subdomain-scan',
@@ -666,7 +697,26 @@ def main():
             scanner.content_discovery = not args.no_content_discovery
             scanner.adaptive_delay = args.adaptive_delay
             
+            # Configura modo de performance
+            scanner.set_performance_mode(args.performance_mode, args.workers if args.workers != 50 else None)
+            
+            # Configura connection pool customizado se especificado
+            if args.connection_pool_size:
+                scanner.connection_pool_size = args.connection_pool_size
+            
+            # Configura exibição de stats de performance
+            scanner.show_performance_stats = args.show_performance_stats
+            
+            # Verifica GPU (informacional apenas)
             if args.verbose:
+                gpu_available, gpu_info = scanner._check_gpu_acceleration()
+                if gpu_available:
+                    console.print(f"[*] GPU Info: {gpu_info}")
+            
+            if args.verbose:
+                console.print(f"[*] Modo de performance: {args.performance_mode}")
+                console.print(f"[*] Workers: {scanner.workers} {'(auto-ajustado)' if scanner.max_workers_auto else ''}")
+                console.print(f"[*] Connection pool: {scanner.connection_pool_size}")
                 console.print(f"[*] Métodos HTTP: {', '.join(scanner.http_methods)}")
                 if scanner.include_status_codes:
                     console.print(f"[*] Incluir status: {', '.join(map(str, scanner.include_status_codes))}")

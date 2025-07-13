@@ -7,3 +7,4 @@ beautifulsoup4
 python-whois
 pyOpenSSL
 selenium
+pyopencl

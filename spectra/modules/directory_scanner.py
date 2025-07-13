@@ -76,17 +76,82 @@ class AdvancedDirectoryScanner:
         self.false_positives_filtered = 0
         self.rate_limited_count = 0
         
+        # Performance e otimizações
+        self.connection_pool_size = min(workers * 2, 100)  # Pool de conexões
+        self.max_workers_auto = False  # Auto-ajuste de workers baseado em CPU
+        self.performance_mode = 'balanced'  # balanced, fast, aggressive
+        self.gpu_accelerated = False  # Placeholder para futuro suporte GPU
+        
+        # Auto-ajuste de workers baseado em hardware se não especificado
+        if workers == 30 and not hasattr(self, '_workers_manually_set'):
+            import multiprocessing
+            cpu_count = multiprocessing.cpu_count()
+            # Fórmula otimizada: 4-6x CPUs para I/O bound tasks
+            optimal_workers = min(max(cpu_count * 5, 50), 200)
+            self.workers = optimal_workers
+            self.max_workers_auto = True
+            
         logger.info(f"Scanner de diretórios inicializado para {base_url}")
+        if self.max_workers_auto:
+            logger.info(f"Auto-ajuste de workers: {self.workers} (baseado em {cpu_count} CPUs)")
         
     def _setup_session(self):
-        """Configura sessão HTTP otimizada para directory discovery."""
+        """Configura sessão HTTP otimizada para directory discovery com connection pooling."""
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
+        
         self.session = create_session(timeout=self.timeout)
+        
+        # Configuração de connection pooling otimizada
+        try:
+            # Tenta versão mais nova do urllib3 (>= 1.26.0)
+            retry_strategy = Retry(
+                total=self.retries,
+                backoff_factor=0.1,
+                status_forcelist=[429, 500, 502, 503, 504],
+                allowed_methods=["HEAD", "GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"]
+            )
+        except TypeError:
+            # Fallback para versão mais antiga (< 1.26.0)
+            retry_strategy = Retry(
+                total=self.retries,
+                backoff_factor=0.1,
+                status_forcelist=[429, 500, 502, 503, 504],
+                method_whitelist=["HEAD", "GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"]
+            )
+        
+        # Adapter com connection pooling otimizado
+        adapter = HTTPAdapter(
+            pool_connections=min(self.workers, 20),  # Número de pools
+            pool_maxsize=self.connection_pool_size,   # Conexões por pool
+            max_retries=retry_strategy,
+            pool_block=False  # Não bloqueia se pool estiver cheio
+        )
+        
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
+        
+        # Otimizações de performance
+        self.session.headers.update({
+            'Connection': 'keep-alive',
+            'Accept-Encoding': 'gzip, deflate',
+            'User-Agent': self._get_performance_user_agent()
+        })
         
         # Headers para bypass de WAF se detectado
         if self.waf_detected:
             self.session.headers.update(self._get_waf_bypass_headers())
         
-        logger.debug("Sessão HTTP configurada")
+        logger.debug(f"Sessão HTTP configurada com pool size: {self.connection_pool_size}")
+    
+    def _get_performance_user_agent(self):
+        """Retorna User-Agent otimizado baseado no modo de performance."""
+        agents = {
+            'fast': 'Spectra-DirectoryScanner/3.3.0 (Fast Mode)',
+            'balanced': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'aggressive': 'Spectra-Aggressive-Scanner/3.3.0'
+        }
+        return agents.get(self.performance_mode, agents['balanced'])
         
     def _get_waf_bypass_headers(self):
         """Headers para bypass de WAF."""
@@ -196,6 +261,102 @@ class AdvancedDirectoryScanner:
         ]
         
         return any(waf_indicators)
+    
+    def set_performance_mode(self, mode='balanced', custom_workers=None):
+        """
+        Configura modo de performance do scanner.
+        
+        Args:
+            mode (str): 'fast', 'balanced', 'aggressive'
+            custom_workers (int): Número customizado de workers (sobrescreve auto)
+        """
+        self.performance_mode = mode
+        
+        if custom_workers:
+            self.workers = custom_workers
+            self._workers_manually_set = True
+            self.max_workers_auto = False
+        
+        # Configurações baseadas no modo
+        if mode == 'fast':
+            if not custom_workers:
+                import multiprocessing
+                self.workers = min(multiprocessing.cpu_count() * 8, 300)
+            self.timeout = max(self.timeout * 0.7, 3)  # Timeout mais agressivo
+            self.retries = max(self.retries - 1, 1)
+            self.stealth_mode = False
+            
+        elif mode == 'aggressive':
+            if not custom_workers:
+                import multiprocessing  
+                self.workers = min(multiprocessing.cpu_count() * 10, 500)
+            self.timeout = max(self.timeout * 0.5, 2)  # Timeout muito agressivo
+            self.retries = 1  # Sem retry para máxima velocidade
+            self.stealth_mode = False
+            self.adaptive_delay = False
+            
+        elif mode == 'balanced':
+            # Mantém configurações padrão
+            pass
+        
+        # Atualiza connection pool
+        self.connection_pool_size = min(self.workers * 2, 200)
+        
+        logger.info(f"Modo de performance configurado: {mode} (workers: {self.workers})")
+    
+    def _check_gpu_acceleration(self):
+        """
+        Verifica disponibilidade de aceleração GPU para HTTP requests.
+        NOTA: Funcionalidade experimental - HTTP requests são I/O bound, 
+        não CPU bound, então GPU traz benefícios limitados.
+        """
+        gpu_available = False
+        gpu_info = "GPU acceleration não disponível"
+        
+        try:
+            # Verifica CUDA (NVIDIA)
+            import subprocess
+            result = subprocess.run(['nvidia-smi'], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                gpu_info = "NVIDIA GPU detectada (uso limitado para HTTP I/O)"
+                gpu_available = True
+        except:
+            pass
+        
+        try:
+            # Verifica OpenCL (AMD/Intel)
+            import pyopencl as cl
+            platforms = cl.get_platforms()
+            if platforms:
+                gpu_info += " | OpenCL disponível"
+                gpu_available = True
+        except:
+            pass
+        
+        # HTTP requests são I/O bound - GPU não oferece vantagens significativas
+        # Melhor focar em: connection pooling, async requests, threading otimizado
+        self.gpu_accelerated = False  # Mantém False por design
+        
+        logger.debug(f"Análise GPU: {gpu_info}")
+        return gpu_available, gpu_info
+    
+    def get_performance_stats(self):
+        """Retorna estatísticas de performance atual."""
+        import threading
+        active_threads = threading.active_count()
+        
+        return {
+            'workers_configured': self.workers,
+            'workers_auto_adjusted': self.max_workers_auto,
+            'connection_pool_size': self.connection_pool_size,
+            'performance_mode': self.performance_mode,
+            'active_threads': active_threads,
+            'requests_made': self.requests_made,
+            'rate_limited_count': self.rate_limited_count,
+            'false_positives_filtered': self.false_positives_filtered,
+            'current_delay': self.current_delay,
+            'adaptive_delay_enabled': self.adaptive_delay
+        }
     
     def _make_request(self, url, method='GET'):
         """Faz requisição com retry logic, rate limiting inteligente e múltiplos métodos."""
@@ -643,7 +804,7 @@ class AdvancedDirectoryScanner:
         self.stealth_mode = stealth
         
         console.print("-" * 60)
-        console.print(f"[*] Scanner Avançado de Diretórios - Spectra")
+        console.print(f"[*] Scanner Avançado de Diretórios - Spectra v3.3.0")
         console.print(f"[*] Alvo: [bold cyan]{self.base_url}[/bold cyan]")
         console.print(f"[*] Wordlist: [bold cyan]{self.wordlist_path}[/bold cyan]")
         console.print(f"[*] Workers: [bold cyan]{self.workers}[/bold cyan]")
@@ -685,6 +846,10 @@ class AdvancedDirectoryScanner:
         console.print(f"    • {self.requests_made} requisições realizadas")
         console.print(f"    • {self.false_positives_filtered} falsos positivos filtrados")
         console.print(f"    • {len(self.errors)} erros encontrados")
+        
+        # Estatísticas de performance se solicitado
+        if hasattr(self, 'show_performance_stats') and self.show_performance_stats:
+            self._display_performance_stats()
         
         if self.errors:
             console.print(f"[bold yellow][!] Primeiros 5 erros:[/bold yellow]")
@@ -813,6 +978,57 @@ class AdvancedDirectoryScanner:
                 results.extend(recursive_results)
         
         return results
+    
+    def _display_performance_stats(self):
+        """Exibe estatísticas detalhadas de performance."""
+        stats = self.get_performance_stats()
+        
+        console.print("\n[bold cyan]📊 Estatísticas de Performance:[/bold cyan]")
+        console.print(f"    • Workers configurados: {stats['workers_configured']} {'(auto-ajustado)' if stats['workers_auto_adjusted'] else ''}")
+        console.print(f"    • Connection pool size: {stats['connection_pool_size']}")
+        console.print(f"    • Modo de performance: {stats['performance_mode']}")
+        console.print(f"    • Threads ativas: {stats['active_threads']}")
+        console.print(f"    • Rate limiting: {stats['rate_limited_count']} eventos")
+        console.print(f"    • Delay atual: {stats['current_delay']:.3f}s")
+        
+        # Calcula taxa de sucesso
+        if stats['requests_made'] > 0:
+            success_rate = ((stats['requests_made'] - len(self.errors)) / stats['requests_made']) * 100
+            console.print(f"    • Taxa de sucesso: {success_rate:.1f}%")
+        
+        # Performance score
+        performance_score = self._calculate_performance_score(stats)
+        color = "green" if performance_score >= 80 else "yellow" if performance_score >= 60 else "red"
+        console.print(f"    • Score de performance: [{color}]{performance_score}/100[/{color}]")
+    
+    def _calculate_performance_score(self, stats):
+        """Calcula score de performance baseado em métricas."""
+        score = 100
+        
+        # Penaliza por rate limiting excessivo
+        if stats['requests_made'] > 0:
+            rate_limit_ratio = stats['rate_limited_count'] / stats['requests_made']
+            if rate_limit_ratio > 0.1:  # Mais de 10% rate limited
+                score -= min(rate_limit_ratio * 100, 30)
+        
+        # Penaliza por muitos erros
+        if stats['requests_made'] > 0:
+            error_ratio = len(self.errors) / stats['requests_made'] 
+            if error_ratio > 0.05:  # Mais de 5% de erros
+                score -= min(error_ratio * 100, 25)
+        
+        # Penaliza por delay muito alto
+        if stats['current_delay'] > 1.0:
+            score -= min(stats['current_delay'] * 10, 20)
+        
+        # Bônus por workers bem configurados
+        import multiprocessing
+        cpu_count = multiprocessing.cpu_count()
+        optimal_range = range(cpu_count * 3, cpu_count * 8)
+        if stats['workers_configured'] in optimal_range:
+            score += 5
+        
+        return max(int(score), 0)
     
     def _display_results(self, output_format='table'):
         """Exibe resultados em diferentes formatos."""
