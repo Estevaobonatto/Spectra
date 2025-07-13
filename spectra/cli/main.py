@@ -12,6 +12,7 @@ from ..modules.banner_grabber import BannerGrabber
 from ..modules.directory_scanner import advanced_directory_scan
 from ..modules.metadata_extractor import extract_metadata
 from ..modules.subdomain_scanner import discover_subdomains
+from ..modules.advanced_subdomain_scanner import discover_subdomains_advanced
 from ..modules.dns_analyzer import query_dns
 from ..modules.whois_analyzer import get_whois_info
 from ..modules.waf_detector import detect_waf
@@ -85,6 +86,23 @@ Exemplos de uso:
     parser.add_argument('-ss', '--subdomain-scan',
                        metavar='DOMAIN',
                        help='Executa scan de subdomínios no domínio especificado')
+    
+    parser.add_argument('--advanced-subdomain',
+                       action='store_true',
+                       help='Usar scanner avançado (Certificate Transparency, passive sources, permutations)')
+    
+    parser.add_argument('--passive-only',
+                       action='store_true',
+                       help='Apenas descoberta passiva (sem bruteforce DNS)')
+    
+    parser.add_argument('--verify-takeover',
+                       action='store_true',
+                       help='Verificar subdomain takeover vulnerabilities')
+    
+    parser.add_argument('--max-concurrent',
+                       type=int,
+                       default=1000,
+                       help='Máximo de queries DNS concorrentes (padrão: 1000)')
     
     # === ANÁLISE DNS ===
     parser.add_argument('-dns', '--dns-query',
@@ -492,17 +510,42 @@ def main():
         
         # === SCANNER DE SUBDOMÍNIOS ===
         elif args.subdomain_scan:
-            if not args.wordlist:
-                print_error("Wordlist é obrigatória para subdomain scan")
-                sys.exit(1)
-            
             print_info(f"Iniciando scan de subdomínios em: {args.subdomain_scan}")
             
-            results = discover_subdomains(
-                domain=args.subdomain_scan,
-                wordlist_path=args.wordlist,
-                workers=args.workers
-            )
+            if args.advanced_subdomain:
+                # Scanner avançado - assíncrono
+                import asyncio
+                
+                enable_passive = True
+                enable_permutations = not args.passive_only
+                enable_bruteforce = not args.passive_only and args.wordlist
+                
+                if args.passive_only:
+                    print_info("Modo passivo ativado - usando Certificate Transparency e passive sources")
+                else:
+                    if not args.wordlist:
+                        print_error("Wordlist é obrigatória para bruteforce DNS (use --passive-only para modo passivo)")
+                        sys.exit(1)
+                
+                results = asyncio.run(discover_subdomains_advanced(
+                    domain=args.subdomain_scan,
+                    wordlist_path=args.wordlist if enable_bruteforce else None,
+                    max_concurrent=args.max_concurrent,
+                    enable_passive=enable_passive,
+                    enable_permutations=enable_permutations,
+                    verify_takeover=args.verify_takeover
+                ))
+            else:
+                # Scanner tradicional
+                if not args.wordlist:
+                    print_error("Wordlist é obrigatória para subdomain scan (use --advanced-subdomain --passive-only para modo passivo)")
+                    sys.exit(1)
+                
+                results = discover_subdomains(
+                    domain=args.subdomain_scan,
+                    wordlist_path=args.wordlist,
+                    workers=args.workers
+                )
         
         # === ANÁLISE DNS ===
         elif args.dns_query:
