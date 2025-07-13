@@ -67,13 +67,17 @@ class XSSScanner:
         self.test_file_upload = True  # Testa XSS via file upload
         self.parallel_testing = True  # Ativa testes paralelos
         self.max_workers = 5  # Número máximo de threads paralelas
+        # Thread safety locks
         self.results_lock = threading.Lock()  # Lock para thread safety
+        self.stats_lock = threading.Lock()  # Lock para estatísticas
+        self.cache_lock = threading.Lock()  # Lock para cache
         
-        # Sistema de cache para evitar testes duplicados
-        self.tested_parameters = set()  # Cache de parâmetros já testados
+        # Sistema de cache para evitar testes duplicados com TTL
+        self.tested_parameters = {}  # Cache de parâmetros já testados com timestamp
         self.false_positive_cache = set()  # Cache de falsos positivos conhecidos
+        self.cache_ttl = 3600  # TTL de 1 hora para cache
         
-        # Estatísticas de scan
+        # Estatísticas de scan (thread-safe)
         self.stats = {
             'total_requests': 0,
             'reflected_params': 0,
@@ -83,12 +87,21 @@ class XSSScanner:
             'waf_detected': False,
             'scan_start_time': time.time(),
             'vulnerabilities_found': 0,  # Contador de vulnerabilidades para exibição limpa
-            'last_vuln_count': 0  # Para detectar mudanças
+            'last_vuln_count': 0,  # Para detectar mudanças
+            'error_rate': 0.0,  # Taxa de erro para rate limiting adaptativo
+            'last_error_check': time.time()
         }
+        
+        # Rate limiting adaptativo
+        self.current_delay = 0.1  # Delay inicial
+        self.min_delay = 0.05
+        self.max_delay = 5.0
+        self.error_threshold = 0.3  # 30% de erro para aumentar delay
         
         # Driver Selenium (será inicializado quando necessário)
         self.driver = None
         self.headless_mode = True
+        self._selenium_initialized = False
         
         self.logger = get_logger(__name__)
 
@@ -98,18 +111,46 @@ class XSSScanner:
         
         if custom_payloads_file:
             try:
-                with open(custom_payloads_file, 'r', errors='ignore') as f:
-                    custom_list = [line.strip() for line in f if line.strip()]
+                # Validar se o caminho é seguro
+                import os
+                if not os.path.isfile(custom_payloads_file):
+                    print_error(f"O ficheiro de payloads '{custom_payloads_file}' não foi encontrado. Usando payloads padrão.")
+                    return default_payloads
+                
+                # Verificar tamanho do arquivo (limite de 10MB)
+                if os.path.getsize(custom_payloads_file) > 10 * 1024 * 1024:
+                    print_error(f"O ficheiro de payloads '{custom_payloads_file}' é muito grande (>10MB). Usando payloads padrão.")
+                    return default_payloads
+                
+                with open(custom_payloads_file, 'r', encoding='utf-8', errors='ignore') as f:
+                    custom_list = []
+                    line_count = 0
+                    for line in f:
+                        line_count += 1
+                        if line_count > 10000:  # Limite de 10000 linhas
+                            print_warning(f"Ficheiro de payloads truncado em 10000 linhas por segurança.")
+                            break
+                        
+                        line = line.strip()
+                        if line and len(line) <= 1000:  # Limite de 1000 chars por payload
+                            custom_list.append(line)
+                    
                     if not custom_list:
-                        print_warning(f"O ficheiro de payloads '{custom_payloads_file}' está vazio. Usando payloads padrão.")
+                        print_warning(f"O ficheiro de payloads '{custom_payloads_file}' está vazio ou não contém payloads válidos. Usando payloads padrão.")
                         return default_payloads
+                    
                     print_info(f"Carregados [bold cyan]{len(custom_list)}[/bold cyan] payloads customizados de '{custom_payloads_file}'.")
                     
                     # Adiciona payloads customizados à categoria 'custom'
                     default_payloads['custom'] = custom_list
                     return default_payloads
-            except FileNotFoundError:
-                print_error(f"O ficheiro de payloads '{custom_payloads_file}' não foi encontrado. Usando payloads padrão.")
+                    
+            except (FileNotFoundError, PermissionError, OSError) as e:
+                print_error(f"Erro ao carregar ficheiro de payloads '{custom_payloads_file}': {e}. Usando payloads padrão.")
+                return default_payloads
+            except Exception as e:
+                self.logger.error(f"Erro inesperado ao carregar payloads: {e}")
+                print_error(f"Erro inesperado ao carregar payloads. Usando payloads padrão.")
                 return default_payloads
         
         # Converte dict para lista plana para compatibilidade com código existente
@@ -512,6 +553,51 @@ class XSSScanner:
             validation_score -= 2
             
         return validation_score >= 2
+    
+    def _update_stats_thread_safe(self, key, increment=1):
+        """Atualiza estatísticas de forma thread-safe."""
+        with self.stats_lock:
+            if key in self.stats:
+                if isinstance(self.stats[key], (int, float)):
+                    self.stats[key] += increment
+                else:
+                    self.stats[key] = increment
+    
+    def _update_error_rate(self, is_error=False):
+        """Atualiza taxa de erro para rate limiting adaptativo."""
+        with self.stats_lock:
+            current_time = time.time()
+            
+            # Calcula janela de tempo de 60 segundos
+            if current_time - self.stats['last_error_check'] >= 60:
+                self.stats['error_rate'] = 0.0
+                self.stats['last_error_check'] = current_time
+            
+            if is_error:
+                self.stats['error_rate'] = min(1.0, self.stats['error_rate'] + 0.1)
+            else:
+                self.stats['error_rate'] = max(0.0, self.stats['error_rate'] - 0.05)
+    
+    def _adaptive_delay(self, waf_detected=False):
+        """Calcula delay adaptativo baseado na taxa de erro e detecção de WAF."""
+        with self.stats_lock:
+            error_rate = self.stats['error_rate']
+        
+        # Base delay baseado em WAF
+        if waf_detected:
+            base_delay = 1.0
+        else:
+            base_delay = 0.1
+        
+        # Ajusta baseado na taxa de erro
+        if error_rate > self.error_threshold:
+            # Aumenta delay exponencialmente
+            self.current_delay = min(self.max_delay, self.current_delay * 1.5)
+        elif error_rate < 0.1:
+            # Diminui delay gradualmente
+            self.current_delay = max(self.min_delay, self.current_delay * 0.9)
+        
+        return max(base_delay, self.current_delay)
 
     def _add_finding(self, risk, v_type, detail, recommendation):
         """Adiciona ou atualiza uma descoberta, priorizando XSS Armazenado. Thread-safe."""
@@ -566,18 +652,17 @@ class XSSScanner:
         
         try:
             if method.lower() == 'get':
-                response = self.session.get(url, params=test_data, timeout=7, verify=False)
+                response = self.session.get(url, params=test_data, timeout=7, verify=True)
             else:
                 post_payload = (form_data or {}).copy()
                 post_payload[param] = test_payload
-                response = self.session.post(url, data=post_payload, timeout=7, verify=False)
+                response = self.session.post(url, data=post_payload, timeout=7, verify=True)
             
-            with self.results_lock:
-                self.stats['total_requests'] += 1
+            self._update_stats_thread_safe('total_requests', 1)
+            self._update_error_rate(False)  # Sucesso na requisição
             
             if test_payload in response.text:
-                with self.results_lock:
-                    self.stats['reflected_params'] += 1
+                self._update_stats_thread_safe('reflected_params', 1)
                 
                 # Análise de contexto
                 contexts = self._detect_context(response.text, test_payload)
@@ -596,14 +681,14 @@ class XSSScanner:
                     
                     try:
                         if method.lower() == 'get':
-                            variant_response = self.session.get(url, params=variant_test_data, timeout=7, verify=False)
+                            variant_response = self.session.get(url, params=variant_test_data, timeout=7, verify=True)
                         else:
                             post_variant = (form_data or {}).copy()
                             post_variant[param] = payload
-                            variant_response = self.session.post(url, data=post_variant, timeout=7, verify=False)
+                            variant_response = self.session.post(url, data=post_variant, timeout=7, verify=True)
                         
-                        with self.results_lock:
-                            self.stats['total_requests'] += 1
+                        self._update_stats_thread_safe('total_requests', 1)
+                        self._update_error_rate(False)
                         
                         if payload in variant_response.text:
                             # Verifica se é falso positivo
@@ -645,8 +730,12 @@ class XSSScanner:
                     except requests.RequestException:
                         continue
                         
-        except requests.RequestException:
-            pass
+        except requests.RequestException as e:
+            self._update_error_rate(True)
+            self.logger.debug(f"Erro na requisição principal: {e}")
+        except Exception as e:
+            self._update_error_rate(True)
+            self.logger.error(f"Erro inesperado no teste de parâmetro: {e}")
             
         return results
 
@@ -717,11 +806,11 @@ class XSSScanner:
             
             try:
                 if method.lower() == 'get':
-                    response = self.session.get(url, params=test_data, timeout=7, verify=False)
+                    response = self.session.get(url, params=test_data, timeout=7, verify=True)
                 else: # POST
                     post_payload = (form_data or {}).copy()
                     post_payload[param] = test_payload
-                    response = self.session.post(url, data=post_payload, timeout=7, verify=False)
+                    response = self.session.post(url, data=post_payload, timeout=7, verify=True)
 
                 # Analisa CSP
                 csp_info = self._analyze_csp(response)
@@ -737,11 +826,11 @@ class XSSScanner:
                             test_data_context = {param: payload}
                             try:
                                 if method.lower() == 'get':
-                                    context_response = self.session.get(url, params=test_data_context, timeout=7, verify=False)
+                                    context_response = self.session.get(url, params=test_data_context, timeout=7, verify=True)
                                 else:
                                     post_payload_context = (form_data or {}).copy()
                                     post_payload_context[param] = payload
-                                    context_response = self.session.post(url, data=post_payload_context, timeout=7, verify=False)
+                                    context_response = self.session.post(url, data=post_payload_context, timeout=7, verify=True)
                                 
                                 if payload in context_response.text:
                                     detail = f"Parâmetro '{param}' em {url} ({method.upper()})"
@@ -776,11 +865,11 @@ class XSSScanner:
                         test_data = {param: payload}
                         try:
                             if method.lower() == 'get':
-                                response = self.session.get(url, params=test_data, timeout=7, verify=False)
+                                response = self.session.get(url, params=test_data, timeout=7, verify=True)
                             else:
                                 post_payload = (form_data or {}).copy()
                                 post_payload[param] = payload
-                                response = self.session.post(url, data=post_payload, timeout=7, verify=False)
+                                response = self.session.post(url, data=post_payload, timeout=7, verify=True)
 
                             if payload in response.text:
                                 detail = f"Parâmetro '{param}' em {url} ({method.upper()})"
@@ -791,8 +880,9 @@ class XSSScanner:
                         except requests.RequestException:
                             continue
                             
-            except requests.RequestException:
-                pass
+            except requests.RequestException as e:
+                self._update_error_rate(True)
+                self.logger.debug(f"Erro na requisição: {e}")
         progress.remove_task(task_id)
 
     def _scan_reflected_advanced(self, tasks, progress, waf_info):
@@ -810,11 +900,11 @@ class XSSScanner:
             
             try:
                 if method.lower() == 'get':
-                    response = self.session.get(url, params=test_data, timeout=7, verify=False)
+                    response = self.session.get(url, params=test_data, timeout=7, verify=True)
                 else:
                     post_payload = (form_data or {}).copy()
                     post_payload[param] = test_payload
-                    response = self.session.post(url, data=post_payload, timeout=7, verify=False)
+                    response = self.session.post(url, data=post_payload, timeout=7, verify=True)
                 
                 self.stats['total_requests'] += 1
                 
@@ -871,11 +961,11 @@ class XSSScanner:
                             
                             try:
                                 if method.lower() == 'get':
-                                    variant_response = self.session.get(url, params=test_data_variant, timeout=7, verify=False)
+                                    variant_response = self.session.get(url, params=test_data_variant, timeout=7, verify=True)
                                 else:
                                     post_payload_variant = (form_data or {}).copy()
                                     post_payload_variant[param] = variant
-                                    variant_response = self.session.post(url, data=post_payload_variant, timeout=7, verify=False)
+                                    variant_response = self.session.post(url, data=post_payload_variant, timeout=7, verify=True)
                                 
                                 self.stats['total_requests'] += 1
                                 
@@ -1040,7 +1130,7 @@ class XSSScanner:
                     test_data[field_name] = payload
                     
                     try:
-                        self.session.post(action, data=test_data, timeout=7, verify=False)
+                        self.session.post(action, data=test_data, timeout=7, verify=True)
                     except requests.RequestException:
                         continue
         
@@ -1061,7 +1151,7 @@ class XSSScanner:
             progress.update(crawl_task, advance=1, description=f"Verificando {current_url[:60]}...")
 
             try:
-                response = self.session.get(current_url, timeout=7, verify=False)
+                response = self.session.get(current_url, timeout=7, verify=True)
                 soup = BeautifulSoup(response.content, 'html.parser', from_encoding=response.encoding)
                 page_text = soup.get_text()
 
@@ -1128,20 +1218,42 @@ class XSSScanner:
             self.logger.warning(f"Não foi possível inicializar Selenium: {e}")
             print_warning("Chrome/ChromeDriver não encontrado. DOM XSS verification desabilitado.")
             self.dom_verification = False
+            self._selenium_initialized = False
             return False
+        
+        self._selenium_initialized = True
+        return True
 
     def _cleanup_selenium(self):
-        """Limpa recursos do Selenium."""
+        """Limpa recursos do Selenium de forma segura."""
         if self.driver:
             try:
                 self.driver.quit()
-            except:
-                pass
-            self.driver = None
+            except Exception as e:
+                self.logger.debug(f"Erro ao fechar driver Selenium: {e}")
+            finally:
+                self.driver = None
+                self._selenium_initialized = False
+    
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - cleanup de recursos."""
+        self._cleanup_selenium()
+        if hasattr(self.session, 'close'):
+            try:
+                self.session.close()
+            except Exception as e:
+                self.logger.debug(f"Erro ao fechar session: {e}")
 
     def _detect_dom_xss(self, url, param, payload, progress=None):
         """Detecta DOM XSS usando Selenium."""
-        if not self.dom_verification or not self._init_selenium_driver():
+        if not self.dom_verification:
+            return False
+        
+        if not self._selenium_initialized and not self._init_selenium_driver():
             return False
 
         try:
@@ -1169,8 +1281,8 @@ class XSSScanner:
                 
                 if 'dom-xss-spectra' in alert_text or 'xss-test-spectra' in alert_text:
                     return True
-            except:
-                pass
+            except Exception as e:
+                self.logger.debug(f"Erro inesperado: {e}")
             
             # Verifica modificações no DOM
             dom_changes = self.driver.execute_script("""
@@ -1217,11 +1329,11 @@ class XSSScanner:
                 
                 try:
                     if method.lower() == 'get':
-                        response = self.session.get(url, params=test_data, timeout=7, verify=False)
+                        response = self.session.get(url, params=test_data, timeout=7, verify=True)
                     else:
                         post_payload = (form_data or {}).copy()
                         post_payload[param] = payload
-                        response = self.session.post(url, data=post_payload, timeout=7, verify=False)
+                        response = self.session.post(url, data=post_payload, timeout=7, verify=True)
                     
                     self.stats['total_requests'] += 1
                     
@@ -1267,7 +1379,7 @@ class XSSScanner:
                 headers = {header_name: payload}
                 
                 try:
-                    response = self.session.get(base_url, headers=headers, timeout=7, verify=False)
+                    response = self.session.get(base_url, headers=headers, timeout=7, verify=True)
                     self.stats['total_requests'] += 1
                     
                     # Verifica se o payload foi refletido na resposta
@@ -1351,7 +1463,7 @@ class XSSScanner:
                 try:
                     files = {field_name: (file_data['filename'], file_data['content'], file_data['content_type'])}
                     
-                    response = self.session.post(action, data=base_data, files=files, timeout=10, verify=False)
+                    response = self.session.post(action, data=base_data, files=files, timeout=10, verify=True)
                     self.stats['total_requests'] += 1
                     
                     # Verifica se o conteúdo malicioso foi refletido
@@ -1430,7 +1542,8 @@ class XSSScanner:
                                 except asyncio.TimeoutError:
                                     continue
                                     
-                    except Exception:
+                    except Exception as e:
+                        self.logger.debug(f"Erro no WebSocket: {e}")
                         return False
                     return False
                 
@@ -1438,7 +1551,8 @@ class XSSScanner:
                 if loop.run_until_complete(test_websocket()):
                     break
                     
-            except Exception:
+            except Exception as e:
+                self.logger.debug(f"Erro no WebSocket test: {e}")
                 continue
             finally:
                 loop.close()
@@ -1485,7 +1599,7 @@ class XSSScanner:
                     }
                     
                     # Testa POST JSON
-                    response = self.session.post(endpoint, data=payload, headers=headers, timeout=7, verify=False)
+                    response = self.session.post(endpoint, data=payload, headers=headers, timeout=7, verify=True)
                     self.stats['total_requests'] += 1
                     
                     # Verifica se o payload foi refletido na resposta
@@ -1503,7 +1617,7 @@ class XSSScanner:
                     try:
                         import json
                         payload_dict = json.loads(payload)
-                        response = self.session.get(endpoint, params=payload_dict, timeout=7, verify=False)
+                        response = self.session.get(endpoint, params=payload_dict, timeout=7, verify=True)
                         self.stats['total_requests'] += 1
                         
                         if 'api-xss-spectra' in response.text:
@@ -1593,9 +1707,9 @@ class XSSScanner:
             # Primeiro, detecta o template engine
             try:
                 if method.lower() == 'get':
-                    detect_response = self.session.get(url, timeout=7, verify=False)
+                    detect_response = self.session.get(url, timeout=7, verify=True)
                 else:
-                    detect_response = self.session.post(url, data=(form_data or {}), timeout=7, verify=False)
+                    detect_response = self.session.post(url, data=(form_data or {}), timeout=7, verify=True)
                 
                 detected_engines = self._detect_template_engine(detect_response.text)
                 
@@ -1618,11 +1732,11 @@ class XSSScanner:
                     
                     try:
                         if method.lower() == 'get':
-                            response = self.session.get(url, params=test_data, timeout=7, verify=False)
+                            response = self.session.get(url, params=test_data, timeout=7, verify=True)
                         else:
                             post_payload = (form_data or {}).copy()
                             post_payload[param] = payload
-                            response = self.session.post(url, data=post_payload, timeout=7, verify=False)
+                            response = self.session.post(url, data=post_payload, timeout=7, verify=True)
                         
                         self.stats['total_requests'] += 1
                         
@@ -1786,8 +1900,8 @@ class XSSScanner:
         
         try:
             # Primeira requisição para análise inicial
-            response = self.session.get(self.base_url, timeout=10, verify=False)
-            self.stats['total_requests'] += 1
+            response = self.session.get(self.base_url, timeout=10, verify=True)
+            self._update_stats_thread_safe('total_requests', 1)
             
             # Análise inicial de WAF
             waf_info = self._waf_fingerprint(response)
@@ -1973,6 +2087,7 @@ class XSSScanner:
             
         except Exception as e:
             # Fallback simples caso haja erro na formatação
+            self.logger.debug(f"Erro na formatação de estatisticas: {e}")
             print_info(f"Scan concluído em {scan_duration:.2f}s")
             print_info(f"Vulnerabilidades encontradas: {len(self.vulnerable_points)}")
             print_info(f"URLs testadas: {self.stats.get('urls_tested', 0)}")
