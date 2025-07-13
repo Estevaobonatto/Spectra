@@ -52,6 +52,355 @@ except ImportError:
 logger = get_logger(__name__)
 
 
+class RainbowTableManager:
+    """Gerenciador de Rainbow Tables para lookup rápido de hashes."""
+    
+    def __init__(self, table_dir=None):
+        """
+        Inicializa o gerenciador de Rainbow Tables.
+        
+        Args:
+            table_dir (str): Diretório onde armazenar/buscar rainbow tables
+        """
+        self.table_dir = table_dir or os.path.join(os.path.dirname(__file__), '..', 'data', 'rainbow_tables')
+        self.loaded_tables = {}
+        self.chain_length = 2100  # Otimizado para balance time/space
+        self.table_size = 1000000  # 1M chains por table
+        
+        # Ensure directory exists
+        os.makedirs(self.table_dir, exist_ok=True)
+        
+        logger.info(f"Rainbow Table Manager inicializado: {self.table_dir}")
+    
+    def generate_rainbow_table(self, hash_type='md5', charset=None, min_length=1, max_length=8, table_name=None):
+        """
+        Gera uma nova rainbow table.
+        
+        Args:
+            hash_type (str): Tipo de hash (md5, sha1, etc)
+            charset (str): Conjunto de caracteres 
+            min_length (int): Comprimento mínimo de senha
+            max_length (int): Comprimento máximo de senha
+            table_name (str): Nome da tabela (auto-gerado se None)
+            
+        Returns:
+            str: Caminho da tabela gerada
+        """
+        charset = charset or (string.ascii_lowercase + string.digits)
+        table_name = table_name or f"{hash_type}_{min_length}_{max_length}_{len(charset)}chars"
+        table_path = os.path.join(self.table_dir, f"{table_name}.rt")
+        
+        console.print(f"[*] Gerando Rainbow Table: {table_name}")
+        console.print(f"[*] Hash: {hash_type} | Charset: {charset[:20]}{'...' if len(charset) > 20 else ''}")
+        console.print(f"[*] Tamanho: {min_length}-{max_length} chars | Chains: {self.table_size:,}")
+        
+        # Calcula keyspace total
+        total_keyspace = sum(len(charset) ** length for length in range(min_length, max_length + 1))
+        console.print(f"[*] Keyspace total: {total_keyspace:,}")
+        
+        if total_keyspace > self.table_size * self.chain_length:
+            coverage = (self.table_size * self.chain_length / total_keyspace) * 100
+            console.print(f"[yellow][!] Cobertura estimada: {coverage:.1f}%[/yellow]")
+        
+        start_time = time.time()
+        chains_generated = 0
+        
+        with open(table_path, 'w', encoding='utf-8') as f:
+            # Header da tabela
+            f.write(f"# Rainbow Table - Spectra\n")
+            f.write(f"# Hash: {hash_type}\n")
+            f.write(f"# Charset: {charset}\n")
+            f.write(f"# Length: {min_length}-{max_length}\n")
+            f.write(f"# Chain Length: {self.chain_length}\n")
+            f.write(f"# Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("# Format: start_password,end_hash\n")
+            f.write("---\n")
+            
+            for _ in range(self.table_size):
+                # Gera chain starting point aleatório
+                start_password = self._generate_random_password(charset, min_length, max_length)
+                end_hash = self._generate_chain(start_password, hash_type, charset, min_length, max_length)
+                
+                f.write(f"{start_password},{end_hash}\n")
+                chains_generated += 1
+                
+                # Progress update
+                if chains_generated % 10000 == 0:
+                    elapsed = time.time() - start_time
+                    rate = chains_generated / elapsed
+                    progress = (chains_generated / self.table_size) * 100
+                    eta = (self.table_size - chains_generated) / rate if rate > 0 else 0
+                    console.print(f"\r[*] Progresso: {progress:.1f}% - {chains_generated:,} chains - {rate:.0f} chains/s - ETA: {eta:.0f}s", end="")
+        
+        elapsed = time.time() - start_time
+        console.print(f"\n[bold green][+] Rainbow Table gerada: {table_path}[/bold green]")
+        console.print(f"[*] Tempo: {elapsed:.2f}s | Taxa: {chains_generated/elapsed:.0f} chains/s")
+        console.print(f"[*] Tamanho: {os.path.getsize(table_path) / (1024**2):.1f} MB")
+        
+        return table_path
+    
+    def _generate_random_password(self, charset, min_length, max_length):
+        """Gera senha aleatória dentro dos parâmetros."""
+        import random
+        length = random.randint(min_length, max_length)
+        return ''.join(random.choice(charset) for _ in range(length))
+    
+    def _generate_chain(self, start_password, hash_type, charset, min_length, max_length):
+        """
+        Gera uma chain rainbow: password -> hash -> reduce -> password -> hash -> ...
+        
+        Returns:
+            str: Hash final da chain
+        """
+        current = start_password
+        
+        for i in range(self.chain_length):
+            # Hash step
+            current_hash = self._compute_hash(current, hash_type)
+            
+            # Reduction step (converte hash em password para próxima iteração)
+            if i < self.chain_length - 1:  # Não faz reduction no último
+                current = self._reduce_hash(current_hash, charset, min_length, max_length, i)
+            else:
+                return current_hash
+        
+        return current_hash
+    
+    def _compute_hash(self, password, hash_type):
+        """Computa hash usando algoritmo especificado."""
+        if hash_type == 'md5':
+            return hashlib.md5(password.encode('utf-8')).hexdigest()
+        elif hash_type == 'sha1':
+            return hashlib.sha1(password.encode('utf-8')).hexdigest()
+        elif hash_type == 'sha256':
+            return hashlib.sha256(password.encode('utf-8')).hexdigest()
+        elif hash_type == 'sha512':
+            return hashlib.sha512(password.encode('utf-8')).hexdigest()
+        else:
+            return hashlib.md5(password.encode('utf-8')).hexdigest()
+    
+    def _reduce_hash(self, hash_hex, charset, min_length, max_length, position):
+        """
+        Função de redução: converte hash em password.
+        Position evita rainbow table collisions.
+        """
+        # Converte hex para número
+        hash_num = int(hash_hex[:16], 16)  # Usa primeiros 16 chars
+        
+        # Adiciona position para evitar collisions
+        hash_num = (hash_num + position) % (2**64 - 1)
+        
+        # Determina comprimento da senha
+        length = min_length + (hash_num % (max_length - min_length + 1))
+        
+        # Converte para senha usando charset
+        password = ""
+        for _ in range(length):
+            password += charset[hash_num % len(charset)]
+            hash_num //= len(charset)
+        
+        return password
+    
+    def load_rainbow_table(self, table_path):
+        """
+        Carrega rainbow table na memória para lookup rápido.
+        
+        Args:
+            table_path (str): Caminho para arquivo .rt
+            
+        Returns:
+            dict: Tabela carregada {end_hash: start_password}
+        """
+        if table_path in self.loaded_tables:
+            return self.loaded_tables[table_path]
+        
+        console.print(f"[*] Carregando Rainbow Table: {os.path.basename(table_path)}")
+        start_time = time.time()
+        
+        table = {}
+        chain_count = 0
+        
+        try:
+            with open(table_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith('#') or line == '---' or not line:
+                        continue
+                    
+                    if ',' in line:
+                        start_password, end_hash = line.split(',', 1)
+                        table[end_hash] = start_password
+                        chain_count += 1
+                        
+                        if chain_count % 50000 == 0:
+                            console.print(f"\r[*] Carregando: {chain_count:,} chains", end="")
+            
+            elapsed = time.time() - start_time
+            self.loaded_tables[table_path] = table
+            
+            console.print(f"\n[bold green][+] Rainbow Table carregada: {chain_count:,} chains em {elapsed:.2f}s[/bold green]")
+            console.print(f"[*] Memória: {len(str(table)) / (1024**2):.1f} MB")
+            
+            return table
+            
+        except FileNotFoundError:
+            console.print(f"[red][!] Rainbow Table não encontrada: {table_path}[/red]")
+            return {}
+        except Exception as e:
+            console.print(f"[red][!] Erro ao carregar Rainbow Table: {e}[/red]")
+            return {}
+    
+    def rainbow_lookup(self, target_hash, table_path, hash_type='md5'):
+        """
+        Executa lookup de hash usando rainbow table.
+        
+        Args:
+            target_hash (str): Hash target para encontrar
+            table_path (str): Caminho da rainbow table
+            hash_type (str): Tipo de hash
+            
+        Returns:
+            str: Password encontrada ou None
+        """
+        table = self.load_rainbow_table(table_path)
+        if not table:
+            return None
+        
+        console.print(f"[*] Executando Rainbow Table lookup...")
+        start_time = time.time()
+        
+        # Extrai metadados da tabela
+        charset, min_length, max_length = self._parse_table_metadata(table_path)
+        
+        # Tenta lookup direto primeiro
+        if target_hash in table:
+            # Reconstruct chain para encontrar password exata
+            start_password = table[target_hash]
+            found_password = self._reconstruct_chain(start_password, target_hash, hash_type, charset, min_length, max_length)
+            
+            if found_password:
+                elapsed = time.time() - start_time
+                console.print(f"\n[bold green][+] SENHA ENCONTRADA (Rainbow Table): {found_password}[/bold green]")
+                console.print(f"[*] Tempo de lookup: {elapsed:.4f}s")
+                return found_password
+        
+        # Se não encontrou diretamente, tenta chain walking
+        for position in range(self.chain_length):
+            current_hash = target_hash
+            
+            # Walk backward na chain
+            for step in range(position):
+                reduced = self._reduce_hash(current_hash, charset, min_length, max_length, self.chain_length - 1 - step)
+                current_hash = self._compute_hash(reduced, hash_type)
+            
+            if current_hash in table:
+                # Reconstruct forward para encontrar password
+                start_password = table[current_hash] 
+                found_password = self._reconstruct_chain(start_password, target_hash, hash_type, charset, min_length, max_length)
+                
+                if found_password:
+                    elapsed = time.time() - start_time
+                    console.print(f"\n[bold green][+] SENHA ENCONTRADA (Rainbow Chain): {found_password}[/bold green]")
+                    console.print(f"[*] Tempo de lookup: {elapsed:.4f}s")
+                    return found_password
+        
+        elapsed = time.time() - start_time
+        console.print(f"\n[red][-] Hash não encontrado na Rainbow Table[/red]")
+        console.print(f"[*] Tempo de busca: {elapsed:.2f}s")
+        return None
+    
+    def _parse_table_metadata(self, table_path):
+        """Extrai metadados da rainbow table."""
+        charset = string.ascii_lowercase + string.digits  # Default
+        min_length, max_length = 1, 8  # Default
+        
+        try:
+            with open(table_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if line.startswith('# Charset:'):
+                        charset = line.split(':', 1)[1].strip()
+                    elif line.startswith('# Length:'):
+                        length_range = line.split(':', 1)[1].strip()
+                        if '-' in length_range:
+                            min_length, max_length = map(int, length_range.split('-'))
+                    elif line.startswith('---'):
+                        break
+        except:
+            pass
+        
+        return charset, min_length, max_length
+    
+    def _reconstruct_chain(self, start_password, target_hash, hash_type, charset, min_length, max_length):
+        """Reconstrói chain para encontrar password que gera target_hash."""
+        current = start_password
+        
+        for i in range(self.chain_length):
+            current_hash = self._compute_hash(current, hash_type)
+            
+            if current_hash == target_hash:
+                return current
+            
+            if i < self.chain_length - 1:
+                current = self._reduce_hash(current_hash, charset, min_length, max_length, i)
+        
+        return None
+    
+    def list_available_tables(self):
+        """Lista rainbow tables disponíveis."""
+        tables = []
+        
+        if os.path.exists(self.table_dir):
+            for file in os.listdir(self.table_dir):
+                if file.endswith('.rt'):
+                    file_path = os.path.join(self.table_dir, file)
+                    size_mb = os.path.getsize(file_path) / (1024**2)
+                    tables.append({
+                        'name': file,
+                        'path': file_path,
+                        'size_mb': size_mb
+                    })
+        
+        return tables
+    
+    def get_table_info(self, table_path):
+        """Obtém informações detalhadas sobre uma rainbow table."""
+        info = {'exists': False}
+        
+        if not os.path.exists(table_path):
+            return info
+        
+        info['exists'] = True
+        info['size_mb'] = os.path.getsize(table_path) / (1024**2)
+        info['hash_type'] = 'unknown'
+        info['charset'] = 'unknown'
+        info['length_range'] = 'unknown'
+        info['chain_count'] = 0
+        
+        try:
+            with open(table_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if line.startswith('# Hash:'):
+                        info['hash_type'] = line.split(':', 1)[1].strip()
+                    elif line.startswith('# Charset:'):
+                        info['charset'] = line.split(':', 1)[1].strip()
+                    elif line.startswith('# Length:'):
+                        info['length_range'] = line.split(':', 1)[1].strip()
+                    elif line.startswith('# Chain Length:'):
+                        info['chain_length'] = int(line.split(':', 1)[1].strip())
+                    elif line.startswith('---'):
+                        break
+                
+                # Conta chains
+                for line in f:
+                    if line.strip() and ',' in line:
+                        info['chain_count'] += 1
+                        
+        except Exception as e:
+            logger.error(f"Erro ao ler tabela {table_path}: {e}")
+        
+        return info
+
+
 class GPUManager:
     """Gerenciador de aceleração GPU para hash cracking."""
     
@@ -250,6 +599,9 @@ class AdvancedHashCracker:
         # GPU Manager
         self.gpu_manager = GPUManager() if use_gpu else None
         self.use_gpu = use_gpu and (self.gpu_manager.gpu_available if self.gpu_manager else False)
+        
+        # Rainbow Table Manager
+        self.rainbow_manager = RainbowTableManager()
         
         # Configurações de ataque
         self.wordlists = []
@@ -864,6 +1216,96 @@ class AdvancedHashCracker:
         console.print(f"\n[red][-] Senha não encontrada com máscara[/red]")
         return None, self.attempts, time_taken
     
+    def rainbow_table_attack(self, table_path=None, auto_generate=False):
+        """
+        Executa ataque usando Rainbow Tables.
+        
+        Args:
+            table_path (str): Caminho para rainbow table (auto se None)
+            auto_generate (bool): Gera tabela automaticamente se não existir
+            
+        Returns:
+            tuple: (password, attempts, time_taken)
+        """
+        console.print(f"[*] Iniciando ataque Rainbow Table")
+        self.attack_mode = 'rainbow'
+        self.start_time = time.time()
+        self.attempts = 0
+        
+        # Determina tabela a usar
+        if not table_path:
+            # Auto-select baseado no hash type
+            table_name = f"{self.hash_type}_1_6_36chars.rt"  # lowercase + digits, 1-6 chars
+            table_path = os.path.join(self.rainbow_manager.table_dir, table_name)
+        
+        # Verifica se tabela existe
+        if not os.path.exists(table_path):
+            if auto_generate:
+                console.print(f"[yellow][!] Rainbow Table não encontrada, gerando automaticamente...[/yellow]")
+                
+                # Gera tabela pequena para teste (ajustar para produção)
+                table_path = self.rainbow_manager.generate_rainbow_table(
+                    hash_type=self.hash_type,
+                    charset=string.ascii_lowercase + string.digits,
+                    min_length=1,
+                    max_length=6,
+                    table_name=f"{self.hash_type}_1_6_36chars"
+                )
+            else:
+                console.print(f"[red][!] Rainbow Table não encontrada: {table_path}[/red]")
+                console.print("[*] Use --rainbow-generate para gerar automaticamente")
+                return None, 0, 0
+        
+        # Info da tabela
+        table_info = self.rainbow_manager.get_table_info(table_path)
+        console.print(f"[*] Tabela: {table_info.get('hash_type', 'unknown')} | ")
+        console.print(f"    Charset: {table_info.get('charset', 'unknown')[:30]}{'...' if len(table_info.get('charset', '')) > 30 else ''}")
+        console.print(f"    Chains: {table_info.get('chain_count', 0):,} | Tamanho: {table_info.get('size_mb', 0):.1f} MB")
+        
+        # Executa lookup
+        password = self.rainbow_manager.rainbow_lookup(
+            target_hash=self.hash_target,
+            table_path=table_path,
+            hash_type=self.hash_type
+        )
+        
+        time_taken = time.time() - self.start_time
+        
+        if password:
+            self.cracked_password = password
+            console.print(f"[*] Tempo total: {time_taken:.2f}s")
+            return password, 1, time_taken  # 1 "attempt" para rainbow lookup
+        else:
+            console.print(f"[*] Tempo total: {time_taken:.2f}s")
+            return None, 1, time_taken
+    
+    def generate_rainbow_table(self, hash_type=None, charset=None, min_length=1, max_length=6, table_name=None):
+        """
+        Gera uma nova rainbow table.
+        
+        Args:
+            hash_type (str): Tipo de hash (usa self.hash_type se None)
+            charset (str): Conjunto de caracteres
+            min_length (int): Comprimento mínimo
+            max_length (int): Comprimento máximo
+            table_name (str): Nome da tabela
+            
+        Returns:
+            str: Caminho da tabela gerada
+        """
+        hash_type = hash_type or self.hash_type
+        charset = charset or (string.ascii_lowercase + string.digits)
+        
+        console.print(f"[*] Gerando Rainbow Table para {hash_type}")
+        
+        return self.rainbow_manager.generate_rainbow_table(
+            hash_type=hash_type,
+            charset=charset,
+            min_length=min_length,
+            max_length=max_length,
+            table_name=table_name
+        )
+    
     def _apply_rules(self, passwords, rules):
         """Aplica regras de transformação às senhas do dicionário."""
         transformed = set(passwords)  # Inclui originais
@@ -1025,7 +1467,8 @@ def crack_hash(hash_target, wordlist_path=None, hash_type=None, attack_mode='dic
     Returns:
         dict: Resultado do ataque
     """
-    cracker = AdvancedHashCracker(hash_target, hash_type)
+    use_gpu = kwargs.get('use_gpu', True)
+    cracker = AdvancedHashCracker(hash_target, hash_type, use_gpu=use_gpu)
     
     if attack_mode == 'dictionary' and wordlist_path:
         password, attempts, time_taken = cracker.dictionary_attack(wordlist_path)
@@ -1037,10 +1480,67 @@ def crack_hash(hash_target, wordlist_path=None, hash_type=None, attack_mode='dic
     elif attack_mode == 'mask':
         mask = kwargs.get('mask', '?l?l?l?l')
         password, attempts, time_taken = cracker.mask_attack(mask)
+    elif attack_mode == 'rainbow':
+        table_path = kwargs.get('rainbow_table', None)
+        auto_generate = kwargs.get('rainbow_generate', False)
+        password, attempts, time_taken = cracker.rainbow_table_attack(table_path, auto_generate)
     elif attack_mode == 'online':
         password = cracker.online_lookup()
         attempts = 0
         time_taken = 0
+    elif attack_mode == 'all':
+        # Tenta todos os métodos em ordem de eficiência
+        console.print("[*] Modo 'all': tentando todos os ataques disponíveis")
+        
+        # 1. Rainbow Tables (mais rápido)
+        console.print("\n[*] === TENTATIVA 1: RAINBOW TABLES ===")
+        password, attempts, time_taken = cracker.rainbow_table_attack(auto_generate=False)
+        if password:
+            return {
+                'hash_type': cracker.hash_type,
+                'attack_mode': 'rainbow',
+                'password': password,
+                'attempts': attempts,
+                'time_taken': time_taken,
+                'success': True
+            }
+        
+        # 2. Dictionary Attack
+        if wordlist_path:
+            console.print("\n[*] === TENTATIVA 2: DICTIONARY ATTACK ===")
+            password, attempts, time_taken = cracker.dictionary_attack(wordlist_path)
+            if password:
+                return {
+                    'hash_type': cracker.hash_type,
+                    'attack_mode': 'dictionary',
+                    'password': password,
+                    'attempts': attempts,
+                    'time_taken': time_taken,
+                    'success': True
+                }
+        
+        # 3. Brute Force (limitado)
+        console.print("\n[*] === TENTATIVA 3: BRUTE FORCE (1-4 chars) ===")
+        password, attempts, time_taken = cracker.brute_force_attack(1, 4, string.ascii_lowercase + string.digits)
+        if password:
+            return {
+                'hash_type': cracker.hash_type,
+                'attack_mode': 'brute_force',
+                'password': password,
+                'attempts': attempts,
+                'time_taken': time_taken,
+                'success': True
+            }
+        
+        # Não encontrou com nenhum método
+        return {
+            'hash_type': cracker.hash_type,
+            'attack_mode': 'all',
+            'password': None,
+            'attempts': attempts,
+            'time_taken': time_taken,
+            'success': False
+        }
     else:
         return {'error': 'Modo de ataque inválido'}
     

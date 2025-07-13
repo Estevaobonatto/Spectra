@@ -127,6 +127,14 @@ Exemplos de uso:
   %(prog)s -hc ad0234829205b9033196ba818f7a872b --no-gpu --hash-performance extreme
   %(prog)s -hc 5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8 --use-gpu --show-performance-estimate
 
+[ Rainbow Tables - Lookup Instantâneo O(1) ]
+  %(prog)s -hc 5d41402abc4b2a76b9719d911017c592 --attack-mode rainbow --rainbow-generate
+  %(prog)s -hc 098f6bcd4621d373cade4e832627b4f6 --attack-mode rainbow --rainbow-table md5_1_6_36chars.rt
+  %(prog)s --rainbow-list
+  %(prog)s --rainbow-info md5_1_6_36chars.rt
+  %(prog)s -hc d41d8cd98f00b204e9800998ecf8427e --attack-mode rainbow --rainbow-charset "abc123" --rainbow-max-length 4
+  %(prog)s -hc 356a192b7913b04c54574d18c28d46e6395428ab --attack-mode all
+
 [ Análise de Segurança ]
   %(prog)s -waf https://example.com
   %(prog)s -ssl example.com 443
@@ -440,7 +448,7 @@ Exemplos de uso:
                        help='Tipo de hash (auto-detectado por padrão)')
     
     parser.add_argument('--attack-mode',
-                       choices=['dictionary', 'brute_force', 'mask', 'online', 'all'],
+                       choices=['dictionary', 'brute_force', 'mask', 'rainbow', 'online', 'all'],
                        default='dictionary',
                        help='Modo de ataque para quebra de hash')
     
@@ -500,6 +508,40 @@ Exemplos de uso:
                        type=int,
                        metavar='MB',
                        help='Limita uso de memória GPU em MB')
+    
+    # === RAINBOW TABLES ===
+    parser.add_argument('--rainbow-table',
+                       metavar='FILE',
+                       help='Caminho para rainbow table (.rt)')
+    
+    parser.add_argument('--rainbow-generate',
+                       action='store_true',
+                       help='Gera rainbow table automaticamente se não existir')
+    
+    parser.add_argument('--rainbow-list',
+                       action='store_true',
+                       help='Lista rainbow tables disponíveis')
+    
+    parser.add_argument('--rainbow-info',
+                       metavar='FILE',
+                       help='Mostra informações detalhadas sobre uma rainbow table')
+    
+    parser.add_argument('--rainbow-charset',
+                       metavar='CHARS',
+                       default='abcdefghijklmnopqrstuvwxyz0123456789',
+                       help='Charset para gerar rainbow table')
+    
+    parser.add_argument('--rainbow-min-length',
+                       type=int,
+                       default=1,
+                       metavar='N',
+                       help='Comprimento mínimo para rainbow table (padrão: 1)')
+    
+    parser.add_argument('--rainbow-max-length',
+                       type=int,
+                       default=6,
+                       metavar='N',
+                       help='Comprimento máximo para rainbow table (padrão: 6)')
     
     # === INTEGRAÇÃO CVE ===
     parser.add_argument('--enrich-cve',
@@ -1071,6 +1113,57 @@ def main():
                 stop_on_first=args.lfi_stop_first
             )
         
+        # === RAINBOW TABLES MANAGEMENT ===
+        elif args.rainbow_list:
+            from ..modules.hash_cracker import RainbowTableManager
+            
+            manager = RainbowTableManager()
+            tables = manager.list_available_tables()
+            
+            if tables:
+                console.print("\n[bold cyan]=== Rainbow Tables Disponíveis ===[/bold cyan]")
+                from rich.table import Table
+                
+                table = Table(title="Rainbow Tables")
+                table.add_column("Nome", style="cyan")
+                table.add_column("Tamanho", style="yellow")
+                table.add_column("Caminho", style="white", max_width=60)
+                
+                for rt in tables:
+                    table.add_row(
+                        rt['name'],
+                        f"{rt['size_mb']:.1f} MB",
+                        rt['path']
+                    )
+                
+                console.print(table)
+            else:
+                console.print("[yellow][-] Nenhuma rainbow table encontrada[/yellow]")
+                console.print("[*] Use --rainbow-generate para criar uma nova tabela")
+            
+            return
+        
+        elif args.rainbow_info:
+            from ..modules.hash_cracker import RainbowTableManager
+            
+            manager = RainbowTableManager()
+            info = manager.get_table_info(args.rainbow_info)
+            
+            if info['exists']:
+                console.print(f"\n[bold cyan]=== Rainbow Table Info ===[/bold cyan]")
+                console.print(f"[cyan]Arquivo:[/cyan] {args.rainbow_info}")
+                console.print(f"[cyan]Tamanho:[/cyan] {info['size_mb']:.1f} MB")
+                console.print(f"[cyan]Hash Type:[/cyan] {info.get('hash_type', 'Unknown')}")
+                console.print(f"[cyan]Charset:[/cyan] {info.get('charset', 'Unknown')}")
+                console.print(f"[cyan]Comprimento:[/cyan] {info.get('length_range', 'Unknown')}")
+                console.print(f"[cyan]Chains:[/cyan] {info.get('chain_count', 0):,}")
+                if 'chain_length' in info:
+                    console.print(f"[cyan]Chain Length:[/cyan] {info['chain_length']:,}")
+            else:
+                console.print(f"[red][!] Rainbow Table não encontrada: {args.rainbow_info}[/red]")
+            
+            return
+        
         # === HASH CRACKER AVANÇADO ===
         elif args.hash_crack:
             print_info(f"Iniciando quebra de hash: {args.hash_crack[:16]}...")
@@ -1141,7 +1234,23 @@ def main():
             password_found = False
             
             # Executa ataques baseado no modo
-            if args.attack_mode == 'dictionary' or args.attack_mode == 'all':
+            if args.attack_mode == 'rainbow':
+                console.print(f"\n[*] === ATAQUE RAINBOW TABLE ===")
+                
+                password, attempts, time_taken = cracker.rainbow_table_attack(
+                    table_path=args.rainbow_table,
+                    auto_generate=args.rainbow_generate
+                )
+                if password:
+                    password_found = True
+                    results = {
+                        'mode': 'rainbow',
+                        'password': password,
+                        'attempts': attempts,
+                        'time': time_taken
+                    }
+            
+            elif args.attack_mode == 'dictionary' or args.attack_mode == 'all':
                 if wordlist_path:
                     console.print(f"\n[*] === ATAQUE DE DICIONÁRIO ===")
                     
