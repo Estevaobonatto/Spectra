@@ -87,7 +87,7 @@ Exemplos de uso:
                        metavar='DOMAIN',
                        help='Executa scan de subdomínios no domínio especificado')
     
-    parser.add_argument('--advanced-subdomain',
+    parser.add_argument('--advanced',
                        action='store_true',
                        help='Usar scanner avançado (Certificate Transparency, passive sources, permutations)')
     
@@ -512,7 +512,7 @@ def main():
         elif args.subdomain_scan:
             print_info(f"Iniciando scan de subdomínios em: {args.subdomain_scan}")
             
-            if args.advanced_subdomain:
+            if args.advanced:
                 # Scanner avançado - assíncrono
                 import asyncio
                 
@@ -538,7 +538,7 @@ def main():
             else:
                 # Scanner tradicional
                 if not args.wordlist:
-                    print_error("Wordlist é obrigatória para subdomain scan (use --advanced-subdomain --passive-only para modo passivo)")
+                    print_error("Wordlist é obrigatória para subdomain scan (use --advanced --passive-only para modo passivo)")
                     sys.exit(1)
                 
                 results = discover_subdomains(

@@ -12,9 +12,8 @@ import re
 from typing import List, Dict, Set, Optional, Tuple
 from dataclasses import dataclass, asdict
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
-from rich.table import Table
 
-from ..core.console import console
+from ..core.console import console, print_info, print_success, print_warning, print_error, print_separator, create_table, create_progress
 from ..core.logger import get_logger
 
 
@@ -670,11 +669,23 @@ class AdvancedSubdomainScanner:
         """Executa scan completo de subdomínios."""
         start_time = time.time()
         
-        console.print("-" * 70)
-        console.print(f"[*] 🎯 Spectra Advanced Subdomain Scanner")
-        console.print(f"[*] Target: [bold cyan]{self.domain}[/bold cyan]")
-        console.print(f"[*] Features: Passive [{'✓' if self.enable_passive else '✗'}] | Permutations [{'✓' if self.enable_permutations else '✗'}] | Takeover [{'✓' if self.verify_takeover else '✗'}]")
-        console.print("-" * 70)
+        print_separator(60)
+        print_info("Scanner Avançado de Subdomínios - Spectra v3.2.6")
+        print_info(f"Alvo: [bold cyan]{self.domain}[/bold cyan]")
+        features = []
+        if self.enable_passive:
+            features.append("[green]Passive Discovery[/green]")
+        if self.enable_permutations:
+            features.append("[green]Permutations[/green]")
+        if self.verify_takeover:
+            features.append("[green]Takeover Verification[/green]")
+        if self.wordlist_path:
+            features.append("[green]DNS Bruteforce[/green]")
+        
+        if features:
+            print_info(f"Recursos: {' | '.join(features)}")
+        print_info(f"Máximo concorrente: [bold cyan]{self.max_concurrent}[/bold cyan]")
+        print_separator(60)
         
         # Inicializa components
         connector = aiohttp.TCPConnector(limit=self.max_concurrent, limit_per_host=100)
@@ -695,43 +706,43 @@ class AdvancedSubdomainScanner:
             
             # 1. Certificate Transparency
             if self.enable_passive:
-                console.print("[*] 📜 Searching Certificate Transparency logs...")
+                print_info("Consultando Certificate Transparency logs...")
                 ct_subdomains = await self._scan_certificate_transparency()
                 all_subdomains.update(ct_subdomains)
                 self.stats['certificate_transparency'] = len(ct_subdomains)
-                console.print(f"[+] Found {len(ct_subdomains)} subdomains from CT logs")
+                print_success(f"Encontrados {len(ct_subdomains)} subdomínios via CT logs")
             
             # 2. Passive Sources
             if self.enable_passive:
-                console.print("[*] 🔍 Querying passive sources...")
+                print_info("Consultando fontes passivas...")
                 passive_subdomains = await self._scan_passive_sources()
                 all_subdomains.update(passive_subdomains)
                 self.stats['passive_sources'] = len(passive_subdomains)
-                console.print(f"[+] Found {len(passive_subdomains)} subdomains from passive sources")
+                print_success(f"Encontrados {len(passive_subdomains)} subdomínios via fontes passivas")
             
             # 3. DNS Bruteforce (se wordlist fornecida)
             if self.wordlist_path:
-                console.print("[*] 💪 DNS Bruteforce scanning...")
+                print_info("Executando DNS bruteforce...")
                 bruteforce_subdomains = await self._scan_dns_bruteforce()
                 all_subdomains.update(bruteforce_subdomains)
                 self.stats['dns_bruteforce'] = len(bruteforce_subdomains)
-                console.print(f"[+] Found {len(bruteforce_subdomains)} subdomains from bruteforce")
+                print_success(f"Encontrados {len(bruteforce_subdomains)} subdomínios via bruteforce")
             
             # 4. Permutations
             if self.enable_permutations and all_subdomains:
-                console.print("[*] 🧬 Generating intelligent permutations...")
+                print_info("Gerando permutações inteligentes...")
                 permutation_subdomains = await self._scan_permutations(all_subdomains)
                 all_subdomains.update(permutation_subdomains)
                 self.stats['permutations'] = len(permutation_subdomains)
-                console.print(f"[+] Found {len(permutation_subdomains)} subdomains from permutations")
+                print_success(f"Encontrados {len(permutation_subdomains)} subdomínios via permutações")
             
             # 5. Resolve todos os subdomains encontrados
-            console.print(f"[*] 🔬 Resolving {len(all_subdomains)} unique subdomains...")
+            print_info(f"Resolvendo {len(all_subdomains)} subdomínios únicos...")
             await self._resolve_all_subdomains(all_subdomains)
             
             # 6. Verificação de takeover
             if self.verify_takeover:
-                console.print("[*] ⚠️  Verifying subdomain takeover risks...")
+                print_info("Verificando vulnerabilidades de subdomain takeover...")
                 await self._verify_takeover_risks()
         
         self.stats['total_discovered'] = len(self.found_subdomains)
@@ -870,7 +881,7 @@ class AdvancedSubdomainScanner:
             console=console
         ) as progress:
             
-            task = progress.add_task("Resolving subdomains", total=len(subdomains))
+            task = progress.add_task("[green]Resolvendo subdomínios...", total=len(subdomains))
             
             subdomain_list = list(subdomains)
             for i in range(0, len(subdomain_list), batch_size):
@@ -883,17 +894,17 @@ class AdvancedSubdomainScanner:
                     if isinstance(result, SubdomainResult):
                         self.found_subdomains[result.domain] = result
                         
-                        # Display em tempo real
+                        # Display em tempo real usando padrão Spectra
                         status_info = []
                         if result.cloud_service:
                             status_info.append(f"[blue]{result.cloud_service}[/blue]")
                         if result.takeover_risk:
-                            status_info.append("[bold red]TAKEOVER RISK[/bold red]")
+                            status_info.append("[bold red]RISCO TAKEOVER[/bold red]")
                         if result.cname:
                             status_info.append(f"CNAME: {result.cname}")
                         
                         status_str = f" ({' | '.join(status_info)})" if status_info else ""
-                        console.print(f"[bold green][+] {result.domain} -> {result.ip}{status_str}[/bold green]")
+                        print_success(f"{result.domain} -> {result.ip}{status_str}")
                 
                 progress.update(task, advance=len(batch))
     
@@ -915,7 +926,7 @@ class AdvancedSubdomainScanner:
             console=console
         ) as progress:
             
-            task = progress.add_task("Verifying takeovers", total=len(potential_takeovers))
+            task = progress.add_task("[yellow]Verificando takeovers...", total=len(potential_takeovers))
             
             for result in potential_takeovers:
                 is_vulnerable, service = await self.takeover_verifier.verify_takeover(
@@ -928,24 +939,25 @@ class AdvancedSubdomainScanner:
                     self.takeover_risks.append(result)
                     self.stats['verified_takeovers'] += 1
                     
-                    console.print(f"[bold red][!] VERIFIED TAKEOVER: {result.domain} -> {service}[/bold red]")
+                    print_error(f"TAKEOVER VERIFICADO: {result.domain} -> {service}")
                 
                 progress.update(task, advance=1)
     
     def _display_results(self):
         """Display final results."""
-        console.print("-" * 70)
-        console.print("[*] 📊 Scan completed!")
+        print_separator(60)
+        print_info("Varredura de subdomínios concluída.")
         
         if self.found_subdomains:
-            # Main results table
-            table = Table(title=f"📋 Subdomain Results for {self.domain}")
-            table.add_column("Subdomain", style="cyan")
-            table.add_column("IP", style="magenta")
-            table.add_column("IPv6", style="blue")
-            table.add_column("Cloud Service", style="green")
-            table.add_column("CNAME", style="yellow")
-            table.add_column("Status", style="bold")
+            # Main results table usando padrão Spectra
+            table = create_table(f"Relatório de Subdomínios - {self.domain}", [
+                {"header": "Subdomínio", "style": "cyan"},
+                {"header": "IP", "style": "magenta"},
+                {"header": "IPv6", "style": "blue"},
+                {"header": "Cloud Service", "style": "green"},
+                {"header": "CNAME", "style": "yellow"},
+                {"header": "Status", "style": "bold"}
+            ])
             
             sorted_results = sorted(self.found_subdomains.values(), key=lambda x: x.domain)
             
@@ -955,11 +967,11 @@ class AdvancedSubdomainScanner:
                 cname = result.cname or 'N/A'
                 
                 if result.takeover_verified:
-                    status = f"🔴 TAKEOVER ({result.takeover_service})"
+                    status = f"[bold red]TAKEOVER ({result.takeover_service})[/bold red]"
                 elif result.takeover_risk:
-                    status = "🟡 TAKEOVER RISK"
+                    status = "[bold yellow]RISCO TAKEOVER[/bold yellow]"
                 else:
-                    status = "✅ OK"
+                    status = "[green]OK[/green]"
                 
                 table.add_row(result.domain, result.ip, ipv6, cloud, cname, status)
             
@@ -967,32 +979,35 @@ class AdvancedSubdomainScanner:
             
             # Takeover risks table
             if self.takeover_risks:
-                console.print("\\n[bold red]⚠️  VERIFIED SUBDOMAIN TAKEOVER VULNERABILITIES[/bold red]")
-                risk_table = Table(title="🚨 Critical Security Issues")
-                risk_table.add_column("Subdomain", style="red")
-                risk_table.add_column("Service", style="yellow")
-                risk_table.add_column("CNAME", style="blue")
-                risk_table.add_column("Recommendation", style="white")
+                console.print()
+                print_warning("VULNERABILIDADES DE SUBDOMAIN TAKEOVER VERIFICADAS")
+                risk_table = create_table("Problemas Críticos de Segurança", [
+                    {"header": "Subdomínio", "style": "red"},
+                    {"header": "Serviço", "style": "yellow"},
+                    {"header": "CNAME", "style": "blue"},
+                    {"header": "Recomendação", "style": "white"}
+                ])
                 
                 for risk in self.takeover_risks:
                     risk_table.add_row(
                         risk.domain,
-                        risk.takeover_service or 'Unknown',
+                        risk.takeover_service or 'Desconhecido',
                         risk.cname,
-                        "🔧 Remove DNS record or claim service"
+                        "Remover registro DNS ou reivindicar serviço"
                     )
                 
                 console.print(risk_table)
             
-            # Statistics
-            console.print(f"\\n[*] 📈 Statistics:")
-            console.print(f"    • Total discovered: [bold cyan]{self.stats['total_discovered']}[/bold cyan]")
+            # Statistics usando padrão Spectra
+            console.print()
+            print_info("Estatísticas do scan:")
+            console.print(f"    • Total encontrado: [bold cyan]{self.stats['total_discovered']}[/bold cyan] subdomínios")
             console.print(f"    • Certificate Transparency: [cyan]{self.stats['certificate_transparency']}[/cyan]")
-            console.print(f"    • Passive sources: [cyan]{self.stats['passive_sources']}[/cyan]")
+            console.print(f"    • Fontes passivas: [cyan]{self.stats['passive_sources']}[/cyan]")
             console.print(f"    • DNS bruteforce: [cyan]{self.stats['dns_bruteforce']}[/cyan]")
-            console.print(f"    • Permutations: [cyan]{self.stats['permutations']}[/cyan]")
-            console.print(f"    • Verified takeovers: [bold red]{self.stats['verified_takeovers']}[/bold red]")
-            console.print(f"    • Scan time: [cyan]{self.stats['scan_time']:.2f}s[/cyan]")
+            console.print(f"    • Permutações: [cyan]{self.stats['permutations']}[/cyan]")
+            console.print(f"    • Takeovers verificados: [bold red]{self.stats['verified_takeovers']}[/bold red]")
+            console.print(f"    • Tempo de scan: [cyan]{self.stats['scan_time']:.2f}s[/cyan]")
             
             # Cloud services breakdown
             cloud_services = {}
@@ -1001,14 +1016,14 @@ class AdvancedSubdomainScanner:
                     cloud_services[result.cloud_service] = cloud_services.get(result.cloud_service, 0) + 1
             
             if cloud_services:
-                console.print(f"\\n[*] ☁️  Cloud services detected:")
+                print_info("Serviços de cloud detectados:")
                 for service, count in sorted(cloud_services.items()):
-                    console.print(f"    • {service}: {count} subdomain(s)")
+                    console.print(f"    • {service}: {count} subdomínio(s)")
         
         else:
-            console.print("[bold yellow][-] No subdomains found with current configuration.[/bold yellow]")
+            print_warning("Nenhum subdomínio encontrado com a configuração atual.")
         
-        console.print("-" * 70)
+        print_separator(60)
     
     def export_results(self, format_type: str = 'json') -> str:
         """Export results em diferentes formatos."""
