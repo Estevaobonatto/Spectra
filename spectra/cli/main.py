@@ -18,6 +18,7 @@ from ..modules.whois_analyzer import get_whois_info
 from ..modules.waf_detector import detect_waf
 from ..modules.ssl_analyzer import get_ssl_info
 from ..modules.headers_analyzer import get_http_headers
+from ..modules.technology_detector import AdvancedTechnologyDetector, quick_tech_scan, deep_tech_scan
 from ..modules.sql_injection_scanner import sql_injection_scan
 from ..modules.xss_scanner import xss_scan
 from ..modules.command_injection_scanner import command_injection_scan
@@ -31,13 +32,32 @@ def create_parser():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Exemplos de uso:
-  %(prog)s -ps example.com -p 80,443,22
-  %(prog)s -ds http://example.com -w wordlist.txt
-  %(prog)s -ss example.com -w subdomains.txt
-  %(prog)s -dns example.com
-  %(prog)s -whois example.com --security-analysis
+
+[ Reconhecimento & Enumeração ]
+  %(prog)s -ps example.com -p 80,443,22,21,25
+  %(prog)s -ds http://example.com -w wordlist.txt --recursive
+  %(prog)s -ss example.com -w subdomains.txt --advanced
+  %(prog)s -dns example.com --record-type ALL
+  %(prog)s -whois example.com --security-analysis --threat-intel
+
+[ Detecção de Tecnologias Avançada - 500+ Tecnologias ]
+  %(prog)s -tech https://example.com
+  %(prog)s -tech https://target.com --tech-quick --verbose
+  %(prog)s -tech https://company.com --tech-deep --tech-save-report report.html
+  %(prog)s -tech https://site.com --tech-no-passive --tech-format json
+  %(prog)s -tech https://enterprise.com --tech-deep --tech-threads 20
+
+[ Análise de Vulnerabilidades ]
+  %(prog)s -sqli http://example.com/page?id=1 --sqli-level 2
+  %(prog)s -xss http://example.com/form --xss-stored --xss-dom
+  %(prog)s -cmdi http://example.com/cmd --cmdi-level 3
+  %(prog)s -lfi http://example.com/file?name=test
+
+[ Análise de Segurança ]
+  %(prog)s -waf https://example.com
+  %(prog)s -ssl example.com 443
+  %(prog)s -headers https://example.com
   %(prog)s -bg example.com 80
-  %(prog)s -md http://example.com/image.jpg
         """
     )
     
@@ -159,6 +179,46 @@ Exemplos de uso:
     parser.add_argument('-headers', '--http-headers',
                        metavar='URL',
                        help='Analisa headers de segurança HTTP')
+    
+    # === DETECTOR DE TECNOLOGIAS AVANÇADO ===
+    parser.add_argument('-tech', '--tech-detect',
+                       metavar='URL',
+                       help='Detecção avançada de tecnologias web (500+ tecnologias suportadas)')
+    
+    parser.add_argument('--tech-quick',
+                       action='store_true',
+                       help='Scan rápido de tecnologias (sem análise passiva)')
+    
+    parser.add_argument('--tech-deep',
+                       action='store_true',
+                       help='Análise profunda com todas as funcionalidades (fingerprinting, passive scan, WAF, API)')
+    
+    parser.add_argument('--tech-no-passive',
+                       action='store_true',
+                       help='Desabilita scan passivo (robots.txt, sitemap, etc)')
+    
+    parser.add_argument('--tech-no-fingerprint',
+                       action='store_true',
+                       help='Desabilita fingerprinting de arquivos')
+    
+    parser.add_argument('--tech-save-report',
+                       metavar='FILE',
+                       help='Salva relatório de tecnologias em arquivo (formato baseado na extensão)')
+    
+    parser.add_argument('--tech-format',
+                       choices=['table', 'json', 'xml', 'csv', 'html', 'markdown'],
+                       default='table',
+                       help='Formato de output para detecção de tecnologias')
+    
+    parser.add_argument('--tech-threads',
+                       type=int,
+                       default=10,
+                       help='Número de threads para requests paralelos (padrão: 10)')
+    
+    parser.add_argument('--tech-timeout',
+                       type=int,
+                       default=10,
+                       help='Timeout para requests de tecnologias em segundos (padrão: 10)')
     
     # === SCANNER DE SQL INJECTION ===
     parser.add_argument('-sqli', '--sql-injection',
@@ -616,6 +676,74 @@ def main():
                 verbose=args.verbose,
                 output_format=args.output_format
             )
+        
+        # === DETECTOR DE TECNOLOGIAS AVANÇADO ===
+        elif args.tech_detect:
+            print_info(f"Detectando tecnologias em: {args.tech_detect}")
+            
+            # Determina o tipo de scan baseado nos argumentos
+            if args.tech_quick:
+                # Scan rápido
+                print_info("Executando scan rápido (sem análise passiva ou fingerprinting)")
+                results = quick_tech_scan(args.tech_detect, verbose=args.verbose)
+                
+            elif args.tech_deep:
+                # Scan profundo
+                print_info("Executando análise profunda com todas as funcionalidades")
+                save_file = args.tech_save_report if args.tech_save_report else None
+                results = deep_tech_scan(
+                    args.tech_detect, 
+                    verbose=args.verbose, 
+                    save_report=save_file, 
+                    report_format=args.tech_format
+                )
+                
+            else:
+                # Scan customizado com opções avançadas
+                print_info("Executando scan customizado de tecnologias")
+                detector = AdvancedTechnologyDetector(args.tech_detect, timeout=args.tech_timeout)
+                detector.max_workers = args.tech_threads
+                
+                # Configura opções de scan
+                enable_passive = not args.tech_no_passive
+                enable_fingerprint = not args.tech_no_fingerprint
+                
+                if args.verbose:
+                    if enable_passive:
+                        print_info("✓ Análise passiva ativada (robots.txt, sitemap, etc)")
+                    else:
+                        print_info("✗ Análise passiva desativada")
+                    
+                    if enable_fingerprint:
+                        print_info("✓ Fingerprinting de arquivos ativado")
+                    else:
+                        print_info("✗ Fingerprinting de arquivos desativado")
+                
+                # Executa detecção
+                results = detector.detect_technologies(
+                    verbose=args.verbose,
+                    enable_passive_scan=enable_passive,
+                    enable_file_fingerprinting=enable_fingerprint
+                )
+                
+                # Apresenta resultados ou salva arquivo
+                if args.tech_save_report:
+                    # Determina formato pelo arquivo ou usa args.tech_format
+                    if '.' in args.tech_save_report:
+                        file_ext = args.tech_save_report.split('.')[-1].lower()
+                        format_map = {
+                            'json': 'json', 'xml': 'xml', 'csv': 'csv', 
+                            'html': 'html', 'htm': 'html', 'md': 'markdown'
+                        }
+                        report_format = format_map.get(file_ext, args.tech_format)
+                    else:
+                        report_format = args.tech_format
+                    
+                    print_info(f"Salvando relatório em formato {report_format}")
+                    detector.save_report(args.tech_save_report, report_format)
+                else:
+                    # Apresenta na tela
+                    detector.present_results(args.tech_format)
         
         # === SCANNER DE SQL INJECTION ===
         elif args.sql_injection:
