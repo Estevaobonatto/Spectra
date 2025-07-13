@@ -24,6 +24,7 @@ from ..modules.xss_scanner import xss_scan
 from ..modules.command_injection_scanner import command_injection_scan
 from ..modules.lfi_scanner import lfi_scan
 from ..modules.cve_integrator import integrate_cve_data, CVEIntegrator
+from ..modules.hash_cracker import AdvancedHashCracker, crack_hash, detect_hash_type
 
 def create_parser():
     """Cria o parser de argumentos da linha de comando."""
@@ -78,6 +79,18 @@ Exemplos de uso:
   • Controle granular de workers via CLI (--workers 1-500)
   • Taxa de sucesso e métricas de rate limiting em tempo real
 
+[ Hash Cracker Profissional - Competitivo com HashCat/John ]
+  • Detecção automática de 10+ tipos de hash (MD5, SHA1/256/512, NTLM, bcrypt)
+  • 4 modos de ataque: Dictionary, Brute Force, Mask Attack, Online Lookup
+  • Rule-based transformations (uppercase, digits, leet speak, years, reverse)
+  • Mask attacks com padrões HashCat (?l ?u ?d ?s ?a)
+  • Performance threading otimizado (até 64 workers em modo extreme)
+  • Cache inteligente para evitar re-computação de hashes
+  • Estatísticas em tempo real (tentativas/s, progresso, ETA)
+  • Wordlists integradas + suporte a wordlists customizadas
+  • Online hash lookup em múltiplos serviços
+  • Progress tracking detalhado com estimativa de tempo
+
 [ Detecção de Tecnologias Avançada - 500+ Tecnologias ]
   %(prog)s -tech https://example.com
   %(prog)s -tech https://target.com --tech-quick --verbose
@@ -90,6 +103,14 @@ Exemplos de uso:
   %(prog)s -xss http://example.com/form --xss-stored --xss-dom
   %(prog)s -cmdi http://example.com/cmd --cmdi-level 3
   %(prog)s -lfi http://example.com/file?name=test
+
+[ Hash Cracker Avançado - Inspirado em HashCat/John the Ripper ]
+  %(prog)s -hc 5d41402abc4b2a76b9719d911017c592 --attack-mode dictionary
+  %(prog)s -hc 356a192b7913b04c54574d18c28d46e6395428ab --hash-type sha1 --attack-mode all
+  %(prog)s -hc d8578edf8458ce06fbc5bb76a58c5ca4 --attack-mode brute_force --max-length 5
+  %(prog)s -hc 098f6bcd4621d373cade4e832627b4f6 --attack-mode mask --mask-pattern "?l?l?l?l"
+  %(prog)s -hc 5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8 --hash-wordlist custom.txt --hash-rules uppercase,digits
+  %(prog)s -hc ad0234829205b9033196ba818f7a872b --hash-performance extreme --show-hash-stats
 
 [ Análise de Segurança ]
   %(prog)s -waf https://example.com
@@ -392,6 +413,56 @@ Exemplos de uso:
                        type=int,
                        default=10,
                        help='Profundidade de path traversal para LFI (padrão: 10)')
+    
+    # === HASH CRACKER AVANÇADO ===
+    parser.add_argument('-hc', '--hash-crack',
+                       metavar='HASH',
+                       help='Quebra hash usando múltiplos métodos de ataque (dictionary, brute force, mask, online)')
+    
+    parser.add_argument('--hash-type',
+                       choices=['md5', 'sha1', 'sha256', 'sha512', 'ntlm', 'bcrypt', 'auto'],
+                       default='auto',
+                       help='Tipo de hash (auto-detectado por padrão)')
+    
+    parser.add_argument('--attack-mode',
+                       choices=['dictionary', 'brute_force', 'mask', 'online', 'all'],
+                       default='dictionary',
+                       help='Modo de ataque para quebra de hash')
+    
+    parser.add_argument('--hash-wordlist',
+                       metavar='FILE',
+                       help='Wordlist para ataque de dicionário (usa padrão se não especificado)')
+    
+    parser.add_argument('--hash-rules',
+                       metavar='RULES',
+                       help='Regras para transformação de senhas (ex: uppercase,digits,leet)')
+    
+    parser.add_argument('--min-length',
+                       type=int,
+                       default=1,
+                       help='Comprimento mínimo para brute force (padrão: 1)')
+    
+    parser.add_argument('--max-length',
+                       type=int,
+                       default=6,
+                       help='Comprimento máximo para brute force (padrão: 6)')
+    
+    parser.add_argument('--charset',
+                       default='abcdefghijklmnopqrstuvwxyz0123456789',
+                       help='Charset para brute force (padrão: lowercase + digits)')
+    
+    parser.add_argument('--mask-pattern',
+                       metavar='MASK',
+                       help='Padrão de máscara (?l=lower, ?u=upper, ?d=digits, ?s=special)')
+    
+    parser.add_argument('--hash-performance',
+                       choices=['balanced', 'fast', 'extreme'],
+                       default='balanced',
+                       help='Modo de performance para quebra de hash')
+    
+    parser.add_argument('--show-hash-stats',
+                       action='store_true',
+                       help='Mostra estatísticas detalhadas durante quebra de hash')
     
     # === INTEGRAÇÃO CVE ===
     parser.add_argument('--enrich-cve',
@@ -962,6 +1033,128 @@ def main():
                 fast_mode=args.lfi_fast,
                 stop_on_first=args.lfi_stop_first
             )
+        
+        # === HASH CRACKER AVANÇADO ===
+        elif args.hash_crack:
+            print_info(f"Iniciando quebra de hash: {args.hash_crack[:16]}...")
+            
+            # Detecta tipo se auto
+            hash_type = args.hash_type
+            if hash_type == 'auto':
+                hash_type = detect_hash_type(args.hash_crack)
+                console.print(f"[*] Tipo de hash detectado: [cyan]{hash_type}[/cyan]")
+            
+            # Cria cracker
+            cracker = AdvancedHashCracker(args.hash_crack, hash_type)
+            cracker.set_performance_mode(args.hash_performance)
+            
+            if args.verbose:
+                console.print(f"[*] Modo de performance: {args.hash_performance}")
+                console.print(f"[*] Workers: {cracker.workers}")
+                console.print(f"[*] Tipo de hash: {cracker.hash_type}")
+            
+            # Determina wordlist padrão se não especificada
+            wordlist_path = args.hash_wordlist
+            if not wordlist_path and args.attack_mode in ['dictionary', 'all']:
+                import os
+                default_wordlist = os.path.join(os.path.dirname(__file__), '..', 'data', 'wordlists', 'common_passwords.txt')
+                if os.path.exists(default_wordlist):
+                    wordlist_path = default_wordlist
+                    console.print(f"[*] Usando wordlist padrão: {os.path.basename(wordlist_path)}")
+            
+            results = None
+            password_found = False
+            
+            # Executa ataques baseado no modo
+            if args.attack_mode == 'dictionary' or args.attack_mode == 'all':
+                if wordlist_path:
+                    console.print(f"\n[*] === ATAQUE DE DICIONÁRIO ===")
+                    
+                    # Aplica regras se especificadas
+                    rules = None
+                    if args.hash_rules:
+                        rules = args.hash_rules.split(',')
+                        console.print(f"[*] Regras ativas: {', '.join(rules)}")
+                    
+                    password, attempts, time_taken = cracker.dictionary_attack(wordlist_path, rules)
+                    if password:
+                        password_found = True
+                        results = {
+                            'mode': 'dictionary',
+                            'password': password,
+                            'attempts': attempts,
+                            'time': time_taken
+                        }
+                else:
+                    console.print(f"[yellow][!] Wordlist não especificada para ataque de dicionário[/yellow]")
+            
+            if not password_found and (args.attack_mode == 'online' or args.attack_mode == 'all'):
+                console.print(f"\n[*] === LOOKUP ONLINE ===")
+                password = cracker.online_lookup()
+                if password:
+                    password_found = True
+                    results = {
+                        'mode': 'online',
+                        'password': password,
+                        'attempts': 0,
+                        'time': 0
+                    }
+            
+            if not password_found and (args.attack_mode == 'mask' or args.attack_mode == 'all'):
+                if args.mask_pattern:
+                    console.print(f"\n[*] === ATAQUE POR MÁSCARA ===")
+                    password, attempts, time_taken = cracker.mask_attack(args.mask_pattern)
+                    if password:
+                        password_found = True
+                        results = {
+                            'mode': 'mask',
+                            'password': password,
+                            'attempts': attempts,
+                            'time': time_taken
+                        }
+                elif args.attack_mode == 'mask':
+                    console.print(f"[yellow][!] Padrão de máscara não especificado (use --mask-pattern)[/yellow]")
+            
+            if not password_found and (args.attack_mode == 'brute_force' or args.attack_mode == 'all'):
+                console.print(f"\n[*] === ATAQUE DE FORÇA BRUTA ===")
+                if args.max_length > 8:
+                    console.print(f"[yellow][!] Aviso: Comprimento máximo {args.max_length} pode demorar muito![/yellow]")
+                
+                password, attempts, time_taken = cracker.brute_force_attack(
+                    args.min_length, 
+                    args.max_length, 
+                    args.charset
+                )
+                if password:
+                    password_found = True
+                    results = {
+                        'mode': 'brute_force',
+                        'password': password,
+                        'attempts': attempts,
+                        'time': time_taken
+                    }
+            
+            # Exibe estatísticas finais
+            if args.show_hash_stats:
+                stats = cracker.get_statistics()
+                console.print(f"\n[bold cyan]📊 Estatísticas Finais:[/bold cyan]")
+                console.print(f"    • Hash Type: {stats.get('hash_type', 'N/A')}")
+                console.print(f"    • Total Attempts: {stats.get('attempts', 0):,}")
+                console.print(f"    • Workers: {stats.get('workers', 0)}")
+                console.print(f"    • Performance Mode: {stats.get('performance_mode', 'N/A')}")
+                if stats.get('elapsed_time', 0) > 0:
+                    console.print(f"    • Rate: {stats.get('rate_per_second', 0):.0f} hashes/second")
+            
+            if not password_found:
+                console.print(f"\n[red][-] Hash não foi quebrado com os métodos utilizados[/red]")
+                console.print(f"[*] Sugestões:")
+                console.print(f"    • Tente uma wordlist maior")
+                console.print(f"    • Use modo 'all' para tentar todos os ataques")
+                console.print(f"    • Considere usar --hash-rules para transformações")
+                if args.attack_mode != 'all':
+                    console.print(f"    • Tente --attack-mode all")
+            
+            results = results or {'success': False}
         
         else:
             print_error("Nenhuma operação especificada")
