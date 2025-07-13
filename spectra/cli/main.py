@@ -40,6 +40,28 @@ Exemplos de uso:
   %(prog)s -dns example.com --record-type ALL
   %(prog)s -whois example.com --security-analysis --threat-intel
 
+[ Directory Scanner Avançado - Rivaliza com Dirsearch/Feroxbuster/Gobuster/ffuf ]
+  %(prog)s -ds https://example.com -w common.txt
+  %(prog)s -ds https://site.com -w dirs.txt --http-methods GET,POST,PUT,HEAD
+  %(prog)s -ds https://app.com -w wordlist.txt --exclude-status 404,500 --content-length-min 100
+  %(prog)s -ds https://target.com -w big.txt --recursive --max-depth 2 --adaptive-delay
+  %(prog)s -ds https://secure.com -w dirs.txt --stealth --status-codes 200,403,301,302
+  %(prog)s -ds https://api.com -w api.txt --http-methods GET,POST,PUT,DELETE,OPTIONS
+  %(prog)s -ds https://webapp.com -w common.txt --response-time-max 2.0 --content-length-max 10000
+  %(prog)s -ds https://backup.com -w files.txt --no-backup-discovery --no-content-discovery
+
+[ Funcionalidades Únicas do Directory Scanner ]
+  • Múltiplos métodos HTTP simultâneos (GET,POST,PUT,HEAD,OPTIONS,DELETE,PATCH)
+  • Filtragem avançada por status codes, tamanho de conteúdo e tempo de resposta
+  • Descoberta automática de arquivos de backup (.bak, .old, ~, _backup, etc)
+  • Content-based discovery (extrai paths de HTML/JS/CSS automaticamente)
+  • Rate limiting adaptativo inteligente (ajusta velocidade baseado em responses 429/503)
+  • Detecção de WAF integrada com modo de evasão
+  • Análise de tecnologias web durante o scan (WordPress, Drupal, etc)
+  • False positive filtering avançado com baseline 404 detection
+  • Scan recursivo com controle de profundidade
+  • Threading otimizado com progress bars em tempo real
+
 [ Detecção de Tecnologias Avançada - 500+ Tecnologias ]
   %(prog)s -tech https://example.com
   %(prog)s -tech https://target.com --tech-quick --verbose
@@ -80,27 +102,72 @@ Exemplos de uso:
                        default='tcp',
                        help='Tipo de scan de porta')
     
-    # === SCANNER DE DIRETÓRIOS ===
+    # === SCANNER DE DIRETÓRIOS AVANÇADO ===
     parser.add_argument('-ds', '--directory-scan',
                        metavar='URL',
-                       help='Executa scan de diretórios na URL especificada')
+                       help='Executa scan avançado de diretórios (competitivo com Dirsearch/Feroxbuster/Gobuster)')
     
     parser.add_argument('-w', '--wordlist',
                        metavar='FILE',
-                       help='Arquivo de wordlist para scans')
+                       help='Arquivo de wordlist para scans (obrigatório para directory/subdomain scan)')
     
     parser.add_argument('--recursive',
                        action='store_true',
-                       help='Ativar modo recursivo para directory scan')
+                       help='Ativar modo recursivo para directory scan (explora subdiretórios encontrados)')
     
     parser.add_argument('--max-depth',
                        type=int,
                        default=3,
-                       help='Profundidade máxima para scan recursivo')
+                       help='Profundidade máxima para scan recursivo (padrão: 3)')
     
     parser.add_argument('--stealth',
                        action='store_true',
-                       help='Ativar modo stealth (mais lento)')
+                       help='Ativar modo stealth com delays extras (mais lento mas menos detectável)')
+    
+    # Funcionalidades avançadas do directory scanner
+    parser.add_argument('--http-methods',
+                       default='GET',
+                       help='Métodos HTTP para testar separados por vírgula (ex: GET,POST,PUT,HEAD,OPTIONS,DELETE)')
+    
+    parser.add_argument('--status-codes',
+                       metavar='CODES',
+                       help='Incluir apenas estes status codes (ex: 200,403,500) - filtragem positiva')
+    
+    parser.add_argument('--exclude-status',
+                       metavar='CODES',
+                       help='Excluir estes status codes dos resultados (ex: 404,500,502) - filtragem negativa')
+    
+    parser.add_argument('--content-length-min',
+                       type=int,
+                       metavar='BYTES',
+                       help='Filtrar responses com tamanho mínimo em bytes (remove respostas muito pequenas)')
+    
+    parser.add_argument('--content-length-max',
+                       type=int,
+                       metavar='BYTES',
+                       help='Filtrar responses com tamanho máximo em bytes (remove respostas muito grandes)')
+    
+    parser.add_argument('--response-time-min',
+                       type=float,
+                       metavar='SECONDS',
+                       help='Filtrar responses com tempo mínimo de resposta em segundos')
+    
+    parser.add_argument('--response-time-max',
+                       type=float,
+                       metavar='SECONDS',
+                       help='Filtrar responses com tempo máximo de resposta em segundos')
+    
+    parser.add_argument('--no-backup-discovery',
+                       action='store_true',
+                       help='Desabilita descoberta automática de arquivos de backup (.bak, .old, ~, etc)')
+    
+    parser.add_argument('--no-content-discovery',
+                       action='store_true',
+                       help='Desabilita descoberta baseada em análise de conteúdo HTML/JS/CSS')
+    
+    parser.add_argument('--adaptive-delay',
+                       action='store_true',
+                       help='Ativa rate limiting adaptativo inteligente (ajusta velocidade baseado em 429/503)')
     
     # === SCANNER DE SUBDOMÍNIOS ===
     parser.add_argument('-ss', '--subdomain-scan',
@@ -356,7 +423,7 @@ Exemplos de uso:
     
     parser.add_argument('--version',
                        action='version',
-                       version='Spectra v3.2.6')
+                       version='Spectra v3.3.0 - Advanced Directory Scanner Edition')
     
     return parser
 
@@ -557,11 +624,64 @@ def main():
             
             print_info(f"Iniciando scan de diretórios em: {args.directory_scan}")
             
-            results = advanced_directory_scan(
+            # Cria e configura scanner avançado
+            from ..modules.directory_scanner import AdvancedDirectoryScanner
+            
+            scanner = AdvancedDirectoryScanner(
                 base_url=args.directory_scan,
                 wordlist_path=args.wordlist,
                 workers=args.workers,
-                timeout=args.timeout,
+                timeout=args.timeout
+            )
+            
+            # Configura métodos HTTP
+            if args.http_methods:
+                scanner.http_methods = [method.strip().upper() for method in args.http_methods.split(',')]
+            
+            # Configura filtros de status code
+            if args.status_codes:
+                scanner.include_status_codes = [int(code.strip()) for code in args.status_codes.split(',')]
+            
+            if args.exclude_status:
+                scanner.exclude_status_codes = [int(code.strip()) for code in args.exclude_status.split(',')]
+            
+            # Configura filtros de tamanho de conteúdo
+            if args.content_length_min or args.content_length_max:
+                scanner.content_length_filter = {}
+                if args.content_length_min:
+                    scanner.content_length_filter['min'] = args.content_length_min
+                if args.content_length_max:
+                    scanner.content_length_filter['max'] = args.content_length_max
+            
+            # Configura filtros de tempo de resposta
+            if args.response_time_min or args.response_time_max:
+                scanner.response_time_filter = {}
+                if args.response_time_min:
+                    scanner.response_time_filter['min'] = args.response_time_min
+                if args.response_time_max:
+                    scanner.response_time_filter['max'] = args.response_time_max
+            
+            # Configura opções de descoberta
+            scanner.backup_discovery = not args.no_backup_discovery
+            scanner.content_discovery = not args.no_content_discovery
+            scanner.adaptive_delay = args.adaptive_delay
+            
+            if args.verbose:
+                console.print(f"[*] Métodos HTTP: {', '.join(scanner.http_methods)}")
+                if scanner.include_status_codes:
+                    console.print(f"[*] Incluir status: {', '.join(map(str, scanner.include_status_codes))}")
+                if scanner.exclude_status_codes != [404]:
+                    console.print(f"[*] Excluir status: {', '.join(map(str, scanner.exclude_status_codes))}")
+                if scanner.content_length_filter:
+                    console.print(f"[*] Filtro tamanho: {scanner.content_length_filter}")
+                if scanner.backup_discovery:
+                    console.print(f"[*] Descoberta de backup: Ativada")
+                if scanner.content_discovery:
+                    console.print(f"[*] Descoberta de conteúdo: Ativada")
+                if scanner.adaptive_delay:
+                    console.print(f"[*] Rate limiting adaptativo: Ativado")
+            
+            results = scanner.scan(
                 recursive=args.recursive,
                 max_depth=args.max_depth,
                 stealth=args.stealth,

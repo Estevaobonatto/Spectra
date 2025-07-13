@@ -369,7 +369,7 @@ class AdvancedPortScanner:
             return {}
         
         console.print("-" * 60)
-        print_info(f"Scanner Avançado de Portas - Spectra v3.2.6")
+        print_info(f"Scanner Avançado de Portas - Spectra v3.3.0")
         print_info(f"Alvo: [bold cyan]{self.target}[/bold cyan] ({self.target_ip})")
         print_info(f"Tipo de scan: [bold cyan]{self.scan_type.upper()}[/bold cyan]")
         print_info(f"Portas: [bold cyan]{len(ports)}[/bold cyan]")

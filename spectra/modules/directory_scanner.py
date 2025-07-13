@@ -51,9 +51,30 @@ class AdvancedDirectoryScanner:
         self.max_depth = 3
         self.stealth_mode = False
         
+        # Configurações de métodos e filtering
+        self.http_methods = ['GET']  # Default: apenas GET
+        self.status_codes_filter = None  # None = todos, ou lista específica
+        self.exclude_status_codes = [404]  # Códigos para excluir
+        self.include_status_codes = None  # Se definido, inclui apenas estes
+        self.content_length_filter = None  # Filtro por tamanho de conteúdo
+        self.response_time_filter = None  # Filtro por tempo de resposta
+        
+        # Descoberta avançada
+        self.backup_discovery = True
+        self.parameter_discovery = False
+        self.content_discovery = True
+        self.range_requests = False
+        
+        # Rate limiting inteligente
+        self.adaptive_delay = False
+        self.current_delay = 0.0
+        self.success_rate = 1.0
+        self.last_request_time = 0
+        
         # Estatísticas
         self.requests_made = 0
         self.false_positives_filtered = 0
+        self.rate_limited_count = 0
         
         logger.info(f"Scanner de diretórios inicializado para {base_url}")
         
@@ -177,11 +198,23 @@ class AdvancedDirectoryScanner:
         return any(waf_indicators)
     
     def _make_request(self, url, method='GET'):
-        """Faz requisição com retry logic e error handling robusto."""
+        """Faz requisição com retry logic, rate limiting inteligente e múltiplos métodos."""
         for attempt in range(self.retries):
             try:
+                # Rate limiting inteligente
+                if self.adaptive_delay:
+                    current_time = time.time()
+                    time_since_last = current_time - self.last_request_time
+                    if time_since_last < self.current_delay:
+                        time.sleep(self.current_delay - time_since_last)
+                    self.last_request_time = time.time()
+                
+                # Delay em modo stealth
                 if self.stealth_mode and attempt > 0:
-                    time.sleep(0.5 * attempt)  # Delay progressivo em modo stealth
+                    time.sleep(0.5 * attempt)
+                
+                # Seleciona método HTTP
+                start_time = time.time()
                 
                 if method == 'GET':
                     response = self.session.get(url, timeout=self.timeout, 
@@ -189,8 +222,33 @@ class AdvancedDirectoryScanner:
                 elif method == 'HEAD':
                     response = self.session.head(url, timeout=self.timeout, 
                                                allow_redirects=False, verify=False)
+                elif method == 'POST':
+                    response = self.session.post(url, timeout=self.timeout, 
+                                               allow_redirects=False, verify=False)
+                elif method == 'PUT':
+                    response = self.session.put(url, timeout=self.timeout, 
+                                              allow_redirects=False, verify=False)
+                elif method == 'PATCH':
+                    response = self.session.patch(url, timeout=self.timeout, 
+                                                allow_redirects=False, verify=False)
+                elif method == 'DELETE':
+                    response = self.session.delete(url, timeout=self.timeout, 
+                                                 allow_redirects=False, verify=False)
+                elif method == 'OPTIONS':
+                    response = self.session.options(url, timeout=self.timeout, 
+                                                  allow_redirects=False, verify=False)
+                else:
+                    response = self.session.get(url, timeout=self.timeout, 
+                                              allow_redirects=False, verify=False)
+                
+                response_time = time.time() - start_time
+                response._custom_response_time = response_time
                 
                 self.requests_made += 1
+                
+                # Atualiza rate limiting baseado na resposta
+                self._update_rate_limiting(response)
+                
                 return response
                 
             except requests.exceptions.Timeout:
@@ -215,6 +273,54 @@ class AdvancedDirectoryScanner:
                 break
         
         return None
+    
+    def _update_rate_limiting(self, response):
+        """Atualiza configurações de rate limiting baseado na resposta."""
+        if not self.adaptive_delay:
+            return
+        
+        # Se recebeu 429 (Too Many Requests) ou similar
+        if response.status_code in [429, 503, 502]:
+            self.rate_limited_count += 1
+            self.current_delay = min(self.current_delay * 1.5 + 0.1, 2.0)  # Max 2s delay
+            logger.warning(f"Rate limiting detectado, aumentando delay para {self.current_delay:.2f}s")
+        
+        # Se resposta bem-sucedida, pode diminuir delay gradualmente
+        elif response.status_code < 400:
+            self.current_delay = max(self.current_delay * 0.95 - 0.01, 0.0)  # Reduz gradualmente
+    
+    def _passes_filters(self, response, url):
+        """Verifica se a resposta passa pelos filtros configurados."""
+        if not response:
+            return False
+        
+        status = response.status_code
+        content_length = len(response.content)
+        response_time = getattr(response, '_custom_response_time', 0)
+        
+        # Filtro por status codes incluídos
+        if self.include_status_codes and status not in self.include_status_codes:
+            return False
+        
+        # Filtro por status codes excluídos
+        if status in self.exclude_status_codes:
+            return False
+        
+        # Filtro por tamanho de conteúdo
+        if self.content_length_filter:
+            min_length = self.content_length_filter.get('min', 0)
+            max_length = self.content_length_filter.get('max', float('inf'))
+            if not (min_length <= content_length <= max_length):
+                return False
+        
+        # Filtro por tempo de resposta
+        if self.response_time_filter:
+            min_time = self.response_time_filter.get('min', 0)
+            max_time = self.response_time_filter.get('max', float('inf'))
+            if not (min_time <= response_time <= max_time):
+                return False
+        
+        return True
     
     def _is_false_positive(self, response, url):
         """Verifica se a resposta é um false positive baseado no baseline 404."""
@@ -262,12 +368,17 @@ class AdvancedDirectoryScanner:
         if not response:
             return None
         
-        # Verifica se é false positive primeiro
+        # Verifica filtros avançados primeiro
+        if not self._passes_filters(response, url):
+            return None
+        
+        # Verifica se é false positive
         if self._is_false_positive(response, url):
             return None
         
         status = response.status_code
         headers = response.headers
+        response_time = getattr(response, '_custom_response_time', 0)
         
         result = {
             'url': url,
@@ -389,7 +500,7 @@ class AdvancedDirectoryScanner:
         
         return {
             'directory_type': 'method_restricted',
-            'notes': [f'Métodos permitidos: {allowed_methods}']
+            'notes': [f'Métodos permitidos: {allowed_methods}'] if allowed_methods else ['Método não permitido']
         }
     
     def _load_wordlist(self):
@@ -436,7 +547,94 @@ class AdvancedDirectoryScanner:
                 for ext in extensions:
                     extended_words.append(f"{word}{ext}")
         
+        # Backup file discovery
+        if self.backup_discovery:
+            extended_words.extend(self._generate_backup_variants(words))
+        
         return extended_words
+    
+    def _generate_backup_variants(self, words):
+        """Gera variantes de arquivos de backup para descoberta."""
+        backup_variants = []
+        backup_extensions = ['.bak', '.backup', '.old', '.orig', '.copy', '.tmp', '.save']
+        backup_prefixes = ['backup_', 'old_', 'copy_', 'original_']
+        backup_suffixes = ['~', '.1', '.2', '_backup', '_old', '_copy']
+        
+        for word in words:
+            # Adiciona extensões de backup
+            for ext in backup_extensions:
+                backup_variants.append(f"{word}{ext}")
+            
+            # Adiciona prefixos
+            for prefix in backup_prefixes:
+                backup_variants.append(f"{prefix}{word}")
+            
+            # Adiciona sufixos
+            for suffix in backup_suffixes:
+                backup_variants.append(f"{word}{suffix}")
+            
+            # Variantes específicas para arquivos com extensão
+            if '.' in word:
+                base_name, extension = word.rsplit('.', 1)
+                
+                # arquivo.php.bak
+                for ext in backup_extensions:
+                    backup_variants.append(f"{word}{ext}")
+                
+                # arquivo_bak.php
+                for suffix in ['_bak', '_backup', '_old']:
+                    backup_variants.append(f"{base_name}{suffix}.{extension}")
+        
+        return backup_variants
+    
+    def _discover_content_based_paths(self, response, base_url):
+        """Descobre novos caminhos baseado no conteúdo da resposta."""
+        if not self.content_discovery or not response:
+            return []
+        
+        discovered_paths = []
+        content = response.text.lower()
+        
+        # Regex patterns para descobrir paths
+        path_patterns = [
+            r'href=["\']([^"\']+)["\']',  # Links
+            r'src=["\']([^"\']+)["\']',   # Sources
+            r'action=["\']([^"\']+)["\']', # Form actions
+            r'url\(["\']?([^"\']+)["\']?\)',  # CSS urls
+            r'(?:\.\/|\/)?([a-zA-Z0-9_\-]+(?:\/[a-zA-Z0-9_\-]+)*\.(?:php|html|asp|aspx|jsp|js|css|txt|json|xml))',  # File paths
+        ]
+        
+        for pattern in path_patterns:
+            matches = re.findall(pattern, content, re.IGNORECASE)
+            for match in matches:
+                # Filtra e normaliza paths
+                if self._is_valid_discovered_path(match, base_url):
+                    discovered_paths.append(match)
+        
+        return list(set(discovered_paths))  # Remove duplicatas
+    
+    def _is_valid_discovered_path(self, path, base_url):
+        """Verifica se um path descoberto é válido para teste."""
+        if not path:
+            return False
+        
+        # Remove paths externos
+        if path.startswith(('http://', 'https://', '//', 'mailto:', 'tel:', 'javascript:')):
+            return False
+        
+        # Remove âncoras e parâmetros por enquanto
+        if '#' in path or '?' in path:
+            return False
+        
+        # Remove paths muito longos
+        if len(path) > 100:
+            return False
+        
+        # Deve ter formato válido
+        if not re.match(r'^[a-zA-Z0-9_\-/\.]+$', path):
+            return False
+        
+        return True
     
     def scan(self, recursive=False, max_depth=3, stealth=False, output_format='table'):
         """Executa o scan principal de diretórios."""
@@ -499,7 +697,7 @@ class AdvancedDirectoryScanner:
         return self.results
     
     def _scan_directory(self, base_url, words, depth=1, visited=None):
-        """Executa scan de um diretório específico."""
+        """Executa scan de um diretório específico com funcionalidades avançadas."""
         if visited is None:
             visited = set()
         
@@ -507,25 +705,28 @@ class AdvancedDirectoryScanner:
             return []
         
         results = []
+        content_based_paths = []
         
-        # Cria URLs para testar
+        # Cria URLs para testar - inclui múltiplos métodos HTTP se configurado
         urls_to_test = []
         for word in words:
             url = f"{base_url}/{word}"
             if url not in visited:
-                urls_to_test.append(url)
+                # Para cada método HTTP configurado
+                for method in self.http_methods:
+                    urls_to_test.append((url, method))
                 visited.add(url)
         
         if not urls_to_test:
             return results
         
-        console.print(f"[*] Testando {len(urls_to_test)} URLs (profundidade {depth})...")
+        console.print(f"[*] Testando {len(urls_to_test)} URLs com {len(self.http_methods)} métodos HTTP (profundidade {depth})...")
         
         # Executa requests em paralelo
         with ThreadPoolExecutor(max_workers=self.workers) as executor:
             future_to_url = {
-                executor.submit(self._make_request, url): url 
-                for url in urls_to_test
+                executor.submit(self._make_request, url, method): (url, method) 
+                for url, method in urls_to_test
             }
             
             with Progress(
@@ -541,18 +742,26 @@ class AdvancedDirectoryScanner:
                 directories_found = []
                 
                 for future in as_completed(future_to_url):
-                    url = future_to_url[future]
+                    url, method = future_to_url[future]
                     response = future.result()
                     
                     # Analisa resposta
                     analysis = self._analyze_response(response, url)
                     
                     if analysis:
+                        # Adiciona informação do método usado
+                        analysis['http_method'] = method
                         results.append(analysis)
+                        
+                        # Coleta paths para content discovery
+                        if self.content_discovery and response and response.status_code == 200:
+                            discovered_paths = self._discover_content_based_paths(response, base_url)
+                            content_based_paths.extend(discovered_paths)
                         
                         # Mostra resultado em tempo real
                         status = analysis['status']
                         notes = ' | '.join(analysis['notes']) if analysis['notes'] else ''
+                        method_display = f" [{method}]" if len(self.http_methods) > 1 else ""
                         
                         if status == 200:
                             color = "green"
@@ -563,7 +772,7 @@ class AdvancedDirectoryScanner:
                         else:
                             color = "white"
                         
-                        console.print(f"[bold {color}][+] {url} ({status})[/bold {color}] {notes}")
+                        console.print(f"[bold {color}][+] {url}{method_display} ({status})[/bold {color}] {notes}")
                         
                         # Se é um diretório e modo recursivo está ativo
                         if (self.recursive_enabled and 
@@ -575,6 +784,25 @@ class AdvancedDirectoryScanner:
                     
                     if self.stealth_mode:
                         time.sleep(0.1)  # Delay em modo stealth
+        
+        # Content-based discovery se habilitado
+        if content_based_paths and depth == 1:  # Apenas no primeiro nível para evitar recursão excessiva
+            console.print(f"[*] Descobertos {len(set(content_based_paths))} paths baseados em conteúdo...")
+            
+            # Remove duplicatas e testa paths descobertos
+            unique_paths = list(set(content_based_paths))[:50]  # Limita a 50 para performance
+            
+            for path in unique_paths:
+                full_url = urljoin(base_url, path)
+                if full_url not in visited:
+                    response = self._make_request(full_url)
+                    analysis = self._analyze_response(response, full_url)
+                    if analysis:
+                        analysis['http_method'] = 'GET'
+                        analysis['notes'].append('Content Discovery')
+                        results.append(analysis)
+                        console.print(f"[bold blue][*] {full_url} (Content Discovery)[/bold blue]")
+                    visited.add(full_url)
         
         # Scan recursivo dos diretórios encontrados
         if self.recursive_enabled and directories_found:
@@ -603,19 +831,21 @@ class AdvancedDirectoryScanner:
         # Tabela principal
         table = Table(title=f"Recursos Descobertos - {self.base_url}")
         table.add_column("URL", style="cyan", no_wrap=False)
+        table.add_column("Método", justify="center", style="blue")
         table.add_column("Status", justify="center", style="green")
         table.add_column("Tamanho", justify="right", style="yellow")
         table.add_column("Tipo", style="magenta")
-        table.add_column("Notas", style="dim", max_width=40)
+        table.add_column("Notas", style="dim", max_width=35)
         
         for result in self.results:
             url = result['url']
+            method = result.get('http_method', 'GET')
             status = str(result['status'])
             size = str(result['length'])
             dir_type = result['directory_type']
             notes = ' | '.join(result['notes']) if result['notes'] else ''
             
-            table.add_row(url, status, size, dir_type, notes)
+            table.add_row(url, method, status, size, dir_type, notes)
         
         console.print(table)
         
