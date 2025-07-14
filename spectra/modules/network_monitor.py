@@ -15,8 +15,8 @@ import json
 
 try:
     from scapy.all import (
-        sniff, get_if_list, Ether, IP, TCP, UDP, ICMP, ARP, DNS, 
-        conf
+        sniff, get_if_list, Ether, IP, IPv6, TCP, UDP, ICMP, ICMPv6,
+        ARP, DNS, conf
     )
     SCAPY_AVAILABLE = True
 except ImportError:
@@ -668,6 +668,478 @@ class TCPStream:
         
         return conversation
 
+class IPv6Analyzer:
+    """Classe para análise avançada de IPv6 e dual-stack"""
+    
+    def __init__(self):
+        self.ipv6_packets = []
+        self.ipv4_packets = []
+        self.dual_stack_connections = {}
+        self.ipv6_extensions = defaultdict(int)
+        self.tunnel_protocols = defaultdict(int)
+        self.icmpv6_types = defaultdict(int)
+        self.neighbor_discovery = []
+        self.router_advertisements = []
+        
+        # Tipos de túneis IPv6
+        self.tunnel_types = {
+            41: "6in4",     # IPv6 in IPv4
+            47: "GRE",      # Generic Routing Encapsulation
+            50: "ESP",      # Encapsulating Security Payload
+            51: "AH"        # Authentication Header
+        }
+        
+        # Extension headers IPv6
+        self.extension_headers = {
+            0: "Hop-by-Hop",
+            6: "TCP",
+            17: "UDP",
+            43: "Routing",
+            44: "Fragment", 
+            51: "Authentication",
+            60: "Destination Options"
+        }
+    
+    def analyze_ipv6_packet(self, packet):
+        """Analisa pacote IPv6 em detalhes"""
+        if not hasattr(packet, 'raw_packet'):
+            return None
+            
+        try:
+            pkt = packet.raw_packet
+            
+            # Análise IPv6
+            if hasattr(pkt, 'haslayer') and pkt.haslayer(IPv6):
+                ipv6_info = self._parse_ipv6_layer(pkt)
+                self.ipv6_packets.append(ipv6_info)
+                
+                # Detecta dual-stack
+                self._detect_dual_stack(packet, ipv6_info)
+                
+                # Analisa extension headers
+                self._analyze_extension_headers(pkt)
+                
+                # Analisa ICMPv6
+                if pkt.haslayer(ICMPv6):
+                    self._analyze_icmpv6(pkt)
+                
+                return ipv6_info
+            
+            # Análise IPv4 para dual-stack
+            elif hasattr(pkt, 'haslayer') and pkt.haslayer(IP):
+                ipv4_info = self._parse_ipv4_layer(pkt)
+                self.ipv4_packets.append(ipv4_info)
+                return ipv4_info
+                
+        except Exception as e:
+            logger.debug(f"Erro ao analisar IPv6: {e}")
+        
+        return None
+    
+    def _parse_ipv6_layer(self, pkt):
+        """Parse da camada IPv6"""
+        ipv6_layer = pkt[IPv6]
+        
+        return {
+            'version': 6,
+            'src': ipv6_layer.src,
+            'dst': ipv6_layer.dst,
+            'traffic_class': ipv6_layer.tc,
+            'flow_label': ipv6_layer.fl,
+            'payload_length': ipv6_layer.plen,
+            'next_header': ipv6_layer.nh,
+            'hop_limit': ipv6_layer.hlim,
+            'is_link_local': self._is_link_local(ipv6_layer.src),
+            'is_multicast': self._is_multicast(ipv6_layer.dst),
+            'is_loopback': ipv6_layer.src == "::1",
+            'address_type_src': self._classify_ipv6_address(ipv6_layer.src),
+            'address_type_dst': self._classify_ipv6_address(ipv6_layer.dst)
+        }
+    
+    def _parse_ipv4_layer(self, pkt):
+        """Parse da camada IPv4 para comparação dual-stack"""
+        ip_layer = pkt[IP]
+        
+        return {
+            'version': 4,
+            'src': ip_layer.src,
+            'dst': ip_layer.dst,
+            'ttl': ip_layer.ttl,
+            'protocol': ip_layer.proto,
+            'flags': ip_layer.flags,
+            'fragment_offset': ip_layer.frag
+        }
+    
+    def _is_link_local(self, addr):
+        """Verifica se é endereço link-local"""
+        return addr.startswith("fe80:")
+    
+    def _is_multicast(self, addr):
+        """Verifica se é endereço multicast"""
+        return addr.startswith("ff")
+    
+    def _classify_ipv6_address(self, addr):
+        """Classifica tipo de endereço IPv6"""
+        if addr == "::1":
+            return "loopback"
+        elif addr.startswith("fe80:"):
+            return "link-local"
+        elif addr.startswith("ff"):
+            return "multicast"
+        elif addr.startswith("fc") or addr.startswith("fd"):
+            return "unique-local"
+        elif addr.startswith("::ffff:"):
+            return "ipv4-mapped"
+        elif addr.startswith("2001:db8:"):
+            return "documentation"
+        elif addr.startswith("2001:"):
+            return "global-unicast"
+        else:
+            return "global-unicast"
+    
+    def _detect_dual_stack(self, packet, _ipv6_info):
+        """Detecta conexões dual-stack"""
+        try:
+            host_key = f"{packet.src_ip}-{packet.dst_ip}"
+            
+            if host_key not in self.dual_stack_connections:
+                self.dual_stack_connections[host_key] = {
+                    'ipv4_count': 0,
+                    'ipv6_count': 0,
+                    'first_seen': packet.timestamp,
+                    'protocols': set()
+                }
+            
+            conn = self.dual_stack_connections[host_key]
+            conn['ipv6_count'] += 1
+            if hasattr(packet, 'protocol'):
+                conn['protocols'].add(packet.protocol)
+                
+        except Exception as e:
+            logger.debug(f"Erro ao detectar dual-stack: {e}")
+    
+    def _analyze_extension_headers(self, pkt):
+        """Analisa extension headers IPv6"""
+        try:
+            current_header = pkt[IPv6].nh
+            self.ipv6_extensions[current_header] += 1
+            
+            # Verifica headers específicos
+            if current_header == 44:  # Fragment header
+                logger.debug("IPv6 fragment detected")
+            elif current_header == 43:  # Routing header
+                logger.debug("IPv6 routing header detected")
+                
+        except Exception as e:
+            logger.debug(f"Erro ao analisar extension headers: {e}")
+    
+    def _analyze_icmpv6(self, pkt):
+        """Analisa mensagens ICMPv6"""
+        try:
+            icmpv6_layer = pkt[ICMPv6]
+            icmp_type = icmpv6_layer.type
+            self.icmpv6_types[icmp_type] += 1
+            
+            # Neighbor Discovery Protocol
+            if icmp_type in [135, 136]:  # Neighbor Solicitation/Advertisement
+                self.neighbor_discovery.append({
+                    'type': 'NS' if icmp_type == 135 else 'NA',
+                    'timestamp': datetime.now(),
+                    'src': pkt[IPv6].src,
+                    'dst': pkt[IPv6].dst
+                })
+            
+            # Router Advertisement
+            elif icmp_type == 134:
+                self.router_advertisements.append({
+                    'timestamp': datetime.now(),
+                    'src': pkt[IPv6].src,
+                    'hop_limit': getattr(icmpv6_layer, 'chlim', 0),
+                    'flags': getattr(icmpv6_layer, 'M', 0)
+                })
+                
+        except Exception as e:
+            logger.debug(f"Erro ao analisar ICMPv6: {e}")
+    
+    def get_ipv6_statistics(self):
+        """Retorna estatísticas IPv6"""
+        total_ipv6 = len(self.ipv6_packets)
+        total_ipv4 = len(self.ipv4_packets)
+        total_packets = total_ipv6 + total_ipv4
+        
+        return {
+            'total_packets': total_packets,
+            'ipv6_packets': total_ipv6,
+            'ipv4_packets': total_ipv4,
+            'ipv6_percentage': (total_ipv6 / total_packets * 100) if total_packets > 0 else 0,
+            'dual_stack_connections': len(self.dual_stack_connections),
+            'extension_headers': dict(self.ipv6_extensions),
+            'icmpv6_types': dict(self.icmpv6_types),
+            'neighbor_discoveries': len(self.neighbor_discovery),
+            'router_advertisements': len(self.router_advertisements)
+        }
+    
+    def get_address_summary(self):
+        """Retorna resumo de tipos de endereços"""
+        address_types = defaultdict(int)
+        
+        for packet in self.ipv6_packets:
+            address_types[packet['address_type_src']] += 1
+            address_types[packet['address_type_dst']] += 1
+        
+        return dict(address_types)
+
+class AlertManager:
+    """Sistema de alertas e notificações em tempo real"""
+    
+    def __init__(self):
+        self.alerts = []
+        self.alert_rules = []
+        self.alert_counters = defaultdict(int)
+        self.alert_history = defaultdict(list)
+        self.max_alerts = 1000
+        
+        # Configurações de alertas
+        self.alert_config = {
+            'rate_limits': {
+                'port_scan': {'count': 10, 'window': 60},  # 10 portas em 60s
+                'dns_flood': {'count': 50, 'window': 10},  # 50 queries em 10s
+                'syn_flood': {'count': 100, 'window': 5},  # 100 SYNs em 5s
+                'bandwidth_spike': {'threshold': 10485760}  # 10MB/s
+            },
+            'severity_levels': {
+                'CRITICAL': {'color': 5, 'priority': 1},
+                'HIGH': {'color': 5, 'priority': 2},
+                'MEDIUM': {'color': 4, 'priority': 3},
+                'LOW': {'color': 3, 'priority': 4},
+                'INFO': {'color': 0, 'priority': 5}
+            }
+        }
+        
+        # Tipos de alertas
+        self.alert_types = {
+            'SECURITY_THREAT': 'CRITICAL',
+            'MALWARE_DETECTED': 'CRITICAL',
+            'SUSPICIOUS_TRAFFIC': 'HIGH',
+            'ANOMALY_DETECTED': 'HIGH',
+            'PERFORMANCE_ISSUE': 'MEDIUM',
+            'UNUSUAL_PATTERN': 'MEDIUM',
+            'PROTOCOL_VIOLATION': 'LOW',
+            'INFO_DISCLOSURE': 'LOW'
+        }
+    
+    def create_alert(self, alert_type, message, details=None, source_ip=None, destination_ip=None):
+        """Cria um novo alerta"""
+        try:
+            severity = self.alert_types.get(alert_type, 'INFO')
+            
+            alert = {
+                'id': len(self.alerts) + 1,
+                'timestamp': datetime.now(),
+                'type': alert_type,
+                'severity': severity,
+                'message': message,
+                'details': details or {},
+                'source_ip': source_ip,
+                'destination_ip': destination_ip,
+                'acknowledged': False,
+                'false_positive': False
+            }
+            
+            # Adiciona à lista
+            self.alerts.append(alert)
+            
+            # Mantém limite de alertas
+            if len(self.alerts) > self.max_alerts:
+                self.alerts.pop(0)
+            
+            # Adiciona ao histórico
+            self.alert_history[alert_type].append(alert['timestamp'])
+            
+            # Incrementa contador
+            self.alert_counters[alert_type] += 1
+            
+            logger.info(f"Alert created: {alert_type} - {message}")
+            return alert
+            
+        except Exception as e:
+            logger.error(f"Erro ao criar alerta: {e}")
+            return None
+    
+    def analyze_traffic_patterns(self, packets, bandwidth_stats):
+        """Analisa padrões de tráfego e gera alertas"""
+        try:
+            current_time = time.time()
+            
+            # Análise de port scanning
+            self._detect_port_scanning(packets)
+            
+            # Análise de DNS flooding
+            self._detect_dns_flooding(packets)
+            
+            # Análise de SYN flooding
+            self._detect_syn_flooding(packets)
+            
+            # Análise de bandwidth spike
+            self._detect_bandwidth_spike(bandwidth_stats)
+            
+            # Análise de conexões suspeitas
+            self._detect_suspicious_connections(packets)
+            
+        except Exception as e:
+            logger.error(f"Erro na análise de padrões: {e}")
+    
+    def _detect_port_scanning(self, packets):
+        """Detecta port scanning"""
+        try:
+            # Agrupa por IP source nos últimos 60 segundos
+            recent_time = datetime.now() - timedelta(seconds=60)
+            recent_packets = [p for p in packets if p.timestamp > recent_time and p.protocol == "TCP"]
+            
+            ip_ports = defaultdict(set)
+            for packet in recent_packets:
+                if hasattr(packet, 'src_ip') and hasattr(packet, 'dst_port'):
+                    ip_ports[packet.src_ip].add(packet.dst_port)
+            
+            # Alerta se um IP tocou muitas portas
+            for ip, ports in ip_ports.items():
+                if len(ports) >= self.alert_config['rate_limits']['port_scan']['count']:
+                    self.create_alert(
+                        'SUSPICIOUS_TRAFFIC',
+                        f"Possible port scan from {ip}",
+                        {'scanned_ports': len(ports), 'ports': list(ports)[:10]},
+                        source_ip=ip
+                    )
+                    
+        except Exception as e:
+            logger.debug(f"Erro na detecção de port scan: {e}")
+    
+    def _detect_dns_flooding(self, packets):
+        """Detecta DNS flooding"""
+        try:
+            recent_time = datetime.now() - timedelta(seconds=10)
+            dns_packets = [p for p in packets if p.timestamp > recent_time and 
+                          hasattr(p, 'dst_port') and p.dst_port == 53]
+            
+            ip_queries = defaultdict(int)
+            for packet in dns_packets:
+                if hasattr(packet, 'src_ip'):
+                    ip_queries[packet.src_ip] += 1
+            
+            for ip, count in ip_queries.items():
+                if count >= self.alert_config['rate_limits']['dns_flood']['count']:
+                    self.create_alert(
+                        'ANOMALY_DETECTED',
+                        f"DNS flooding from {ip}",
+                        {'query_count': count, 'time_window': '10s'},
+                        source_ip=ip
+                    )
+                    
+        except Exception as e:
+            logger.debug(f"Erro na detecção de DNS flood: {e}")
+    
+    def _detect_syn_flooding(self, packets):
+        """Detecta SYN flooding"""
+        try:
+            recent_time = datetime.now() - timedelta(seconds=5)
+            syn_packets = [p for p in packets if p.timestamp > recent_time and 
+                          p.protocol == "TCP" and hasattr(p, 'tcp_flags') and 
+                          p.tcp_flags & 0x02]  # SYN flag
+            
+            ip_syns = defaultdict(int)
+            for packet in syn_packets:
+                if hasattr(packet, 'src_ip'):
+                    ip_syns[packet.src_ip] += 1
+            
+            for ip, count in ip_syns.items():
+                if count >= self.alert_config['rate_limits']['syn_flood']['count']:
+                    self.create_alert(
+                        'SECURITY_THREAT',
+                        f"SYN flood attack from {ip}",
+                        {'syn_count': count, 'time_window': '5s'},
+                        source_ip=ip
+                    )
+                    
+        except Exception as e:
+            logger.debug(f"Erro na detecção de SYN flood: {e}")
+    
+    def _detect_bandwidth_spike(self, bandwidth_stats):
+        """Detecta picos de bandwidth"""
+        try:
+            current_bps = bandwidth_stats.get('bytes_per_second', 0)
+            threshold = self.alert_config['rate_limits']['bandwidth_spike']['threshold']
+            
+            if current_bps > threshold:
+                self.create_alert(
+                    'PERFORMANCE_ISSUE',
+                    f"High bandwidth usage detected",
+                    {
+                        'current_bps': current_bps,
+                        'threshold': threshold,
+                        'usage_mb': current_bps / 1024 / 1024
+                    }
+                )
+                
+        except Exception as e:
+            logger.debug(f"Erro na detecção de bandwidth spike: {e}")
+    
+    def _detect_suspicious_connections(self, packets):
+        """Detecta conexões suspeitas"""
+        try:
+            # Conexões para portas não-padrão
+            for packet in packets[-50:]:  # Últimos 50 pacotes
+                if hasattr(packet, 'dst_port') and packet.dst_port:
+                    # Portas suspeitas conhecidas
+                    suspicious_ports = [4444, 5555, 6666, 7777, 8888, 9999, 31337, 12345]
+                    if packet.dst_port in suspicious_ports:
+                        self.create_alert(
+                            'SUSPICIOUS_TRAFFIC',
+                            f"Connection to suspicious port {packet.dst_port}",
+                            {'port': packet.dst_port, 'protocol': packet.protocol},
+                            source_ip=packet.src_ip,
+                            destination_ip=packet.dst_ip
+                        )
+                        
+        except Exception as e:
+            logger.debug(f"Erro na detecção de conexões suspeitas: {e}")
+    
+    def get_recent_alerts(self, limit=20):
+        """Retorna alertas recentes"""
+        return sorted(self.alerts, key=lambda x: x['timestamp'], reverse=True)[:limit]
+    
+    def get_alerts_by_severity(self, severity):
+        """Retorna alertas por severidade"""
+        return [alert for alert in self.alerts if alert['severity'] == severity]
+    
+    def get_alert_summary(self):
+        """Retorna resumo de alertas"""
+        total = len(self.alerts)
+        unacknowledged = len([a for a in self.alerts if not a['acknowledged']])
+        
+        by_severity = defaultdict(int)
+        for alert in self.alerts:
+            by_severity[alert['severity']] += 1
+        
+        by_type = defaultdict(int)
+        for alert in self.alerts:
+            by_type[alert['type']] += 1
+        
+        return {
+            'total_alerts': total,
+            'unacknowledged': unacknowledged,
+            'by_severity': dict(by_severity),
+            'by_type': dict(by_type),
+            'acknowledgment_rate': ((total - unacknowledged) / total * 100) if total > 0 else 0
+        }
+    
+    def acknowledge_alert(self, alert_id):
+        """Marca alerta como reconhecido"""
+        for alert in self.alerts:
+            if alert['id'] == alert_id:
+                alert['acknowledged'] = True
+                return True
+        return False
+
 class NetworkPacket:
     """Classe para representar um pacote de rede capturado"""
     
@@ -694,7 +1166,7 @@ class NetworkPacket:
                 self.dst_mac = pkt[Ether].dst
                 self.eth_type = pkt[Ether].type
             
-            # IP layer
+            # IP layer (IPv4)
             if pkt.haslayer(IP):
                 self.src_ip = pkt[IP].src
                 self.dst_ip = pkt[IP].dst
@@ -703,6 +1175,25 @@ class NetworkPacket:
                 self.ip_len = pkt[IP].len
                 self.ip_flags = pkt[IP].flags
                 self.ip_frag = pkt[IP].frag
+                self.ip_version = 4
+            
+            # IPv6 layer
+            elif pkt.haslayer(IPv6):
+                self.src_ip = pkt[IPv6].src
+                self.dst_ip = pkt[IPv6].dst
+                self.protocol = pkt[IPv6].nh  # Next Header
+                self.ttl = pkt[IPv6].hlim     # Hop Limit (equivalent to TTL)
+                self.ip_len = pkt[IPv6].plen  # Payload Length
+                self.ip_version = 6
+                
+                # IPv6 specific fields
+                self.traffic_class = pkt[IPv6].tc
+                self.flow_label = pkt[IPv6].fl
+                self.hop_limit = pkt[IPv6].hlim
+                
+                # Classify IPv6 address types
+                self.ipv6_src_type = self._classify_ipv6_address(self.src_ip)
+                self.ipv6_dst_type = self._classify_ipv6_address(self.dst_ip)
                 
                 # TCP
                 if pkt.haslayer(TCP):
@@ -836,6 +1327,25 @@ class NetworkPacket:
             logger.error(f"Erro ao analisar pacote: {e}")
             self.info = "Pacote inválido"
     
+    def _classify_ipv6_address(self, addr):
+        """Classifica tipo de endereço IPv6"""
+        if addr == "::1":
+            return "loopback"
+        elif addr.startswith("fe80:"):
+            return "link-local"
+        elif addr.startswith("ff"):
+            return "multicast"
+        elif addr.startswith("fc") or addr.startswith("fd"):
+            return "unique-local"
+        elif addr.startswith("::ffff:"):
+            return "ipv4-mapped"
+        elif addr.startswith("2001:db8:"):
+            return "documentation"
+        elif addr.startswith("2001:"):
+            return "global-unicast"
+        else:
+            return "global-unicast"
+    
     def is_relevant(self) -> bool:
         """Determina se o pacote contém informações relevantes"""
         # Sempre mostrar se não é tráfego local
@@ -944,6 +1454,9 @@ class NetworkMonitorTUI:
         self.http_transactions = []  # Lista de transações HTTP analisadas
         self.bandwidth_analyzer = BandwidthAnalyzer()  # Analisador de bandwidth
         self.dns_analyzer = DNSAnalyzer()  # Analisador DNS
+        self.ipv6_analyzer = IPv6Analyzer()  # Analisador IPv6
+        self.alert_manager = AlertManager()  # Sistema de alertas
+        self.last_analysis_time = time.time()  # Última análise de padrões
         
     def get_available_interfaces(self) -> List[str]:
         """Retorna lista de interfaces disponíveis"""
@@ -1013,6 +1526,12 @@ class NetworkMonitorTUI:
         
         # Processa análise DNS
         self._process_dns_packet(packet)
+        
+        # Processa análise IPv6
+        self._process_ipv6_packet(packet)
+        
+        # Análise de alertas (a cada 10 segundos)
+        self._process_alert_analysis()
     
     def stop_capture(self):
         """Para captura de pacotes"""
@@ -1107,6 +1626,27 @@ class NetworkMonitorTUI:
                 logger.debug(f"DNS packet processed: {dns_data['domain']}")
         except Exception as e:
             logger.debug(f"Erro ao processar DNS: {e}")
+    
+    def _process_ipv6_packet(self, packet):
+        """Processa pacote para análise IPv6"""
+        try:
+            ipv6_data = self.ipv6_analyzer.analyze_ipv6_packet(packet)
+            if ipv6_data:
+                logger.debug(f"IPv6 packet processed: {ipv6_data.get('version', 'unknown')}")
+        except Exception as e:
+            logger.debug(f"Erro ao processar IPv6: {e}")
+    
+    def _process_alert_analysis(self):
+        """Processa análise de alertas periodicamente"""
+        try:
+            current_time = time.time()
+            # Executa análise a cada 10 segundos
+            if current_time - self.last_analysis_time >= 10:
+                bandwidth_stats = self.bandwidth_analyzer.get_summary_stats()
+                self.alert_manager.analyze_traffic_patterns(self.packets, bandwidth_stats)
+                self.last_analysis_time = current_time
+        except Exception as e:
+            logger.debug(f"Erro na análise de alertas: {e}")
     
     def export_packets(self, filename: str, format: str = "json"):
         """Exporta pacotes capturados"""
