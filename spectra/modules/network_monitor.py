@@ -34,6 +34,322 @@ from ..core.logger import get_logger
 
 logger = get_logger(__name__)
 
+class BandwidthAnalyzer:
+    """Classe para análise de bandwidth e performance de rede em tempo real"""
+    
+    def __init__(self):
+        self.bandwidth_history = defaultdict(list)  # Por interface
+        self.traffic_by_ip = defaultdict(int)  # Tráfego por IP
+        self.traffic_by_protocol = defaultdict(int)  # Tráfego por protocolo
+        self.packet_count_history = []
+        self.latency_samples = []
+        self.start_time = time.time()
+        self.last_update = time.time()
+        self.total_bytes = 0
+        self.total_packets = 0
+        self.bytes_per_second = 0
+        self.packets_per_second = 0
+        self.peak_bandwidth = 0
+        self.avg_packet_size = 0
+        
+        # Histórico para gráficos (últimos 60 segundos)
+        self.bandwidth_timeline = []
+        self.max_history_points = 60
+        
+    def update(self, packet):
+        """Atualiza estatísticas com novo pacote"""
+        current_time = time.time()
+        packet_size = packet.size if packet.size else 0
+        
+        # Atualiza contadores totais
+        self.total_bytes += packet_size
+        self.total_packets += 1
+        
+        # Calcula estatísticas por segundo
+        time_diff = current_time - self.last_update
+        if time_diff >= 1.0:  # Atualiza a cada segundo
+            self.bytes_per_second = packet_size / time_diff if time_diff > 0 else 0
+            self.packets_per_second = 1 / time_diff if time_diff > 0 else 0
+            
+            # Adiciona ao histórico
+            self.bandwidth_timeline.append({
+                'timestamp': current_time,
+                'bps': self.bytes_per_second,
+                'pps': self.packets_per_second
+            })
+            
+            # Mantém apenas últimos 60 pontos
+            if len(self.bandwidth_timeline) > self.max_history_points:
+                self.bandwidth_timeline.pop(0)
+            
+            # Atualiza pico
+            if self.bytes_per_second > self.peak_bandwidth:
+                self.peak_bandwidth = self.bytes_per_second
+            
+            self.last_update = current_time
+        
+        # Estatísticas por IP
+        if hasattr(packet, 'src_ip') and packet.src_ip:
+            self.traffic_by_ip[packet.src_ip] += packet_size
+        if hasattr(packet, 'dst_ip') and packet.dst_ip:
+            self.traffic_by_ip[packet.dst_ip] += packet_size
+        
+        # Estatísticas por protocolo
+        if hasattr(packet, 'protocol') and packet.protocol:
+            self.traffic_by_protocol[packet.protocol] += packet_size
+        
+        # Calcula tamanho médio de pacote
+        self.avg_packet_size = self.total_bytes / self.total_packets if self.total_packets > 0 else 0
+    
+    def get_top_talkers(self, limit=10):
+        """Retorna top IPs por tráfego"""
+        sorted_ips = sorted(self.traffic_by_ip.items(), key=lambda x: x[1], reverse=True)
+        return sorted_ips[:limit]
+    
+    def get_protocol_distribution(self):
+        """Retorna distribuição de tráfego por protocolo"""
+        total = sum(self.traffic_by_protocol.values())
+        if total == 0:
+            return []
+        
+        distribution = []
+        for protocol, bytes_count in self.traffic_by_protocol.items():
+            percentage = (bytes_count / total) * 100
+            distribution.append((protocol, bytes_count, percentage))
+        
+        return sorted(distribution, key=lambda x: x[1], reverse=True)
+    
+    def get_bandwidth_graph(self, width=50, height=10):
+        """Gera gráfico ASCII de bandwidth"""
+        if len(self.bandwidth_timeline) < 2:
+            return ["No data available for graph"]
+        
+        # Extrai valores de bandwidth
+        values = [point['bps'] for point in self.bandwidth_timeline]
+        max_val = max(values) if values else 1
+        min_val = min(values) if values else 0
+        
+        graph_lines = []
+        
+        # Cria escala vertical
+        for i in range(height):
+            line = ""
+            threshold = max_val - (i * (max_val - min_val) / (height - 1))
+            
+            for value in values[-width:]:  # Últimos 'width' pontos
+                if value >= threshold:
+                    line += "█"
+                elif value >= threshold * 0.75:
+                    line += "▆"
+                elif value >= threshold * 0.5:
+                    line += "▄"
+                elif value >= threshold * 0.25:
+                    line += "▂"
+                else:
+                    line += " "
+            
+            # Adiciona escala no lado direito
+            scale_val = threshold
+            if scale_val >= 1024*1024:
+                scale_str = f"{scale_val/(1024*1024):.1f}MB/s"
+            elif scale_val >= 1024:
+                scale_str = f"{scale_val/1024:.1f}KB/s"
+            else:
+                scale_str = f"{scale_val:.0f}B/s"
+            
+            graph_lines.append(f"{line} {scale_str}")
+        
+        # Adiciona linha de tempo no final
+        time_line = "─" * min(width, len(values))
+        graph_lines.append(time_line + " Time →")
+        
+        return graph_lines
+    
+    def get_summary_stats(self):
+        """Retorna resumo das estatísticas"""
+        uptime = time.time() - self.start_time
+        
+        # Formata valores
+        def format_bytes(bytes_val):
+            if bytes_val >= 1024*1024*1024:
+                return f"{bytes_val/(1024*1024*1024):.2f} GB"
+            elif bytes_val >= 1024*1024:
+                return f"{bytes_val/(1024*1024):.2f} MB"
+            elif bytes_val >= 1024:
+                return f"{bytes_val/1024:.2f} KB"
+            else:
+                return f"{bytes_val:.0f} B"
+        
+        def format_bandwidth(bps):
+            return format_bytes(bps) + "/s"
+        
+        return {
+            'uptime': f"{uptime:.0f}s",
+            'total_bytes': format_bytes(self.total_bytes),
+            'total_packets': f"{self.total_packets:,}",
+            'current_bandwidth': format_bandwidth(self.bytes_per_second),
+            'peak_bandwidth': format_bandwidth(self.peak_bandwidth),
+            'avg_packet_size': f"{self.avg_packet_size:.0f} bytes",
+            'packets_per_second': f"{self.packets_per_second:.1f} pps"
+        }
+
+class DNSAnalyzer:
+    """Classe para análise de DNS com cache e detecção de anomalias"""
+    
+    def __init__(self):
+        self.dns_cache = {}  # Cache de resoluções DNS
+        self.dns_queries = []  # Lista de queries DNS
+        self.dns_responses = []  # Lista de responses DNS
+        self.suspicious_domains = []  # Domínios suspeitos
+        self.dns_tunneling_patterns = []  # Padrões de DNS tunneling
+        
+        # Blacklists conhecidas (exemplo)
+        self.known_malicious_domains = {
+            'malware.com', 'phishing.net', 'botnet.org',
+            'c2server.com', 'malicious.info'
+        }
+        
+        # Padrões suspeitos para detecção de DNS tunneling
+        self.tunneling_indicators = [
+            'long_subdomain',  # Subdomínios muito longos
+            'base64_pattern',  # Padrões base64
+            'high_frequency',  # Muitas queries para mesmo domínio
+            'unusual_tld',     # TLDs incomuns
+            'hex_pattern'      # Padrões hexadecimais
+        ]
+    
+    def analyze_dns_packet(self, packet):
+        """Analisa pacote DNS e extrai informações"""
+        if not hasattr(packet, 'raw_packet') or not hasattr(packet.raw_packet, 'load'):
+            return None
+        
+        try:
+            # Verifica se é DNS (porta 53)
+            if not (hasattr(packet, 'dst_port') and (packet.dst_port == 53 or packet.src_port == 53)):
+                return None
+            
+            payload = bytes(packet.raw_packet.load)
+            
+            # Parse básico de DNS (simulado - implementação real seria mais complexa)
+            dns_data = self._parse_dns_payload(payload)
+            if dns_data:
+                # Análise de segurança
+                security_issues = self._analyze_dns_security(dns_data)
+                
+                dns_info = {
+                    'timestamp': packet.timestamp,
+                    'src_ip': packet.src_ip,
+                    'dst_ip': packet.dst_ip,
+                    'type': dns_data.get('type', 'unknown'),
+                    'domain': dns_data.get('domain', ''),
+                    'response_ip': dns_data.get('response_ip', ''),
+                    'query_type': dns_data.get('query_type', 'A'),
+                    'security_issues': security_issues,
+                    'is_suspicious': len(security_issues) > 0
+                }
+                
+                # Adiciona ao cache se for response
+                if dns_data.get('type') == 'response' and dns_data.get('domain') and dns_data.get('response_ip'):
+                    self.dns_cache[dns_data['domain']] = {
+                        'ip': dns_data['response_ip'],
+                        'timestamp': packet.timestamp,
+                        'ttl': dns_data.get('ttl', 3600)
+                    }
+                
+                # Adiciona às listas
+                if dns_data.get('type') == 'query':
+                    self.dns_queries.append(dns_info)
+                else:
+                    self.dns_responses.append(dns_info)
+                
+                return dns_info
+                
+        except Exception as e:
+            logger.debug(f"Erro ao analisar DNS: {e}")
+        
+        return None
+    
+    def _parse_dns_payload(self, payload):
+        """Parse básico de payload DNS (simulado)"""
+        try:
+            # Em uma implementação real, seria usado um parser DNS completo
+            # Aqui fazemos uma simulação básica
+            text = payload.decode('utf-8', errors='ignore')
+            
+            # Detecta domínios com regex simples
+            import re
+            domain_pattern = r'([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}'
+            domains = re.findall(domain_pattern, text)
+            
+            if domains:
+                return {
+                    'type': 'query' if len(payload) < 100 else 'response',
+                    'domain': domains[0],
+                    'query_type': 'A',
+                    'response_ip': '192.168.1.1' if len(payload) > 100 else None,
+                    'ttl': 3600
+                }
+        except:
+            pass
+        
+        return None
+    
+    def _analyze_dns_security(self, dns_data):
+        """Analisa problemas de segurança em DNS"""
+        issues = []
+        domain = dns_data.get('domain', '').lower()
+        
+        # Verifica domínios maliciosos conhecidos
+        if domain in self.known_malicious_domains:
+            issues.append('KNOWN_MALICIOUS_DOMAIN')
+        
+        # Verifica indicadores de DNS tunneling
+        if len(domain) > 50:  # Domínio muito longo
+            issues.append('POSSIBLE_DNS_TUNNELING_LONG_DOMAIN')
+        
+        # Verifica padrões suspeitos
+        if any(char in domain for char in ['0x', '==', '+', '/']):
+            issues.append('SUSPICIOUS_DOMAIN_PATTERN')
+        
+        # Verifica TLDs incomuns
+        uncommon_tlds = ['.tk', '.ml', '.ga', '.cf', '.onion']
+        if any(domain.endswith(tld) for tld in uncommon_tlds):
+            issues.append('UNCOMMON_TLD')
+        
+        # Verifica subdomínios muito longos
+        parts = domain.split('.')
+        if any(len(part) > 20 for part in parts):
+            issues.append('LONG_SUBDOMAIN')
+        
+        return issues
+    
+    def get_dns_cache(self):
+        """Retorna cache DNS atual"""
+        return dict(sorted(self.dns_cache.items(), key=lambda x: x[1]['timestamp'], reverse=True))
+    
+    def get_recent_queries(self, limit=20):
+        """Retorna queries DNS recentes"""
+        return sorted(self.dns_queries, key=lambda x: x['timestamp'], reverse=True)[:limit]
+    
+    def get_suspicious_activity(self):
+        """Retorna atividade DNS suspeita"""
+        suspicious = []
+        
+        # Combina queries e responses suspeitas
+        all_dns = self.dns_queries + self.dns_responses
+        for item in all_dns:
+            if item['is_suspicious']:
+                suspicious.append(item)
+        
+        return sorted(suspicious, key=lambda x: x['timestamp'], reverse=True)
+    
+    def resolve_ip(self, ip):
+        """Resolução reversa de IP (usando cache)"""
+        for domain, data in self.dns_cache.items():
+            if data['ip'] == ip:
+                return domain
+        return None
+
 class HTTPAnalyzer:
     """Classe para análise detalhada de tráfego HTTP/HTTPS"""
     
@@ -626,6 +942,8 @@ class NetworkMonitorTUI:
         self.stream_view = False  # Se está visualizando um stream específico
         self.http_analyzer = HTTPAnalyzer()  # Analisador HTTP/HTTPS
         self.http_transactions = []  # Lista de transações HTTP analisadas
+        self.bandwidth_analyzer = BandwidthAnalyzer()  # Analisador de bandwidth
+        self.dns_analyzer = DNSAnalyzer()  # Analisador DNS
         
     def get_available_interfaces(self) -> List[str]:
         """Retorna lista de interfaces disponíveis"""
@@ -689,6 +1007,12 @@ class NetworkMonitorTUI:
         
         # Processa análise HTTP
         self._process_http_packet(packet)
+        
+        # Atualiza estatísticas de bandwidth
+        self.bandwidth_analyzer.update(packet)
+        
+        # Processa análise DNS
+        self._process_dns_packet(packet)
     
     def stop_capture(self):
         """Para captura de pacotes"""
@@ -775,6 +1099,15 @@ class NetworkMonitorTUI:
                 })
         return sorted(alerts, key=lambda x: x['timestamp'], reverse=True)
     
+    def _process_dns_packet(self, packet):
+        """Processa pacote para análise DNS"""
+        try:
+            dns_data = self.dns_analyzer.analyze_dns_packet(packet)
+            if dns_data:
+                logger.debug(f"DNS packet processed: {dns_data['domain']}")
+        except Exception as e:
+            logger.debug(f"Erro ao processar DNS: {e}")
+    
     def export_packets(self, filename: str, format: str = "json"):
         """Exporta pacotes capturados"""
         try:
@@ -856,6 +1189,10 @@ class NetworkMonitorTUI:
                     self.current_view = "http"
                 elif key == ord('7'):
                     self.current_view = "security"
+                elif key == ord('8'):
+                    self.current_view = "bandwidth"
+                elif key == ord('9'):
+                    self.current_view = "dashboard"
                 elif key == ord('h'):
                     self._toggle_hex_view()
                 elif key == ord('t'):  # TCP streams
@@ -937,6 +1274,10 @@ class NetworkMonitorTUI:
             self._draw_http_view()
         elif self.current_view == "security":
             self._draw_security_view()
+        elif self.current_view == "bandwidth":
+            self._draw_bandwidth_view()
+        elif self.current_view == "dashboard":
+            self._draw_dashboard_view()
         elif self.current_view == "hex":
             self._draw_hex_view()
         
@@ -1142,8 +1483,8 @@ class NetworkMonitorTUI:
                 line1 = " NETWORK MONITOR: "
                 
                 # Comandos principais com destaque nas teclas
-                commands1 = "[S]tart/Stop  [C]lear  [E]xport  [I]filter  [R]elevant  [F]ollow  [T]CP"
-                commands2 = "[1]Packets [2]Stats [3]Details [4]Interfaces [5]Streams [6]HTTP [7]Security [Q]uit"
+                commands1 = "[S]tart/Stop  [C]lear  [E]xport  [I]filter  [R]elevant  [F]ollow  [9]Dashboard"
+                commands2 = "[1]Packets [2]Stats [3]Details [4]Interfaces [5]Streams [6]HTTP [7]Security [8]Bandwidth [Q]uit"
                 
                 # Linha 1 - título e comandos principais
                 self.stdscr.addstr(curses.LINES - 2, 0, line1, curses.color_pair(7))
@@ -1559,6 +1900,251 @@ class NetworkMonitorTUI:
                 self.stdscr.addstr(y, 0, line[:curses.COLS-1], attr)
             except:
                 pass
+    
+    def _draw_bandwidth_view(self):
+        """Desenha visualização de bandwidth e estatísticas de rede"""
+        start_y = 4
+        
+        # Obtém estatísticas
+        stats = self.bandwidth_analyzer.get_summary_stats()
+        top_talkers = self.bandwidth_analyzer.get_top_talkers(8)
+        protocol_dist = self.bandwidth_analyzer.get_protocol_distribution()
+        
+        # Título
+        try:
+            self.stdscr.addstr(start_y, 0, "BANDWIDTH & NETWORK STATISTICS", curses.color_pair(1))
+        except:
+            pass
+        
+        # Estatísticas resumo
+        col1_x = 2
+        col2_x = 40
+        current_y = start_y + 2
+        
+        try:
+            self.stdscr.addstr(current_y, col1_x, "NETWORK SUMMARY", curses.color_pair(1))
+            current_y += 1
+            self.stdscr.addstr(current_y, col1_x, f"Uptime: {stats['uptime']}")
+            current_y += 1
+            self.stdscr.addstr(current_y, col1_x, f"Total Bytes: {stats['total_bytes']}")
+            current_y += 1
+            self.stdscr.addstr(current_y, col1_x, f"Total Packets: {stats['total_packets']}")
+            current_y += 1
+            self.stdscr.addstr(current_y, col1_x, f"Current BW: {stats['current_bandwidth']}")
+            current_y += 1
+            self.stdscr.addstr(current_y, col1_x, f"Peak BW: {stats['peak_bandwidth']}")
+            current_y += 1
+            self.stdscr.addstr(current_y, col1_x, f"Avg Packet: {stats['avg_packet_size']}")
+            current_y += 1
+            self.stdscr.addstr(current_y, col1_x, f"PPS: {stats['packets_per_second']}")
+        except:
+            pass
+        
+        # Top Talkers
+        try:
+            current_y = start_y + 2
+            self.stdscr.addstr(current_y, col2_x, "TOP TALKERS", curses.color_pair(1))
+            current_y += 1
+            for i, (ip, bytes_count) in enumerate(top_talkers):
+                if current_y >= curses.LINES - 12:  # Espaço para gráfico
+                    break
+                # Formata bytes
+                if bytes_count >= 1024*1024:
+                    size_str = f"{bytes_count/(1024*1024):.1f}MB"
+                elif bytes_count >= 1024:
+                    size_str = f"{bytes_count/1024:.1f}KB"
+                else:
+                    size_str = f"{bytes_count}B"
+                
+                line = f"{i+1:2}. {ip:<15} {size_str:>10}"
+                attr = curses.color_pair(3) if i < 3 else curses.color_pair(0)
+                self.stdscr.addstr(current_y, col2_x, line, attr)
+                current_y += 1
+        except:
+            pass
+        
+        # Distribuição por protocolo
+        try:
+            protocol_y = start_y + 2
+            protocol_x = 75
+            if curses.COLS > protocol_x + 20:
+                self.stdscr.addstr(protocol_y, protocol_x, "PROTOCOLS", curses.color_pair(1))
+                protocol_y += 1
+                for i, (protocol, bytes_count, percentage) in enumerate(protocol_dist[:6]):
+                    if protocol_y >= curses.LINES - 12:
+                        break
+                    bar_length = int(percentage / 10)  # Barra de 0-10 caracteres
+                    bar = "█" * bar_length + "░" * (10 - bar_length)
+                    line = f"{protocol:<4} {bar} {percentage:5.1f}%"
+                    self.stdscr.addstr(protocol_y, protocol_x, line)
+                    protocol_y += 1
+        except:
+            pass
+        
+        # Gráfico de bandwidth
+        try:
+            graph_start_y = curses.LINES - 14
+            self.stdscr.addstr(graph_start_y - 1, 2, "BANDWIDTH GRAPH (Last 60 seconds)", curses.color_pair(1))
+            
+            graph_width = min(60, curses.COLS - 20)
+            graph_height = 8
+            graph_lines = self.bandwidth_analyzer.get_bandwidth_graph(graph_width, graph_height)
+            
+            for i, line in enumerate(graph_lines):
+                if graph_start_y + i >= curses.LINES - 3:
+                    break
+                # Color para o gráfico
+                attr = curses.color_pair(4) if "█" in line else curses.color_pair(0)
+                self.stdscr.addstr(graph_start_y + i, 2, line[:curses.COLS-4], attr)
+        except:
+            pass
+    
+    def _draw_dashboard_view(self):
+        """Desenha dashboard completo de rede em tempo real"""
+        start_y = 4
+        
+        # Título principal
+        try:
+            title = "╔═══════════════════════════════════════════════════════════════════════════════════╗"
+            subtitle = "║                           SPECTRA NETWORK DASHBOARD                              ║"
+            border = "╚═══════════════════════════════════════════════════════════════════════════════════╝"
+            
+            self.stdscr.addstr(start_y, 0, title[:curses.COLS-1], curses.color_pair(1))
+            self.stdscr.addstr(start_y + 1, 0, subtitle[:curses.COLS-1], curses.color_pair(1))
+            self.stdscr.addstr(start_y + 2, 0, border[:curses.COLS-1], curses.color_pair(1))
+        except:
+            pass
+        
+        # Layout em quadrantes
+        mid_x = curses.COLS // 2
+        mid_y = (curses.LINES - 10) // 2 + start_y + 4
+        
+        # Quadrante 1: Status e Estatísticas Básicas
+        try:
+            stats = self.bandwidth_analyzer.get_summary_stats()
+            
+            self.stdscr.addstr(start_y + 4, 2, "📊 NETWORK STATUS", curses.color_pair(1))
+            self.stdscr.addstr(start_y + 5, 2, f"Interface: {self.interface or 'N/A'}")
+            self.stdscr.addstr(start_y + 6, 2, f"Status: {'🟢 CAPTURING' if self.is_capturing else '🔴 STOPPED'}")
+            self.stdscr.addstr(start_y + 7, 2, f"Uptime: {stats['uptime']}")
+            self.stdscr.addstr(start_y + 8, 2, f"Packets: {stats['total_packets']}")
+            self.stdscr.addstr(start_y + 9, 2, f"Traffic: {stats['total_bytes']}")
+            self.stdscr.addstr(start_y + 10, 2, f"Current: {stats['current_bandwidth']}")
+        except:
+            pass
+        
+        # Quadrante 2: Alertas de Segurança
+        try:
+            alerts = self.get_security_alerts()
+            alert_count = len(alerts)
+            
+            self.stdscr.addstr(start_y + 4, mid_x + 2, "🛡️ SECURITY ALERTS", curses.color_pair(1))
+            
+            if alert_count == 0:
+                self.stdscr.addstr(start_y + 5, mid_x + 2, "✅ No threats detected", curses.color_pair(3))
+            else:
+                self.stdscr.addstr(start_y + 5, mid_x + 2, f"⚠️  {alert_count} alerts detected", curses.color_pair(5))
+                
+                # Mostra últimos 3 alertas
+                for i, alert in enumerate(alerts[:3]):
+                    if start_y + 6 + i >= mid_y:
+                        break
+                    time_str = alert['timestamp'].strftime("%H:%M:%S")
+                    alert_type = ', '.join(alert['issues'])[:20]
+                    line = f"{time_str} {alert_type}"
+                    attr = curses.color_pair(5) if "HIGH" in str(alert) else curses.color_pair(4)
+                    self.stdscr.addstr(start_y + 6 + i, mid_x + 2, line[:curses.COLS//2-4], attr)
+        except:
+            pass
+        
+        # Quadrante 3: Top Talkers
+        try:
+            top_talkers = self.bandwidth_analyzer.get_top_talkers(5)
+            
+            self.stdscr.addstr(mid_y, 2, "🔝 TOP TALKERS", curses.color_pair(1))
+            
+            for i, (ip, bytes_count) in enumerate(top_talkers):
+                if mid_y + 1 + i >= curses.LINES - 5:
+                    break
+                
+                # Formata tamanho
+                if bytes_count >= 1024*1024:
+                    size_str = f"{bytes_count/(1024*1024):.1f}MB"
+                elif bytes_count >= 1024:
+                    size_str = f"{bytes_count/1024:.1f}KB"
+                else:
+                    size_str = f"{bytes_count}B"
+                
+                # Cria barra visual
+                max_bytes = max([b for _, b in top_talkers]) if top_talkers else 1
+                bar_length = int((bytes_count / max_bytes) * 20) if max_bytes > 0 else 0
+                bar = "█" * bar_length + "░" * (20 - bar_length)
+                
+                line = f"{i+1}. {ip:<15} {bar} {size_str:>8}"
+                attr = curses.color_pair(3) if i < 3 else curses.color_pair(0)
+                self.stdscr.addstr(mid_y + 1 + i, 2, line[:mid_x-4], attr)
+        except:
+            pass
+        
+        # Quadrante 4: Atividade Recente
+        try:
+            recent_transactions = self.get_http_transactions()[:5]
+            streams = self.get_tcp_streams()[:3]
+            
+            self.stdscr.addstr(mid_y, mid_x + 2, "⚡ RECENT ACTIVITY", curses.color_pair(1))
+            
+            activity_y = mid_y + 1
+            
+            # HTTP transactions
+            if recent_transactions:
+                self.stdscr.addstr(activity_y, mid_x + 2, "HTTP:")
+                activity_y += 1
+                for transaction in recent_transactions[:2]:
+                    if activity_y >= curses.LINES - 5:
+                        break
+                    time_str = transaction['timestamp'].strftime("%H:%M:%S")
+                    if transaction['type'] == 'request':
+                        info = f"{transaction['method']} {transaction['url'][:15]}"
+                    else:
+                        info = f"Response {transaction['status_code']}"
+                    
+                    line = f"  {time_str} {info}"
+                    attr = curses.color_pair(5) if transaction.get('security_issues') else curses.color_pair(0)
+                    self.stdscr.addstr(activity_y, mid_x + 2, line[:curses.COLS//2-4], attr)
+                    activity_y += 1
+            
+            # TCP streams
+            if streams and activity_y < curses.LINES - 4:
+                self.stdscr.addstr(activity_y, mid_x + 2, "TCP Streams:")
+                activity_y += 1
+                for stream in streams[:2]:
+                    if activity_y >= curses.LINES - 5:
+                        break
+                    time_str = stream.start_time.strftime("%H:%M:%S") if stream.start_time else "N/A"
+                    protocol = "HTTP" if stream.is_http else "TCP"
+                    line = f"  {time_str} {protocol} {len(stream.packets)}pkts"
+                    self.stdscr.addstr(activity_y, mid_x + 2, line[:curses.COLS//2-4])
+                    activity_y += 1
+        except:
+            pass
+        
+        # Mini gráfico de bandwidth na parte inferior
+        try:
+            graph_y = curses.LINES - 8
+            self.stdscr.addstr(graph_y - 1, 2, "📈 BANDWIDTH TREND", curses.color_pair(1))
+            
+            # Gráfico compacto
+            graph_width = min(50, curses.COLS - 10)
+            graph_height = 4
+            graph_lines = self.bandwidth_analyzer.get_bandwidth_graph(graph_width, graph_height)
+            
+            for i, line in enumerate(graph_lines[:graph_height]):
+                if graph_y + i >= curses.LINES - 3:
+                    break
+                attr = curses.color_pair(4) if "█" in line else curses.color_pair(0)
+                self.stdscr.addstr(graph_y + i, 2, line[:curses.COLS-4], attr)
+        except:
+            pass
     
     def _start_search(self):
         """Inicia modo de busca"""
