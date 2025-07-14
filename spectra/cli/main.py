@@ -508,6 +508,10 @@ Exemplos de uso:
                        action='store_true',
                        help='Inicia monitor de rede similar ao Wireshark')
     
+    parser.add_argument('--network-interface',
+                       metavar='INTERFACE',
+                       help='Interface de rede específica para captura (ex: wlan0, eth0)')
+    
     # === GPU ACCELERATION ===
     parser.add_argument('--use-gpu',
                        action='store_true',
@@ -1364,7 +1368,7 @@ def main():
         # === NETWORK MONITOR ===
         elif args.network_monitor:
             print_info("Iniciando Network Monitor...")
-            network_monitor_interface()
+            network_monitor_interface(interface=args.network_interface)
             return
         
         else:

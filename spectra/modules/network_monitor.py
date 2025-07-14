@@ -201,6 +201,59 @@ class NetworkPacket:
         except Exception as e:
             logger.error(f"Erro ao analisar pacote: {e}")
             self.info = "Pacote inválido"
+    
+    def is_relevant(self) -> bool:
+        """Determina se o pacote contém informações relevantes"""
+        # Sempre mostrar se não é tráfego local
+        if self.src_ip and self.dst_ip:
+            # Não é loopback
+            if not (self.src_ip.startswith("127.") or self.dst_ip.startswith("127.")):
+                return True
+        
+        # Protocolos sempre interessantes
+        if self.protocol in ["ICMP", "ARP"]:
+            return True
+        
+        # DNS queries/responses
+        if "DNS" in self.info:
+            return True
+        
+        # HTTP/HTTPS
+        if any(service in self.info for service in ["HTTP", "HTTPS", "TLS"]):
+            return True
+        
+        # Serviços conhecidos
+        if any(service in self.info for service in ["SSH", "FTP", "SMTP", "DHCP", "NTP"]):
+            return True
+        
+        # Flags TCP interessantes (não apenas ACK)
+        if self.protocol == "TCP":
+            if hasattr(self, 'tcp_flags'):
+                # SYN, FIN, RST são sempre interessantes
+                if self.tcp_flags & 0x07:  # SYN, FIN, RST bits
+                    return True
+                # PSH com dados
+                if self.tcp_flags & 0x08:  # PSH bit
+                    return True
+            
+            # Conexões em portas não-efêmeras (< 1024)
+            if hasattr(self, 'dst_port') and self.dst_port and self.dst_port < 1024:
+                return True
+        
+        # UDP em portas conhecidas
+        if self.protocol == "UDP":
+            if hasattr(self, 'dst_port') and self.dst_port:
+                known_udp_ports = [53, 67, 68, 123, 161, 69, 137, 138, 500]
+                if self.dst_port in known_udp_ports:
+                    return True
+        
+        # Pacotes com erro ou informações especiais
+        if any(keyword in self.info.lower() for keyword in 
+               ["error", "unreachable", "refused", "timeout", "request", "response"]):
+            return True
+        
+        # Por padrão, puro tráfego ACK em portas altas = não relevante
+        return False
 
 class NetworkStats:
     """Classe para estatísticas de rede"""
@@ -249,6 +302,7 @@ class NetworkMonitorTUI:
         self.selected_interface = 0
         self.hex_view = False
         self.follow_stream = False
+        self.show_relevant_only = True  # Por padrão, mostra apenas pacotes relevantes
         
     def get_available_interfaces(self) -> List[str]:
         """Retorna lista de interfaces disponíveis"""
@@ -362,6 +416,9 @@ class NetworkMonitorTUI:
         curses.init_pair(3, curses.COLOR_GREEN, curses.COLOR_BLACK)  # TCP
         curses.init_pair(4, curses.COLOR_YELLOW, curses.COLOR_BLACK) # UDP
         curses.init_pair(5, curses.COLOR_RED, curses.COLOR_BLACK)    # ICMP
+        curses.init_pair(6, curses.COLOR_BLACK, curses.COLOR_CYAN)   # Footer - fundo cyan
+        curses.init_pair(7, curses.COLOR_WHITE, curses.COLOR_RED)    # Footer - destaque vermelho
+        curses.init_pair(8, curses.COLOR_YELLOW, curses.COLOR_BLUE)  # Footer - teclas amarelas
         
         while True:
             try:
@@ -388,6 +445,8 @@ class NetworkMonitorTUI:
                     self.current_view = "interfaces"
                 elif key == ord('h'):
                     self._toggle_hex_view()
+                elif key == ord('r'):
+                    self._toggle_relevant_filter()
                 elif key == ord('/'):
                     self._start_search()
                 elif key == ord('n'):
@@ -466,9 +525,17 @@ class NetworkMonitorTUI:
     
     def _draw_status_line(self):
         """Desenha linha de status"""
+        # Calcula pacotes relevantes
+        relevant_count = len([p for p in self.packets if p.is_relevant()]) if self.show_relevant_only else len(self.packets)
+        
         status = f"Interface: {self.interface or 'None'} | "
         status += f"Capturing: {'Yes' if self.is_capturing else 'No'} | "
-        status += f"Packets: {len(self.packets)} | "
+        
+        if self.show_relevant_only:
+            status += f"Packets: {relevant_count}/{len(self.packets)} (Relevant) | "
+        else:
+            status += f"Packets: {len(self.packets)} (All) | "
+            
         status += f"Filter: {self.packet_filter or 'None'}"
         
         self.stdscr.addstr(2, 0, status[:curses.COLS-1])
@@ -476,20 +543,65 @@ class NetworkMonitorTUI:
     def _draw_packets_view(self):
         """Desenha visualização de pacotes"""
         start_y = 4
-        height = curses.LINES - 6
+        height = curses.LINES - 7  # Ajustado para footer de 2 linhas
         
-        # Headers
-        headers = f"{'Time':<12} {'Source':<15} {'Destination':<15} {'Protocol':<8} {'Info':<20}"
+        # Filtra pacotes por relevância se ativado
+        if self.show_relevant_only:
+            filtered_packets = [p for p in self.packets if p.is_relevant()]
+        else:
+            filtered_packets = self.packets
+        
+        # Pacotes mais novos primeiro (ordem reversa)
+        reversed_packets = list(reversed(filtered_packets))
+        
+        # Headers com indicador de filtro - largura fixa para alinhamento
+        filter_indicator = "[RELEVANT]" if self.show_relevant_only else "[ALL]     "
+        headers = f"{'#':<6} {'Time':<12} {'Source':<15} {':Port':<6} {'Destination':<15} {':Port':<6} {'Proto':<6} {'Flags':<8} {'Size':<6} {'Info':<20} {filter_indicator}"
         self.stdscr.addstr(start_y, 0, headers[:curses.COLS-1], curses.color_pair(1))
         
+        # Calcula índices para ordem reversa
+        visible_packets = reversed_packets[self.scroll_offset:self.scroll_offset + height - 1]
+        
         # Packets
-        for i, packet in enumerate(self.packets[self.scroll_offset:self.scroll_offset + height - 1]):
-            y = start_y + 1 + i
-            if y >= curses.LINES - 2:
+        for display_i, packet in enumerate(visible_packets):
+            y = start_y + 1 + display_i
+            if y >= curses.LINES - 3:
                 break
-                
+            
+            # Número do pacote (baseado na lista filtrada)
+            packet_num = len(filtered_packets) - self.scroll_offset - display_i
+            
             time_str = packet.timestamp.strftime("%H:%M:%S.%f")[:-3]
-            line = f"{time_str:<12} {packet.src_ip:<15} {packet.dst_ip:<15} {packet.protocol:<8} {packet.info:<20}"
+            
+            # Portas (com fallback para protocolos sem porta)
+            src_port = str(packet.src_port) if hasattr(packet, 'src_port') and packet.src_port else "-"
+            dst_port = str(packet.dst_port) if hasattr(packet, 'dst_port') and packet.dst_port else "-"
+            
+            # Flags TCP (se disponível)
+            flags = ""
+            if hasattr(packet, 'tcp_flags') and packet.protocol == "TCP":
+                flag_list = []
+                if hasattr(packet, 'tcp_flags'):
+                    tcp_flags = packet.tcp_flags
+                    if tcp_flags & 0x01: flag_list.append("F")  # FIN
+                    if tcp_flags & 0x02: flag_list.append("S")  # SYN  
+                    if tcp_flags & 0x04: flag_list.append("R")  # RST
+                    if tcp_flags & 0x08: flag_list.append("P")  # PSH
+                    if tcp_flags & 0x10: flag_list.append("A")  # ACK
+                    if tcp_flags & 0x20: flag_list.append("U")  # URG
+                flags = ",".join(flag_list) if flag_list else "-"
+            elif packet.protocol == "ICMP":
+                flags = "ICMP"
+            elif packet.protocol == "ARP":
+                flags = "ARP"
+            else:
+                flags = "-"
+            
+            # Tamanho do pacote
+            size = str(packet.size) if packet.size else "-"
+            
+            # Monta linha com mais informações
+            line = f"{packet_num:<6} {time_str:<12} {packet.src_ip:<15} {src_port:<6} {packet.dst_ip:<15} {dst_port:<6} {packet.protocol:<6} {flags:<8} {size:<6} {packet.info:<25}"
             
             # Color based on protocol
             color = curses.color_pair(0)
@@ -500,8 +612,9 @@ class NetworkMonitorTUI:
             elif packet.protocol == "ICMP":
                 color = curses.color_pair(5)
             
-            # Highlight selected
-            if i + self.scroll_offset == self.selected_packet:
+            # Highlight selected (ajusta para ordem reversa na lista filtrada)
+            actual_packet_index = len(filtered_packets) - 1 - (self.scroll_offset + display_i)
+            if actual_packet_index == self.selected_packet:
                 color = curses.color_pair(2)
             
             try:
@@ -543,7 +656,7 @@ class NetworkMonitorTUI:
             lines.append(f"  {ip}: {count} ({percentage:.1f}%)")
         
         for i, line in enumerate(lines):
-            if start_y + i >= curses.LINES - 2:
+            if start_y + i >= curses.LINES - 3:
                 break
             try:
                 self.stdscr.addstr(start_y + i, 0, line[:curses.COLS-1])
@@ -579,7 +692,7 @@ class NetworkMonitorTUI:
             ])
         
         for i, line in enumerate(lines):
-            if start_y + i >= curses.LINES - 2:
+            if start_y + i >= curses.LINES - 3:
                 break
             try:
                 self.stdscr.addstr(start_y + i, 0, line[:curses.COLS-1])
@@ -587,13 +700,32 @@ class NetworkMonitorTUI:
                 pass
     
     def _draw_footer(self):
-        """Desenha rodapé com comandos"""
-        if self.search_mode:
-            footer = f"Search: {self.search_term}_ (Enter to search, Esc to cancel)"
-        else:
-            footer = "[s]tart/stop [c]lear [e]xport [f]ilter [/]search [h]ex [1]packets [2]stats [3]details [4]interfaces [q]uit"
+        """Desenha rodapé com comandos em destaque"""
         try:
-            self.stdscr.addstr(curses.LINES - 1, 0, footer[:curses.COLS-1], curses.color_pair(1))
+            # Limpa as duas últimas linhas
+            self.stdscr.addstr(curses.LINES - 2, 0, " " * (curses.COLS - 1), curses.color_pair(6))
+            self.stdscr.addstr(curses.LINES - 1, 0, " " * (curses.COLS - 1), curses.color_pair(6))
+            
+            if self.search_mode:
+                # Modo de busca - linha única
+                footer = f" Search: {self.search_term}_ (Enter to search, Esc to cancel) "
+                self.stdscr.addstr(curses.LINES - 1, 0, footer[:curses.COLS-1], curses.color_pair(7))
+            else:
+                # Comandos principais - duas linhas para melhor visibilidade
+                line1 = " NETWORK MONITOR: "
+                
+                # Comandos principais com destaque nas teclas
+                commands1 = "[S]tart/Stop  [C]lear  [E]xport  [F]ilter  [R]elevant  [/]Search"
+                commands2 = "[H]ex View   [1]Packets [2]Stats [3]Details [4]Interfaces [Q]uit"
+                
+                # Linha 1 - título e comandos principais
+                self.stdscr.addstr(curses.LINES - 2, 0, line1, curses.color_pair(7))
+                self.stdscr.addstr(curses.LINES - 2, len(line1), commands1[:curses.COLS-len(line1)-1], curses.color_pair(8))
+                
+                # Linha 2 - comandos de visualização
+                prefix = " VIEW MODES:  "
+                self.stdscr.addstr(curses.LINES - 1, 0, prefix, curses.color_pair(7))
+                self.stdscr.addstr(curses.LINES - 1, len(prefix), commands2[:curses.COLS-len(prefix)-1], curses.color_pair(8))
         except:
             pass
     
@@ -626,21 +758,34 @@ class NetworkMonitorTUI:
         self.scroll_offset = 0
     
     def _scroll_up(self):
-        """Scroll para cima"""
+        """Scroll para cima (navega para pacotes mais novos)"""
         if self.current_view == "packets":
-            if self.selected_packet > 0:
-                self.selected_packet -= 1
-                if self.selected_packet < self.scroll_offset:
-                    self.scroll_offset = self.selected_packet
+            # Com ordem reversa, scroll up vai para pacotes mais novos (índices maiores)
+            current_list = [p for p in self.packets if p.is_relevant()] if self.show_relevant_only else self.packets
+            if self.selected_packet < len(current_list) - 1:
+                self.selected_packet += 1
+                # Ajusta scroll se necessário
+                if len(current_list) - 1 - self.selected_packet < self.scroll_offset:
+                    self.scroll_offset = max(0, len(current_list) - 1 - self.selected_packet)
+        elif self.current_view == "interfaces":
+            if self.selected_interface > 0:
+                self.selected_interface -= 1
     
     def _scroll_down(self):
-        """Scroll para baixo"""
+        """Scroll para baixo (navega para pacotes mais antigos)"""
         if self.current_view == "packets":
-            if self.selected_packet < len(self.packets) - 1:
-                self.selected_packet += 1
-                visible_height = curses.LINES - 6
-                if self.selected_packet >= self.scroll_offset + visible_height:
-                    self.scroll_offset = self.selected_packet - visible_height + 1
+            # Com ordem reversa, scroll down vai para pacotes mais antigos (índices menores)
+            if self.selected_packet > 0:
+                self.selected_packet -= 1
+                # Ajusta scroll se necessário  
+                visible_height = curses.LINES - 7  # Ajustado para footer de 2 linhas
+                display_index = len(self.packets) - 1 - self.selected_packet
+                if display_index >= self.scroll_offset + visible_height:
+                    self.scroll_offset = display_index - visible_height + 1
+        elif self.current_view == "interfaces":
+            interfaces = self.get_available_interfaces()
+            if self.selected_interface < len(interfaces) - 1:
+                self.selected_interface += 1
     
     def _select_packet(self):
         """Seleciona pacote atual"""
@@ -659,6 +804,12 @@ class NetworkMonitorTUI:
         
         interfaces = self.get_available_interfaces()
         
+        # Garante que a seleção está dentro dos limites
+        if self.selected_interface >= len(interfaces):
+            self.selected_interface = len(interfaces) - 1
+        if self.selected_interface < 0:
+            self.selected_interface = 0
+        
         # Cabeçalho
         header = "Interfaces de Rede Disponíveis"
         try:
@@ -669,12 +820,15 @@ class NetworkMonitorTUI:
         # Lista interfaces
         for i, interface in enumerate(interfaces):
             y = start_y + 2 + i
-            if y >= curses.LINES - 2:
+            if y >= curses.LINES - 3:
                 break
             
             # Verifica se é a interface atual
             status = "[ATIVA]" if interface == self.interface else "[INATIVA]"
-            line = f"  {interface:<15} {status}"
+            
+            # Indicador de seleção
+            selector = "→ " if i == self.selected_interface else "  "
+            line = f"{selector}{interface:<15} {status}"
             
             # Highlight da interface selecionada
             color = curses.color_pair(2) if i == self.selected_interface else curses.color_pair(0)
@@ -695,7 +849,7 @@ class NetworkMonitorTUI:
         
         for i, instruction in enumerate(instructions):
             y = start_y + 5 + len(interfaces) + i
-            if y >= curses.LINES - 2:
+            if y >= curses.LINES - 3:
                 break
             try:
                 self.stdscr.addstr(y, 0, instruction[:curses.COLS-1])
@@ -732,7 +886,7 @@ class NetworkMonitorTUI:
             hex_lines.append(line)
         
         # Mostra as linhas hex
-        for i, line in enumerate(hex_lines[:curses.LINES - 8]):
+        for i, line in enumerate(hex_lines[:curses.LINES - 9]):  # Ajustado para footer de 2 linhas
             y = start_y + 2 + i
             try:
                 self.stdscr.addstr(y, 0, line[:curses.COLS-1])
@@ -745,6 +899,13 @@ class NetworkMonitorTUI:
             self.current_view = "packets"
         else:
             self.current_view = "hex"
+    
+    def _toggle_relevant_filter(self):
+        """Alterna filtro de pacotes relevantes"""
+        self.show_relevant_only = not self.show_relevant_only
+        # Reset da seleção ao mudar filtro
+        self.selected_packet = 0
+        self.scroll_offset = 0
     
     def _start_search(self):
         """Inicia modo de busca"""
@@ -823,7 +984,7 @@ class NetworkMonitorTUI:
     
     def _adjust_scroll_to_selection(self):
         """Ajusta scroll para mostrar pacote selecionado"""
-        visible_height = curses.LINES - 6
+        visible_height = curses.LINES - 7  # Ajustado para footer de 2 linhas
         if self.selected_packet < self.scroll_offset:
             self.scroll_offset = self.selected_packet
         elif self.selected_packet >= self.scroll_offset + visible_height:
@@ -840,19 +1001,21 @@ class NetworkMonitorTUI:
         pass
     
     def _page_up(self):
-        """Página para cima"""
-        visible_height = curses.LINES - 6
+        """Página para cima (pacotes mais novos)"""
+        visible_height = curses.LINES - 7  # Ajustado para footer de 2 linhas
         if self.current_view == "packets":
-            self.selected_packet = max(0, self.selected_packet - visible_height)
+            # Com ordem reversa, page up vai para pacotes mais novos
+            self.selected_packet = min(len(self.packets) - 1, self.selected_packet + visible_height)
             self.scroll_offset = max(0, self.scroll_offset - visible_height)
         elif self.current_view == "interfaces":
             self.selected_interface = max(0, self.selected_interface - visible_height)
     
     def _page_down(self):
-        """Página para baixo"""
-        visible_height = curses.LINES - 6
+        """Página para baixo (pacotes mais antigos)"""
+        visible_height = curses.LINES - 7  # Ajustado para footer de 2 linhas
         if self.current_view == "packets":
-            self.selected_packet = min(len(self.packets) - 1, self.selected_packet + visible_height)
+            # Com ordem reversa, page down vai para pacotes mais antigos  
+            self.selected_packet = max(0, self.selected_packet - visible_height)
             max_scroll = max(0, len(self.packets) - visible_height)
             self.scroll_offset = min(max_scroll, self.scroll_offset + visible_height)
         elif self.current_view == "interfaces":
@@ -860,18 +1023,20 @@ class NetworkMonitorTUI:
             self.selected_interface = min(len(interfaces) - 1, self.selected_interface + visible_height)
     
     def _go_to_top(self):
-        """Vai para o topo"""
+        """Vai para o topo (pacotes mais novos)"""
         if self.current_view == "packets":
-            self.selected_packet = 0
+            # Com ordem reversa, topo = pacotes mais novos (índice mais alto)
+            self.selected_packet = len(self.packets) - 1 if self.packets else 0
             self.scroll_offset = 0
         elif self.current_view == "interfaces":
             self.selected_interface = 0
     
     def _go_to_bottom(self):
-        """Vai para o final"""
+        """Vai para o final (pacotes mais antigos)"""
         if self.current_view == "packets" and self.packets:
-            self.selected_packet = len(self.packets) - 1
-            visible_height = curses.LINES - 6
+            # Com ordem reversa, final = pacotes mais antigos (índice 0)
+            self.selected_packet = 0
+            visible_height = curses.LINES - 7  # Ajustado para footer de 2 linhas
             self.scroll_offset = max(0, len(self.packets) - visible_height)
         elif self.current_view == "interfaces":
             interfaces = self.get_available_interfaces()
@@ -946,10 +1111,10 @@ class NetworkMonitorTUI:
     def _run_simple_interface(self):
         """Interface simples sem curses"""
         console.print("\n[bold cyan]Spectra Network Monitor[/bold cyan]")
-        console.print("Interface simples (curses não disponível)")
+        console.print("[yellow]Interface simples (curses não disponível)[/yellow]")
         
         interfaces = self.get_available_interfaces()
-        console.print(f"\nInterfaces disponíveis: {', '.join(interfaces)}")
+        console.print(f"\n[bold]Interfaces disponíveis:[/bold] {', '.join(interfaces)}")
         
         if not interfaces:
             console.print("[red]Nenhuma interface encontrada[/red]")
@@ -957,34 +1122,69 @@ class NetworkMonitorTUI:
         
         # Usa primeira interface disponível
         interface = interfaces[0]
-        console.print(f"Usando interface: {interface}")
+        console.print(f"[green]Usando interface:[/green] {interface}")
+        
+        # Verifica privilégios
+        try:
+            if os.geteuid() != 0:
+                console.print("[yellow]⚠️  Aviso: Sem privilégios de root - captura pode ser limitada[/yellow]")
+        except AttributeError:
+            console.print("[yellow]⚠️  Aviso: Execute como administrador para captura completa[/yellow]")
         
         try:
+            console.print("\n[cyan]Iniciando captura...[/cyan]")
             self.start_capture(interface)
-            console.print("Captura iniciada. Pressione Ctrl+C para parar.")
+            console.print("[green]✓ Captura iniciada com sucesso![/green]")
+            console.print("[dim]Pressione Ctrl+C para parar...[/dim]\n")
             
+            packet_count = 0
             while self.is_capturing:
-                time.sleep(1)
-                if len(self.packets) > 0:
-                    last_packet = self.packets[-1]
-                    console.print(f"[{last_packet.timestamp.strftime('%H:%M:%S')}] "
-                                f"{last_packet.src_ip} -> {last_packet.dst_ip} "
-                                f"({last_packet.protocol}) {last_packet.info}")
+                time.sleep(0.5)  # Reduz intervalo para mais responsividade
+                
+                # Mostra novos pacotes
+                if len(self.packets) > packet_count:
+                    for i in range(packet_count, len(self.packets)):
+                        packet = self.packets[i]
+                        timestamp = packet.timestamp.strftime('%H:%M:%S.%f')[:-3]
+                        console.print(f"[{timestamp}] {packet.src_ip:<15} → {packet.dst_ip:<15} "
+                                    f"[cyan]{packet.protocol}[/cyan] {packet.info}")
+                    packet_count = len(self.packets)
+                
+                # Mostra estatísticas periodicamente
+                if packet_count > 0 and packet_count % 50 == 0:
+                    console.print(f"\n[dim]--- {packet_count} pacotes capturados ---[/dim]\n")
                 
         except KeyboardInterrupt:
-            console.print("\nParando captura...")
+            console.print("\n[yellow]Parando captura...[/yellow]")
             self.stop_capture()
             
             if self.packets:
-                console.print(f"\nCapturados {len(self.packets)} pacotes")
+                console.print(f"\n[green]✓ Capturados {len(self.packets)} pacotes[/green]")
+                
+                # Mostra estatísticas finais
+                protocol_counts = {}
+                for packet in self.packets:
+                    protocol_counts[packet.protocol] = protocol_counts.get(packet.protocol, 0) + 1
+                
+                console.print("\n[bold]Estatísticas por protocolo:[/bold]")
+                for proto, count in sorted(protocol_counts.items(), key=lambda x: x[1], reverse=True):
+                    percentage = (count / len(self.packets)) * 100
+                    console.print(f"  {proto}: {count} ({percentage:.1f}%)")
                 
                 # Exporta automaticamente
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 filename = f"network_capture_{timestamp}.json"
                 self.export_packets(filename)
-                console.print(f"Pacotes exportados para {filename}")
+                console.print(f"\n[cyan]Pacotes exportados para {filename}[/cyan]")
+            else:
+                console.print("\n[yellow]Nenhum pacote foi capturado[/yellow]")
+                console.print("[dim]Verifique se você tem privilégios suficientes e se há tráfego na interface[/dim]")
+        
+        except Exception as e:
+            console.print(f"\n[red]Erro durante captura: {e}[/red]")
+            console.print("[dim]Tente executar como root/administrador[/dim]")
 
-def network_monitor_interface():
+def network_monitor_interface(interface=None):
     """Interface principal do monitor de rede"""
     if not SCAPY_AVAILABLE:
         console.print("[red]Erro: Scapy não está instalado[/red]")
@@ -1010,6 +1210,7 @@ def network_monitor_interface():
     console.print("[green]c[/green] - Limpar pacotes") 
     console.print("[green]e[/green] - Exportar para JSON")
     console.print("[green]f[/green] - Configurar filtros BPF")
+    console.print("[green]r[/green] - Alternar filtro relevante/todos pacotes")
     console.print("[green]/[/green] - Buscar pacotes (n/N para próximo/anterior)")
     console.print("[green]h[/green] - Visualização hexadecimal")
     console.print("[green]1-4[/green] - Alternar views (pacotes/stats/detalhes/interfaces)")
@@ -1025,6 +1226,15 @@ def network_monitor_interface():
         console.print("[yellow]Iniciando em modo automático...[/yellow]")
     
     monitor = NetworkMonitorTUI()
+    
+    # Se interface específica foi fornecida, inicia captura automaticamente
+    if interface:
+        console.print(f"[green]Forçando interface: {interface}[/green]")
+        try:
+            monitor.start_capture(interface)
+        except Exception as e:
+            console.print(f"[red]Erro ao iniciar captura na interface {interface}: {e}[/red]")
+    
     monitor.run_tui()
 
 if __name__ == "__main__":
