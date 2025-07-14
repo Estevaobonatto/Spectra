@@ -34,6 +34,324 @@ from ..core.logger import get_logger
 
 logger = get_logger(__name__)
 
+class HTTPAnalyzer:
+    """Classe para análise detalhada de tráfego HTTP/HTTPS"""
+    
+    def __init__(self):
+        self.http_requests = []
+        self.http_responses = []
+        self.suspicious_patterns = [
+            # Padrões de ataques comuns
+            b'<script',  # Possível XSS
+            b'union.*select',  # SQL Injection
+            b'../../../',  # Directory Traversal
+            b'eval(',  # Code Injection
+            b'system(',  # Command Injection
+            b'passwd',  # Password file access
+            b'/etc/shadow',  # Shadow file access
+            b'drop table',  # SQL Drop
+            b'wget',  # Download commands
+            b'curl',  # Download commands
+        ]
+    
+    def analyze_http_packet(self, packet):
+        """Analisa pacote HTTP e extrai informações detalhadas"""
+        if not hasattr(packet, 'raw_packet') or not hasattr(packet.raw_packet, 'load'):
+            return None
+        
+        try:
+            payload = bytes(packet.raw_packet.load)
+            text_payload = payload.decode('utf-8', errors='ignore')
+            
+            # Detecta se é request ou response
+            if self._is_http_request(text_payload):
+                return self._parse_http_request(packet, payload, text_payload)
+            elif self._is_http_response(text_payload):
+                return self._parse_http_response(packet, payload, text_payload)
+                
+        except Exception as e:
+            logger.debug(f"Erro ao analisar HTTP: {e}")
+        
+        return None
+    
+    def _is_http_request(self, text):
+        """Verifica se é uma requisição HTTP"""
+        methods = ['GET ', 'POST ', 'PUT ', 'DELETE ', 'HEAD ', 'OPTIONS ', 'PATCH ', 'TRACE ']
+        return any(text.startswith(method) for method in methods)
+    
+    def _is_http_response(self, text):
+        """Verifica se é uma resposta HTTP"""
+        return text.startswith('HTTP/')
+    
+    def _parse_http_request(self, packet, payload, text):
+        """Analisa requisição HTTP em detalhes"""
+        lines = text.split('\n')
+        if not lines:
+            return None
+        
+        # Parse da primeira linha (método, URL, versão)
+        first_line = lines[0].strip()
+        parts = first_line.split(' ')
+        if len(parts) < 3:
+            return None
+        
+        method = parts[0]
+        url = parts[1]
+        version = parts[2]
+        
+        # Parse dos headers
+        headers = {}
+        body_start = 0
+        for i, line in enumerate(lines[1:], 1):
+            if line.strip() == '':
+                body_start = i + 1
+                break
+            if ':' in line:
+                key, value = line.split(':', 1)
+                headers[key.strip().lower()] = value.strip()
+        
+        # Parse do body (se houver)
+        body = '\n'.join(lines[body_start:]) if body_start < len(lines) else ''
+        
+        # Análise de segurança
+        security_issues = self._analyze_security_issues(payload, text, method, url, headers, body)
+        
+        return {
+            'type': 'request',
+            'timestamp': packet.timestamp,
+            'src_ip': packet.src_ip,
+            'dst_ip': packet.dst_ip,
+            'src_port': packet.src_port,
+            'dst_port': packet.dst_port,
+            'method': method,
+            'url': url,
+            'version': version,
+            'headers': headers,
+            'body': body,
+            'size': len(payload),
+            'security_issues': security_issues,
+            'user_agent': headers.get('user-agent', 'N/A'),
+            'host': headers.get('host', 'N/A'),
+            'content_type': headers.get('content-type', 'N/A'),
+            'cookies': headers.get('cookie', 'N/A')
+        }
+    
+    def _parse_http_response(self, packet, payload, text):
+        """Analisa resposta HTTP em detalhes"""
+        lines = text.split('\n')
+        if not lines:
+            return None
+        
+        # Parse da primeira linha (versão, status, reason)
+        first_line = lines[0].strip()
+        parts = first_line.split(' ', 2)
+        if len(parts) < 2:
+            return None
+        
+        version = parts[0]
+        status_code = parts[1]
+        reason = parts[2] if len(parts) > 2 else ''
+        
+        # Parse dos headers
+        headers = {}
+        body_start = 0
+        for i, line in enumerate(lines[1:], 1):
+            if line.strip() == '':
+                body_start = i + 1
+                break
+            if ':' in line:
+                key, value = line.split(':', 1)
+                headers[key.strip().lower()] = value.strip()
+        
+        # Parse do body
+        body = '\n'.join(lines[body_start:]) if body_start < len(lines) else ''
+        
+        # Análise de segurança da resposta
+        security_issues = self._analyze_response_security(payload, text, status_code, headers, body)
+        
+        return {
+            'type': 'response',
+            'timestamp': packet.timestamp,
+            'src_ip': packet.src_ip,
+            'dst_ip': packet.dst_ip,
+            'src_port': packet.src_port,
+            'dst_port': packet.dst_port,
+            'version': version,
+            'status_code': status_code,
+            'reason': reason,
+            'headers': headers,
+            'body': body,
+            'size': len(payload),
+            'security_issues': security_issues,
+            'content_type': headers.get('content-type', 'N/A'),
+            'server': headers.get('server', 'N/A'),
+            'set_cookies': headers.get('set-cookie', 'N/A')
+        }
+    
+    def _analyze_security_issues(self, _payload, _text, method, url, headers, body):
+        """Analisa problemas de segurança em requisições HTTP"""
+        issues = []
+        
+        # Verifica padrões suspeitos na URL
+        url_lower = url.lower()
+        if any(pattern.decode('utf-8', errors='ignore') in url_lower for pattern in self.suspicious_patterns):
+            issues.append("SUSPICIOUS_URL_PATTERN")
+        
+        # Verifica SQL injection patterns
+        if any(pattern in url_lower for pattern in ['union', 'select', 'drop', 'insert', 'update', 'delete']):
+            issues.append("POSSIBLE_SQL_INJECTION")
+        
+        # Verifica XSS patterns
+        if any(pattern in url_lower for pattern in ['<script', 'javascript:', 'onerror', 'onload']):
+            issues.append("POSSIBLE_XSS")
+        
+        # Verifica directory traversal
+        if '../' in url or '..\\' in url:
+            issues.append("DIRECTORY_TRAVERSAL")
+        
+        # Verifica User-Agent suspeito
+        user_agent = headers.get('user-agent', '').lower()
+        suspicious_agents = ['sqlmap', 'nikto', 'burp', 'nmap', 'gobuster', 'dirb']
+        if any(agent in user_agent for agent in suspicious_agents):
+            issues.append("SUSPICIOUS_USER_AGENT")
+        
+        # Verifica body para padrões suspeitos (em POST requests)
+        if method == 'POST' and body:
+            body_lower = body.lower()
+            if any(pattern.decode('utf-8', errors='ignore') in body_lower for pattern in self.suspicious_patterns):
+                issues.append("SUSPICIOUS_POST_DATA")
+        
+        return issues
+    
+    def _analyze_response_security(self, _payload, _text, status_code, headers, body):
+        """Analisa problemas de segurança em respostas HTTP"""
+        issues = []
+        
+        # Verifica headers de segurança ausentes
+        security_headers = [
+            'x-frame-options',
+            'x-content-type-options', 
+            'x-xss-protection',
+            'strict-transport-security',
+            'content-security-policy'
+        ]
+        
+        missing_headers = [h for h in security_headers if h not in headers]
+        if missing_headers:
+            issues.append(f"MISSING_SECURITY_HEADERS: {', '.join(missing_headers)}")
+        
+        # Verifica vazamento de informações no Server header
+        server = headers.get('server', '')
+        if any(info in server.lower() for info in ['apache/', 'nginx/', 'iis/', 'tomcat/']):
+            issues.append("SERVER_VERSION_DISCLOSURE")
+        
+        # Verifica status codes suspeitos
+        if status_code in ['500', '501', '502', '503']:
+            issues.append("SERVER_ERROR_RESPONSE")
+        
+        # Verifica possível vazamento de dados no body
+        if body and any(pattern.decode('utf-8', errors='ignore') in body.lower() for pattern in [b'error', b'exception', b'stack trace']):
+            issues.append("POSSIBLE_INFO_DISCLOSURE")
+        
+        return issues
+
+class TCPStream:
+    """Classe para representar um stream TCP completo"""
+    
+    def __init__(self, src_ip, src_port, dst_ip, dst_port):
+        self.src_ip = src_ip
+        self.src_port = src_port
+        self.dst_ip = dst_ip
+        self.dst_port = dst_port
+        self.packets = []
+        self.client_data = b""
+        self.server_data = b""
+        self.start_time = None
+        self.end_time = None
+        self.is_http = False
+        self.http_requests = []
+        self.http_responses = []
+    
+    def get_stream_id(self):
+        """Retorna identificador único do stream"""
+        return f"{self.src_ip}:{self.src_port}-{self.dst_ip}:{self.dst_port}"
+    
+    def add_packet(self, packet):
+        """Adiciona pacote ao stream"""
+        if not self.start_time:
+            self.start_time = packet.timestamp
+        self.end_time = packet.timestamp
+        self.packets.append(packet)
+        
+        # Extrai dados do payload se disponível
+        if hasattr(packet, 'raw_packet') and hasattr(packet.raw_packet, 'load'):
+            payload = bytes(packet.raw_packet.load)
+            
+            # Determina direção do fluxo
+            if (packet.src_ip == self.src_ip and packet.src_port == self.src_port):
+                self.client_data += payload
+            else:
+                self.server_data += payload
+            
+            # Detecta se é HTTP
+            if not self.is_http and (b'HTTP/' in payload or b'GET ' in payload or b'POST ' in payload):
+                self.is_http = True
+                self._parse_http_data()
+    
+    def _parse_http_data(self):
+        """Analisa dados HTTP do stream"""
+        try:
+            # Parse HTTP requests
+            client_text = self.client_data.decode('utf-8', errors='ignore')
+            for line in client_text.split('\n'):
+                if any(method in line for method in ['GET ', 'POST ', 'PUT ', 'DELETE ', 'HEAD ', 'OPTIONS ', 'PATCH ']):
+                    self.http_requests.append(line.strip())
+            
+            # Parse HTTP responses
+            server_text = self.server_data.decode('utf-8', errors='ignore')
+            for line in server_text.split('\n'):
+                if line.startswith('HTTP/'):
+                    self.http_responses.append(line.strip())
+        except:
+            pass
+    
+    def get_conversation_text(self):
+        """Retorna conversação formatada do stream"""
+        conversation = []
+        conversation.append(f"=== TCP Stream: {self.get_stream_id()} ===")
+        conversation.append(f"Start: {self.start_time}")
+        conversation.append(f"End: {self.end_time}")
+        conversation.append(f"Packets: {len(self.packets)}")
+        conversation.append(f"Protocol: {'HTTP' if self.is_http else 'TCP'}")
+        conversation.append("")
+        
+        if self.is_http:
+            conversation.append("=== HTTP Requests ===")
+            for req in self.http_requests:
+                conversation.append(f">>> {req}")
+            conversation.append("")
+            conversation.append("=== HTTP Responses ===")
+            for resp in self.http_responses:
+                conversation.append(f"<<< {resp}")
+            conversation.append("")
+        
+        conversation.append("=== Client Data ===")
+        try:
+            client_text = self.client_data.decode('utf-8', errors='ignore')
+            conversation.extend(client_text.split('\n'))
+        except:
+            conversation.append(f"[Binary data: {len(self.client_data)} bytes]")
+        
+        conversation.append("")
+        conversation.append("=== Server Data ===")
+        try:
+            server_text = self.server_data.decode('utf-8', errors='ignore')
+            conversation.extend(server_text.split('\n'))
+        except:
+            conversation.append(f"[Binary data: {len(self.server_data)} bytes]")
+        
+        return conversation
+
 class NetworkPacket:
     """Classe para representar um pacote de rede capturado"""
     
@@ -303,6 +621,11 @@ class NetworkMonitorTUI:
         self.hex_view = False
         self.follow_stream = False
         self.show_relevant_only = True  # Por padrão, mostra apenas pacotes relevantes
+        self.tcp_streams = {}  # Dicionário para armazenar streams TCP
+        self.current_stream = None  # Stream atualmente sendo seguido
+        self.stream_view = False  # Se está visualizando um stream específico
+        self.http_analyzer = HTTPAnalyzer()  # Analisador HTTP/HTTPS
+        self.http_transactions = []  # Lista de transações HTTP analisadas
         
     def get_available_interfaces(self) -> List[str]:
         """Retorna lista de interfaces disponíveis"""
@@ -360,6 +683,12 @@ class NetworkMonitorTUI:
         
         self.packets.append(packet)
         self.stats.update(packet)
+        
+        # Processa TCP streams
+        self._process_tcp_stream(packet)
+        
+        # Processa análise HTTP
+        self._process_http_packet(packet)
     
     def stop_capture(self):
         """Para captura de pacotes"""
@@ -367,6 +696,84 @@ class NetworkMonitorTUI:
         if self.capture_thread:
             self.capture_thread.join(timeout=2)
         logger.info("Captura parada")
+    
+    def _process_tcp_stream(self, packet):
+        """Processa pacote para TCP streams"""
+        try:
+            # Verifica se é um pacote TCP com dados
+            if packet.protocol != "TCP" or not hasattr(packet, 'src_port') or not hasattr(packet, 'dst_port'):
+                return
+            
+            # Cria identificadores para ambas as direções do stream
+            stream_id1 = f"{packet.src_ip}:{packet.src_port}-{packet.dst_ip}:{packet.dst_port}"
+            stream_id2 = f"{packet.dst_ip}:{packet.dst_port}-{packet.src_ip}:{packet.src_port}"
+            
+            # Procura stream existente em qualquer direção
+            tcp_stream = None
+            if stream_id1 in self.tcp_streams:
+                tcp_stream = self.tcp_streams[stream_id1]
+            elif stream_id2 in self.tcp_streams:
+                tcp_stream = self.tcp_streams[stream_id2]
+            
+            # Se não existe, cria novo stream
+            if not tcp_stream:
+                tcp_stream = TCPStream(packet.src_ip, packet.src_port, packet.dst_ip, packet.dst_port)
+                self.tcp_streams[stream_id1] = tcp_stream
+                self.tcp_streams[stream_id2] = tcp_stream  # Ambas as direções apontam para o mesmo stream
+            
+            # Adiciona pacote ao stream
+            tcp_stream.add_packet(packet)
+            
+        except Exception as e:
+            logger.debug(f"Erro ao processar TCP stream: {e}")
+    
+    def get_tcp_streams(self):
+        """Retorna lista única de TCP streams"""
+        seen_streams = set()
+        unique_streams = []
+        
+        for stream in self.tcp_streams.values():
+            stream_id = stream.get_stream_id()
+            if stream_id not in seen_streams:
+                seen_streams.add(stream_id)
+                unique_streams.append(stream)
+        
+        return sorted(unique_streams, key=lambda x: x.start_time, reverse=True)
+    
+    def _process_http_packet(self, packet):
+        """Processa pacote para análise HTTP"""
+        try:
+            # Verifica se é tráfego HTTP (porta 80, 8080) ou HTTPS (porta 443)
+            if packet.protocol == "TCP" and hasattr(packet, 'dst_port'):
+                if packet.dst_port in [80, 8080, 443] or packet.src_port in [80, 8080, 443]:
+                    http_data = self.http_analyzer.analyze_http_packet(packet)
+                    if http_data:
+                        self.http_transactions.append(http_data)
+                        
+                        # Limita número de transações HTTP armazenadas
+                        if len(self.http_transactions) > 1000:
+                            self.http_transactions.pop(0)
+        except Exception as e:
+            logger.debug(f"Erro ao processar HTTP: {e}")
+    
+    def get_http_transactions(self):
+        """Retorna transações HTTP ordenadas por timestamp"""
+        return sorted(self.http_transactions, key=lambda x: x['timestamp'], reverse=True)
+    
+    def get_security_alerts(self):
+        """Retorna alertas de segurança baseados em análise HTTP"""
+        alerts = []
+        for transaction in self.http_transactions:
+            if transaction.get('security_issues'):
+                alerts.append({
+                    'timestamp': transaction['timestamp'],
+                    'type': transaction['type'],
+                    'src_ip': transaction['src_ip'],
+                    'dst_ip': transaction['dst_ip'],
+                    'issues': transaction['security_issues'],
+                    'details': transaction
+                })
+        return sorted(alerts, key=lambda x: x['timestamp'], reverse=True)
     
     def export_packets(self, filename: str, format: str = "json"):
         """Exporta pacotes capturados"""
@@ -433,7 +840,7 @@ class NetworkMonitorTUI:
                     self._clear_packets()
                 elif key == ord('e'):  # Export
                     self._export_dialog()
-                elif key == ord('f'):  # Filter
+                elif key == ord('i'):  # Interactive filter
                     self._filter_dialog()
                 elif key == ord('1'):
                     self.current_view = "packets"
@@ -443,8 +850,18 @@ class NetworkMonitorTUI:
                     self.current_view = "details"
                 elif key == ord('4'):
                     self.current_view = "interfaces"
+                elif key == ord('5'):
+                    self.current_view = "streams"
+                elif key == ord('6'):
+                    self.current_view = "http"
+                elif key == ord('7'):
+                    self.current_view = "security"
                 elif key == ord('h'):
                     self._toggle_hex_view()
+                elif key == ord('t'):  # TCP streams
+                    self.current_view = "streams"
+                elif key == ord('f'):  # Follow stream (quando um pacote TCP está selecionado)
+                    self._follow_tcp_stream()
                 elif key == ord('r'):
                     self._toggle_relevant_filter()
                 elif key == ord('/'):
@@ -474,6 +891,8 @@ class NetworkMonitorTUI:
                         self._end_search()
                     elif self.current_view == "interfaces":
                         self._select_interface()
+                    elif self.current_view == "streams":
+                        self._select_stream()
                     else:
                         self._select_packet()
                 elif key == 27:  # ESC
@@ -510,6 +929,14 @@ class NetworkMonitorTUI:
             self._draw_details_view()
         elif self.current_view == "interfaces":
             self._draw_interfaces_view()
+        elif self.current_view == "streams":
+            self._draw_streams_view()
+        elif self.current_view == "stream_details":
+            self._draw_stream_details_view()
+        elif self.current_view == "http":
+            self._draw_http_view()
+        elif self.current_view == "security":
+            self._draw_security_view()
         elif self.current_view == "hex":
             self._draw_hex_view()
         
@@ -715,8 +1142,8 @@ class NetworkMonitorTUI:
                 line1 = " NETWORK MONITOR: "
                 
                 # Comandos principais com destaque nas teclas
-                commands1 = "[S]tart/Stop  [C]lear  [E]xport  [F]ilter  [R]elevant  [/]Search"
-                commands2 = "[H]ex View   [1]Packets [2]Stats [3]Details [4]Interfaces [Q]uit"
+                commands1 = "[S]tart/Stop  [C]lear  [E]xport  [I]filter  [R]elevant  [F]ollow  [T]CP"
+                commands2 = "[1]Packets [2]Stats [3]Details [4]Interfaces [5]Streams [6]HTTP [7]Security [Q]uit"
                 
                 # Linha 1 - título e comandos principais
                 self.stdscr.addstr(curses.LINES - 2, 0, line1, curses.color_pair(7))
@@ -770,6 +1197,18 @@ class NetworkMonitorTUI:
         elif self.current_view == "interfaces":
             if self.selected_interface > 0:
                 self.selected_interface -= 1
+        elif self.current_view == "streams":
+            if self.selected_packet > 0:
+                self.selected_packet -= 1
+        elif self.current_view == "stream_details":
+            if self.scroll_offset > 0:
+                self.scroll_offset -= 1
+        elif self.current_view == "http":
+            if self.selected_packet > 0:
+                self.selected_packet -= 1
+        elif self.current_view == "security":
+            if self.selected_packet > 0:
+                self.selected_packet -= 1
     
     def _scroll_down(self):
         """Scroll para baixo (navega para pacotes mais antigos)"""
@@ -786,6 +1225,25 @@ class NetworkMonitorTUI:
             interfaces = self.get_available_interfaces()
             if self.selected_interface < len(interfaces) - 1:
                 self.selected_interface += 1
+        elif self.current_view == "streams":
+            streams = self.get_tcp_streams()
+            if self.selected_packet < len(streams) - 1:
+                self.selected_packet += 1
+        elif self.current_view == "stream_details":
+            # Verifica se há mais linhas para mostrar
+            if self.current_stream:
+                conversation = self.current_stream.get_conversation_text()
+                max_scroll = max(0, len(conversation) - (curses.LINES - 9))
+                if self.scroll_offset < max_scroll:
+                    self.scroll_offset += 1
+        elif self.current_view == "http":
+            transactions = self.get_http_transactions()
+            if self.selected_packet < len(transactions) - 1:
+                self.selected_packet += 1
+        elif self.current_view == "security":
+            alerts = self.get_security_alerts()
+            if self.selected_packet < len(alerts) - 1:
+                self.selected_packet += 1
     
     def _select_packet(self):
         """Seleciona pacote atual"""
@@ -906,6 +1364,201 @@ class NetworkMonitorTUI:
         # Reset da seleção ao mudar filtro
         self.selected_packet = 0
         self.scroll_offset = 0
+    
+    def _draw_streams_view(self):
+        """Desenha visualização de TCP streams"""
+        start_y = 4
+        height = curses.LINES - 7  # Ajustado para footer de 2 linhas
+        
+        streams = self.get_tcp_streams()
+        
+        # Headers
+        headers = f"{'#':<4} {'Start Time':<12} {'Duration':<10} {'Packets':<8} {'Protocol':<8} {'Stream':<40}"
+        self.stdscr.addstr(start_y, 0, headers[:curses.COLS-1], curses.color_pair(1))
+        
+        # Streams
+        for i, stream in enumerate(streams[self.scroll_offset:self.scroll_offset + height - 1]):
+            y = start_y + 1 + i
+            if y >= curses.LINES - 3:
+                break
+            
+            # Calcula duração
+            duration = ""
+            if stream.end_time and stream.start_time:
+                delta = stream.end_time - stream.start_time
+                duration = f"{delta.total_seconds():.1f}s"
+            
+            start_time = stream.start_time.strftime("%H:%M:%S") if stream.start_time else "N/A"
+            protocol = "HTTP" if stream.is_http else "TCP"
+            stream_id = stream.get_stream_id()
+            
+            line = f"{i+1:<4} {start_time:<12} {duration:<10} {len(stream.packets):<8} {protocol:<8} {stream_id:<40}"
+            
+            # Destacar se selecionado
+            attr = curses.color_pair(2) if i == self.selected_packet else curses.color_pair(0)
+            
+            try:
+                self.stdscr.addstr(y, 0, line[:curses.COLS-1], attr)
+            except:
+                pass
+    
+    def _draw_stream_details_view(self):
+        """Desenha visualização detalhada de um TCP stream"""
+        start_y = 4
+        
+        if not self.current_stream:
+            self.stdscr.addstr(start_y, 0, "Nenhum stream selecionado")
+            return
+        
+        # Cabeçalho
+        header = f"TCP Stream Details: {self.current_stream.get_stream_id()}"
+        try:
+            self.stdscr.addstr(start_y, 0, header, curses.color_pair(1))
+        except:
+            pass
+        
+        # Conversação
+        conversation = self.current_stream.get_conversation_text()
+        visible_lines = conversation[self.scroll_offset:self.scroll_offset + curses.LINES - 9]
+        
+        for i, line in enumerate(visible_lines):
+            y = start_y + 2 + i
+            if y >= curses.LINES - 3:
+                break
+            
+            # Color coding para diferentes tipos de dados
+            attr = curses.color_pair(0)
+            if line.startswith(">>>"):  # HTTP Request
+                attr = curses.color_pair(3)  # Verde
+            elif line.startswith("<<<"):  # HTTP Response
+                attr = curses.color_pair(4)  # Amarelo
+            elif line.startswith("==="):  # Headers
+                attr = curses.color_pair(1)  # Azul
+            
+            try:
+                self.stdscr.addstr(y, 0, line[:curses.COLS-1], attr)
+            except:
+                pass
+    
+    def _follow_tcp_stream(self):
+        """Segue TCP stream do pacote selecionado"""
+        if self.current_view != "packets" or not self.packets:
+            return
+        
+        # Filtra pacotes por relevância se ativado
+        if self.show_relevant_only:
+            filtered_packets = [p for p in self.packets if p.is_relevant()]
+        else:
+            filtered_packets = self.packets
+        
+        if self.selected_packet >= len(filtered_packets):
+            return
+        
+        # Pacotes em ordem reversa (mais novos primeiro)
+        reversed_packets = list(reversed(filtered_packets))
+        packet = reversed_packets[self.selected_packet]
+        
+        # Verifica se é TCP
+        if packet.protocol != "TCP" or not hasattr(packet, 'src_port'):
+            return
+        
+        # Procura stream correspondente
+        stream_id1 = f"{packet.src_ip}:{packet.src_port}-{packet.dst_ip}:{packet.dst_port}"
+        stream_id2 = f"{packet.dst_ip}:{packet.dst_port}-{packet.src_ip}:{packet.src_port}"
+        
+        stream = None
+        if stream_id1 in self.tcp_streams:
+            stream = self.tcp_streams[stream_id1]
+        elif stream_id2 in self.tcp_streams:
+            stream = self.tcp_streams[stream_id2]
+        
+        if stream:
+            self.current_stream = stream
+            self.current_view = "stream_details"
+            self.scroll_offset = 0
+    
+    def _draw_http_view(self):
+        """Desenha visualização de transações HTTP"""
+        start_y = 4
+        height = curses.LINES - 7
+        
+        transactions = self.get_http_transactions()
+        
+        # Headers
+        headers = f"{'#':<4} {'Time':<12} {'Type':<8} {'Method':<8} {'URL/Status':<30} {'Host/Server':<20} {'Security':<10}"
+        self.stdscr.addstr(start_y, 0, headers[:curses.COLS-1], curses.color_pair(1))
+        
+        # Transações
+        for i, transaction in enumerate(transactions[self.scroll_offset:self.scroll_offset + height - 1]):
+            y = start_y + 1 + i
+            if y >= curses.LINES - 3:
+                break
+            
+            time_str = transaction['timestamp'].strftime("%H:%M:%S")
+            trans_type = transaction['type'][:8]
+            
+            if transaction['type'] == 'request':
+                method = transaction['method'][:8]
+                url = transaction['url'][:30]
+                host = transaction['host'][:20]
+            else:
+                method = transaction['status_code'][:8]
+                url = transaction['reason'][:30]
+                host = transaction['server'][:20]
+            
+            security = "🚨" if transaction.get('security_issues') else "✓"
+            
+            line = f"{i+1:<4} {time_str:<12} {trans_type:<8} {method:<8} {url:<30} {host:<20} {security:<10}"
+            
+            # Color based on security issues
+            attr = curses.color_pair(5) if transaction.get('security_issues') else curses.color_pair(3)
+            if i == self.selected_packet:
+                attr = curses.color_pair(2)
+            
+            try:
+                self.stdscr.addstr(y, 0, line[:curses.COLS-1], attr)
+            except:
+                pass
+    
+    def _draw_security_view(self):
+        """Desenha visualização de alertas de segurança"""
+        start_y = 4
+        height = curses.LINES - 7
+        
+        alerts = self.get_security_alerts()
+        
+        # Headers
+        headers = f"{'#':<4} {'Time':<12} {'Source':<15} {'Destination':<15} {'Alert Type':<20} {'Severity':<10}"
+        self.stdscr.addstr(start_y, 0, headers[:curses.COLS-1], curses.color_pair(1))
+        
+        # Alertas
+        for i, alert in enumerate(alerts[self.scroll_offset:self.scroll_offset + height - 1]):
+            y = start_y + 1 + i
+            if y >= curses.LINES - 3:
+                break
+            
+            time_str = alert['timestamp'].strftime("%H:%M:%S")
+            src_ip = alert['src_ip'][:15]
+            dst_ip = alert['dst_ip'][:15]
+            
+            # Combina issues em uma string
+            alert_type = ', '.join(alert['issues'])[:20] if alert['issues'] else "Unknown"
+            
+            # Determina severidade baseada no tipo de issue
+            high_severity = ['SQL_INJECTION', 'XSS', 'DIRECTORY_TRAVERSAL', 'SUSPICIOUS_USER_AGENT']
+            severity = "HIGH" if any(issue in alert_type for issue in high_severity) else "MEDIUM"
+            
+            line = f"{i+1:<4} {time_str:<12} {src_ip:<15} {dst_ip:<15} {alert_type:<20} {severity:<10}"
+            
+            # Color based on severity
+            attr = curses.color_pair(5) if severity == "HIGH" else curses.color_pair(4)
+            if i == self.selected_packet:
+                attr = curses.color_pair(2)
+            
+            try:
+                self.stdscr.addstr(y, 0, line[:curses.COLS-1], attr)
+            except:
+                pass
     
     def _start_search(self):
         """Inicia modo de busca"""
@@ -1061,45 +1714,110 @@ class NetworkMonitorTUI:
                 # Em caso de erro, volta para packets sem trocar interface
                 self.current_view = "packets"
     
+    def _select_stream(self):
+        """Seleciona stream e mostra detalhes"""
+        streams = self.get_tcp_streams()
+        if self.selected_packet < len(streams):
+            self.current_stream = streams[self.selected_packet]
+            self.current_view = "stream_details"
+            self.scroll_offset = 0
+    
     def _filter_dialog(self):
-        """Dialog interativo para definir filtros"""
-        # Cria uma pequena janela para input de filtro
-        filter_win_height = 5
-        filter_win_width = 60
+        """Dialog interativo avançado para definir filtros BPF"""
+        # Cria janela grande para filtros avançados
+        filter_win_height = 20
+        filter_win_width = 80
         start_y = (curses.LINES - filter_win_height) // 2
         start_x = (curses.COLS - filter_win_width) // 2
         
+        # Filtros pré-definidos comuns
+        preset_filters = [
+            ("Limpar filtro", ""),
+            ("Apenas HTTP", "port 80 or port 8080"),
+            ("Apenas HTTPS", "port 443"),
+            ("Apenas DNS", "port 53"),
+            ("Apenas SSH", "port 22"),
+            ("Apenas FTP", "port 21 or port 20"),
+            ("Apenas TCP", "tcp"),
+            ("Apenas UDP", "udp"),
+            ("Apenas ICMP", "icmp"),
+            ("Apenas IPv6", "ip6"),
+            ("Host específico", "host "),
+            ("Rede específica", "net "),
+            ("Portas altas", "portrange 1024-65535"),
+            ("Tráfego local", "src net 192.168.0.0/16 or dst net 192.168.0.0/16"),
+            ("Não ARP", "not arp"),
+            ("HTTP GET", "tcp port 80 and (tcp[tcpflags] & tcp-push != 0)")
+        ]
+        
+        selected_preset = 0
+        current_filter = ""
+        
         try:
-            # Cria janela de filtro
             filter_win = curses.newwin(filter_win_height, filter_win_width, start_y, start_x)
-            filter_win.box()
             
-            # Título
-            filter_win.addstr(1, 2, "Filtro de Captura (sintaxe BPF):", curses.color_pair(1))
-            filter_win.addstr(2, 2, "Atual: " + (self.packet_filter or "(nenhum)"))
-            filter_win.addstr(3, 2, "Novo: ")
-            
-            filter_win.refresh()
-            
-            # Input do usuário
-            curses.echo()
-            curses.curs_set(1)
-            
-            new_filter = filter_win.getstr(3, 8, 40).decode('utf-8')
-            
-            curses.noecho()
-            curses.curs_set(0)
-            
-            # Aplica o filtro
-            if new_filter != self.packet_filter:
-                old_capturing = self.is_capturing
-                if old_capturing:
-                    self.stop_capture()
+            while True:
+                filter_win.clear()
+                filter_win.box()
                 
-                self.packet_filter = new_filter
+                # Título
+                filter_win.addstr(1, 2, "BPF FILTER CONFIGURATOR", curses.color_pair(1))
+                filter_win.addstr(2, 2, f"Filtro atual: {self.packet_filter or '(nenhum)'}")
+                filter_win.addstr(3, 2, "-" * (filter_win_width - 4))
                 
-                if old_capturing and self.interface:
-                    self.start_capture(self.interface, self.packet_filter)
+                # Filtros pré-definidos
+                filter_win.addstr(4, 2, "FILTROS PRE-DEFINIDOS (Use ↑↓ para navegar, Enter para aplicar):")
+                
+                # Lista de presets
+                for i, (name, filter_expr) in enumerate(preset_filters[:12]):  # Mostra até 12 presets
+                    y = 5 + i
+                    if y >= filter_win_height - 4:
+                        break
+                    
+                    attr = curses.color_pair(2) if i == selected_preset else curses.color_pair(0)
+                    prefix = "► " if i == selected_preset else "  "
+                    
+                    display_filter = filter_expr if len(filter_expr) <= 35 else filter_expr[:35] + "..."
+                    line = f"{prefix}{name:<20} {display_filter}"
+                    
+                    try:
+                        filter_win.addstr(y, 2, line[:filter_win_width-4], attr)
+                    except:
+                        pass
+                
+                # Filtro customizado
+                filter_win.addstr(filter_win_height - 4, 2, "FILTRO CUSTOMIZADO:")
+                filter_win.addstr(filter_win_height - 3, 2, f"Digite: {current_filter}")
+                filter_win.addstr(filter_win_height - 2, 2, "[Enter] Aplicar [C] Custom [ESC] Cancelar")
+                
+                filter_win.refresh()
+                
+                # Input
+                key = filter_win.getch()
+                
+                if key == 27:  # ESC
+                    break
+                elif key == curses.KEY_UP:
+                    selected_preset = max(0, selected_preset - 1)
+                elif key == curses.KEY_DOWN:
+                    selected_preset = min(len(preset_filters) - 1, selected_preset + 1)
+                elif key == ord('c') or key == ord('C'):
+                    # Modo de entrada customizada
+                    current_filter = self._get_custom_filter_input()
+                    if current_filter is not None:
+                        self._apply_filter(current_filter)
+                        break
+                elif key == curses.KEY_ENTER or key == 10:
+                    # Aplica filtro selecionado
+                    if selected_preset < len(preset_filters):
+                        name, filter_expr = preset_filters[selected_preset]
+                        if name == "Host específico" or name == "Rede específica":
+                            # Precisa de input adicional
+                            additional_input = self._get_additional_input(name)
+                            if additional_input:
+                                filter_expr += additional_input
+                        self._apply_filter(filter_expr)
+                        break
             
             del filter_win
             
@@ -1107,6 +1825,76 @@ class NetworkMonitorTUI:
             curses.noecho()
             curses.curs_set(0)
             pass
+    
+    def _get_custom_filter_input(self):
+        """Obtém entrada customizada para filtro BPF"""
+        try:
+            input_win = curses.newwin(3, 70, curses.LINES//2, curses.COLS//2 - 35)
+            input_win.box()
+            input_win.addstr(1, 2, "Digite o filtro BPF: ")
+            input_win.refresh()
+            
+            curses.echo()
+            curses.curs_set(1)
+            
+            user_input = input_win.getstr(1, 22, 45).decode('utf-8')
+            
+            curses.noecho()
+            curses.curs_set(0)
+            del input_win
+            
+            return user_input
+        except:
+            curses.noecho()
+            curses.curs_set(0)
+            return None
+    
+    def _get_additional_input(self, filter_type):
+        """Obtém entrada adicional para filtros que precisam de parâmetros"""
+        try:
+            input_win = curses.newwin(3, 70, curses.LINES//2, curses.COLS//2 - 35)
+            input_win.box()
+            
+            if "Host" in filter_type:
+                input_win.addstr(1, 2, "Digite o IP/hostname: ")
+            elif "Rede" in filter_type:
+                input_win.addstr(1, 2, "Digite a rede (ex: 192.168.1.0/24): ")
+            
+            input_win.refresh()
+            
+            curses.echo()
+            curses.curs_set(1)
+            
+            user_input = input_win.getstr(1, 25, 40).decode('utf-8')
+            
+            curses.noecho()
+            curses.curs_set(0)
+            del input_win
+            
+            return user_input
+        except:
+            curses.noecho()
+            curses.curs_set(0)
+            return None
+    
+    def _apply_filter(self, new_filter):
+        """Aplica novo filtro BPF"""
+        if new_filter != self.packet_filter:
+            old_capturing = self.is_capturing
+            if old_capturing:
+                self.stop_capture()
+            
+            self.packet_filter = new_filter
+            
+            if old_capturing and self.interface:
+                try:
+                    self.start_capture(self.interface, self.packet_filter)
+                except Exception as e:
+                    logger.error(f"Erro ao aplicar filtro: {e}")
+                    # Remove filtro inválido e tenta sem filtro
+                    self.packet_filter = ""
+                    if self.interface:
+                        self.start_capture(self.interface, "")
     
     def _run_simple_interface(self):
         """Interface simples sem curses"""
