@@ -1899,6 +1899,518 @@ class AdvancedHashCracker:
             'cracked': self.cracked_password is not None,
             'cracked_password': self.cracked_password
         }
+    
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # NOVOS MODOS DE ATAQUE AVANÇADOS - Competindo com HashCat e John the Ripper
+    # ═══════════════════════════════════════════════════════════════════════════════
+    
+    def hybrid_attack(self, wordlist_path, mask_suffix="", mask_prefix=""):
+        """
+        Ataque híbrido: Dictionary + Mask (como hashcat -a 6 e -a 7).
+        
+        Args:
+            wordlist_path (str): Caminho para wordlist
+            mask_suffix (str): Máscara para adicionar no final (?d?d = 2 dígitos)
+            mask_prefix (str): Máscara para adicionar no início
+            
+        Returns:
+            tuple: (password, attempts, time_taken)
+        """
+        console.print(f"[*] Iniciando ataque híbrido")
+        console.print(f"[*] Wordlist: {wordlist_path}")
+        if mask_prefix:
+            console.print(f"[*] Prefixo: {mask_prefix}")
+        if mask_suffix:
+            console.print(f"[*] Sufixo: {mask_suffix}")
+        
+        self.attack_mode = 'hybrid'
+        self.start_time = time.time()
+        self.attempts = 0
+        
+        # Carrega wordlist
+        try:
+            with open(wordlist_path, 'r', encoding='utf-8', errors='ignore') as f:
+                base_words = [line.strip() for line in f if line.strip()]
+        except FileNotFoundError:
+            console.print(f"[red][!] Wordlist não encontrada: {wordlist_path}[/red]")
+            return None, 0, 0
+        
+        # Parse máscaras
+        prefix_variants = self._parse_mask_variants(mask_prefix) if mask_prefix else [""]
+        suffix_variants = self._parse_mask_variants(mask_suffix) if mask_suffix else [""]
+        
+        total_combinations = len(base_words) * len(prefix_variants) * len(suffix_variants)
+        console.print(f"[*] Total combinações: {total_combinations:,}")
+        
+        # Executa ataque híbrido com progresso
+        with create_progress() as progress:
+            task_description = f"[green]Ataque híbrido[/green]"
+            if self.verbose:
+                task_description = f"[green]Ataque híbrido[/green] - 0 tentativas - 0 h/s"
+                
+            task = progress.add_task(task_description, total=total_combinations)
+            
+            with ThreadPoolExecutor(max_workers=self.workers) as executor:
+                batch_size = 5000
+                batch = []
+                processed = 0
+                
+                for word in base_words:
+                    for prefix in prefix_variants:
+                        for suffix in suffix_variants:
+                            password = f"{prefix}{word}{suffix}"
+                            batch.append(password)
+                            processed += 1
+                            
+                            if len(batch) >= batch_size:
+                                future = executor.submit(self._test_passwords_chunk, batch)
+                                result = future.result()
+                                if result:
+                                    progress.remove_task(task)
+                                    time_taken = time.time() - self.start_time
+                                    console.print(f"\n[bold green][+] SENHA ENCONTRADA: {result}[/bold green]")
+                                    console.print(f"[*] Tentativas: {self.attempts:,}")
+                                    console.print(f"[*] Tempo: {time_taken:.2f}s")
+                                    return result, self.attempts, time_taken
+                                batch = []
+                                
+                                # Atualiza progresso
+                                rate = self.attempts / (time.time() - self.start_time) if time.time() > self.start_time else 0
+                                self._update_progress_task(progress, task, processed, total_combinations, self.attempts, rate)
+                
+                # Último batch
+                if batch:
+                    future = executor.submit(self._test_passwords_chunk, batch)
+                    result = future.result()
+                    if result:
+                        progress.remove_task(task)
+                        time_taken = time.time() - self.start_time
+                        console.print(f"\n[bold green][+] SENHA ENCONTRADA: {result}[/bold green]")
+                        return result, self.attempts, time_taken
+        
+        time_taken = time.time() - self.start_time
+        console.print(f"\n[red][-] Senha não encontrada no ataque híbrido[/red]")
+        return None, self.attempts, time_taken
+    
+    def combinator_attack(self, wordlist1_path, wordlist2_path, separator=""):
+        """
+        Ataque combinador: combina palavras de duas wordlists (como hashcat -a 1).
+        
+        Args:
+            wordlist1_path (str): Primeira wordlist
+            wordlist2_path (str): Segunda wordlist  
+            separator (str): Separador entre palavras (opcional)
+            
+        Returns:
+            tuple: (password, attempts, time_taken)
+        """
+        console.print(f"[*] Iniciando ataque combinador")
+        console.print(f"[*] Wordlist 1: {wordlist1_path}")
+        console.print(f"[*] Wordlist 2: {wordlist2_path}")
+        if separator:
+            console.print(f"[*] Separador: '{separator}'")
+        
+        self.attack_mode = 'combinator'
+        self.start_time = time.time()
+        self.attempts = 0
+        
+        # Carrega wordlists
+        try:
+            with open(wordlist1_path, 'r', encoding='utf-8', errors='ignore') as f:
+                words1 = [line.strip() for line in f if line.strip()]
+            with open(wordlist2_path, 'r', encoding='utf-8', errors='ignore') as f:
+                words2 = [line.strip() for line in f if line.strip()]
+        except FileNotFoundError as e:
+            console.print(f"[red][!] Wordlist não encontrada: {e}[/red]")
+            return None, 0, 0
+        
+        total_combinations = len(words1) * len(words2)
+        console.print(f"[*] Combinações: {len(words1):,} × {len(words2):,} = {total_combinations:,}")
+        
+        # Executa ataque combinador
+        with create_progress() as progress:
+            task_description = f"[green]Ataque combinador[/green]"
+            if self.verbose:
+                task_description = f"[green]Ataque combinador[/green] - 0 tentativas - 0 h/s"
+                
+            task = progress.add_task(task_description, total=total_combinations)
+            
+            with ThreadPoolExecutor(max_workers=self.workers) as executor:
+                batch_size = 5000
+                batch = []
+                processed = 0
+                
+                for word1 in words1:
+                    for word2 in words2:
+                        password = f"{word1}{separator}{word2}"
+                        batch.append(password)
+                        processed += 1
+                        
+                        if len(batch) >= batch_size:
+                            future = executor.submit(self._test_passwords_chunk, batch)
+                            result = future.result()
+                            if result:
+                                progress.remove_task(task)
+                                time_taken = time.time() - self.start_time
+                                console.print(f"\n[bold green][+] SENHA ENCONTRADA: {result}[/bold green]")
+                                return result, self.attempts, time_taken
+                            batch = []
+                            
+                            # Atualiza progresso
+                            rate = self.attempts / (time.time() - self.start_time) if time.time() > self.start_time else 0
+                            self._update_progress_task(progress, task, processed, total_combinations, self.attempts, rate)
+                
+                # Último batch
+                if batch:
+                    future = executor.submit(self._test_passwords_chunk, batch)
+                    result = future.result()
+                    if result:
+                        progress.remove_task(task)
+                        time_taken = time.time() - self.start_time
+                        console.print(f"\n[bold green][+] SENHA ENCONTRADA: {result}[/bold green]")
+                        return result, self.attempts, time_taken
+        
+        time_taken = time.time() - self.start_time
+        console.print(f"\n[red][-] Senha não encontrada no ataque combinador[/red]")
+        return None, self.attempts, time_taken
+    
+    def toggle_case_attack(self, wordlist_path):
+        """
+        Ataque de alternância de maiúsculas/minúsculas.
+        Gera todas as variações possíveis de case para cada palavra.
+        
+        Args:
+            wordlist_path (str): Caminho para wordlist
+            
+        Returns:
+            tuple: (password, attempts, time_taken)
+        """
+        console.print(f"[*] Iniciando ataque de alternância de case")
+        console.print(f"[*] Wordlist: {wordlist_path}")
+        
+        self.attack_mode = 'toggle_case'
+        self.start_time = time.time()
+        self.attempts = 0
+        
+        # Carrega wordlist
+        try:
+            with open(wordlist_path, 'r', encoding='utf-8', errors='ignore') as f:
+                words = [line.strip() for line in f if line.strip()]
+        except FileNotFoundError:
+            console.print(f"[red][!] Wordlist não encontrada: {wordlist_path}[/red]")
+            return None, 0, 0
+        
+        # Calcula total de variações (2^n por palavra, onde n = letras)
+        total_variants = 0
+        for word in words:
+            letter_count = sum(1 for c in word if c.isalpha())
+            total_variants += min(2**letter_count, 1000)  # Limita a 1000 por palavra
+        
+        console.print(f"[*] Total variações: {total_variants:,}")
+        
+        # Executa ataque toggle case
+        with create_progress() as progress:
+            task_description = f"[green]Ataque toggle case[/green]"
+            if self.verbose:
+                task_description = f"[green]Ataque toggle case[/green] - 0 tentativas - 0 h/s"
+                
+            task = progress.add_task(task_description, total=total_variants)
+            
+            with ThreadPoolExecutor(max_workers=self.workers) as executor:
+                batch_size = 2000
+                batch = []
+                processed = 0
+                
+                for word in words:
+                    variants = self._generate_case_variants(word)
+                    for variant in variants:
+                        batch.append(variant)
+                        processed += 1
+                        
+                        if len(batch) >= batch_size:
+                            future = executor.submit(self._test_passwords_chunk, batch)
+                            result = future.result()
+                            if result:
+                                progress.remove_task(task)
+                                time_taken = time.time() - self.start_time
+                                console.print(f"\n[bold green][+] SENHA ENCONTRADA: {result}[/bold green]")
+                                return result, self.attempts, time_taken
+                            batch = []
+                            
+                            # Atualiza progresso
+                            rate = self.attempts / (time.time() - self.start_time) if time.time() > self.start_time else 0
+                            self._update_progress_task(progress, task, processed, total_variants, self.attempts, rate)
+                
+                # Último batch
+                if batch:
+                    future = executor.submit(self._test_passwords_chunk, batch)
+                    result = future.result()
+                    if result:
+                        progress.remove_task(task)
+                        time_taken = time.time() - self.start_time
+                        console.print(f"\n[bold green][+] SENHA ENCONTRADA: {result}[/bold green]")
+                        return result, self.attempts, time_taken
+        
+        time_taken = time.time() - self.start_time
+        console.print(f"\n[red][-] Senha não encontrada no ataque toggle case[/red]")
+        return None, self.attempts, time_taken
+    
+    def increment_attack(self, min_length=1, max_length=6, charset=None):
+        """
+        Ataque incremental: força bruta otimizada baseada em frequência de caracteres.
+        Inspirado no modo incremental do John the Ripper.
+        
+        Args:
+            min_length (int): Comprimento mínimo
+            max_length (int): Comprimento máximo
+            charset (str): Conjunto de caracteres (ordenado por frequência)
+            
+        Returns:
+            tuple: (password, attempts, time_taken)
+        """
+        # Charset otimizado por frequência (letras mais comuns primeiro)
+        charset = charset or "etaoinshrdlcumwfgypbvkjxqz0123456789"
+        
+        console.print(f"[*] Iniciando ataque incremental")
+        console.print(f"[*] Comprimento: {min_length}-{max_length}")
+        console.print(f"[*] Charset (por frequência): {charset[:20]}{'...' if len(charset) > 20 else ''}")
+        
+        self.attack_mode = 'increment'
+        self.start_time = time.time()
+        self.attempts = 0
+        
+        total_combinations = sum(len(charset) ** length for length in range(min_length, max_length + 1))
+        console.print(f"[*] Total combinações: {total_combinations:,}")
+        
+        # Executa ataque incremental com progresso
+        with create_progress() as progress:
+            task_description = f"[green]Ataque incremental[/green]"
+            if self.verbose:
+                task_description = f"[green]Ataque incremental[/green] - 0 tentativas - 0 h/s"
+                
+            task = progress.add_task(task_description, total=total_combinations)
+            
+            # Testa por comprimento, priorizando caracteres mais frequentes
+            for length in range(min_length, max_length + 1):
+                if self.verbose:
+                    console.print(f"[*] Testando senhas de {length} caracteres...")
+                
+                result = self._increment_length_search(charset, length, progress, task)
+                if result:
+                    progress.remove_task(task)
+                    time_taken = time.time() - self.start_time
+                    console.print(f"\n[bold green][+] SENHA ENCONTRADA: {result}[/bold green]")
+                    return result, self.attempts, time_taken
+        
+        time_taken = time.time() - self.start_time
+        console.print(f"\n[red][-] Senha não encontrada no ataque incremental[/red]")
+        return None, self.attempts, time_taken
+    
+    def prince_attack(self, wordlist_path, elements_per_chain=4):
+        """
+        Ataque PRINCE (Probability Infinite Chained Elements).
+        Gera candidatos baseado em segmentos de palavras do dicionário.
+        
+        Args:
+            wordlist_path (str): Caminho para wordlist
+            elements_per_chain (int): Número de elementos por chain
+            
+        Returns:
+            tuple: (password, attempts, time_taken)
+        """
+        console.print(f"[*] Iniciando ataque PRINCE")
+        console.print(f"[*] Wordlist: {wordlist_path}")
+        console.print(f"[*] Elementos por chain: {elements_per_chain}")
+        
+        self.attack_mode = 'prince'
+        self.start_time = time.time()
+        self.attempts = 0
+        
+        # Carrega wordlist e extrai elementos
+        try:
+            with open(wordlist_path, 'r', encoding='utf-8', errors='ignore') as f:
+                words = [line.strip() for line in f if line.strip()]
+        except FileNotFoundError:
+            console.print(f"[red][!] Wordlist não encontrada: {wordlist_path}[/red]")
+            return None, 0, 0
+        
+        # Extrai elementos (substrings) das palavras
+        elements = self._extract_prince_elements(words)
+        console.print(f"[*] Elementos extraídos: {len(elements):,}")
+        
+        # Calcula combinações aproximadas
+        estimated_combinations = len(elements) ** elements_per_chain
+        console.print(f"[*] Combinações estimadas: {estimated_combinations:,}")
+        
+        # Executa ataque PRINCE
+        with create_progress() as progress:
+            task_description = f"[green]Ataque PRINCE[/green]"
+            if self.verbose:
+                task_description = f"[green]Ataque PRINCE[/green] - 0 tentativas - 0 h/s"
+                
+            task = progress.add_task(task_description, total=estimated_combinations)
+            
+            result = self._prince_generate_candidates(elements, elements_per_chain, progress, task)
+            if result:
+                progress.remove_task(task)
+                time_taken = time.time() - self.start_time
+                console.print(f"\n[bold green][+] SENHA ENCONTRADA: {result}[/bold green]")
+                return result, self.attempts, time_taken
+        
+        time_taken = time.time() - self.start_time
+        console.print(f"\n[red][-] Senha não encontrada no ataque PRINCE[/red]")
+        return None, self.attempts, time_taken
+    
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # FUNÇÕES AUXILIARES PARA OS NOVOS ATAQUES
+    # ═══════════════════════════════════════════════════════════════════════════════
+    
+    def _parse_mask_variants(self, mask):
+        """Converte máscara em lista de variantes possíveis."""
+        if not mask:
+            return [""]
+        
+        mask_chars = {
+            '?l': string.ascii_lowercase,
+            '?u': string.ascii_uppercase,
+            '?d': string.digits,
+            '?s': '!@#$%^&*()_+-=[]{}|;:,.<>?',
+            '?a': string.ascii_letters + string.digits + '!@#$%^&*()_+-=[]{}|;:,.<>?'
+        }
+        
+        # Parse simples da máscara
+        variants = [""]
+        i = 0
+        while i < len(mask):
+            if i < len(mask) - 1 and mask[i:i+2] in mask_chars:
+                # É uma máscara
+                charset = mask_chars[mask[i:i+2]]
+                new_variants = []
+                for variant in variants:
+                    for char in charset:
+                        new_variants.append(variant + char)
+                        if len(new_variants) > 10000:  # Limita para evitar explosão
+                            return new_variants[:10000]
+                variants = new_variants
+                i += 2
+            else:
+                # É um caractere literal
+                variants = [v + mask[i] for v in variants]
+                i += 1
+        
+        return variants
+    
+    def _generate_case_variants(self, word):
+        """Gera todas as variações de maiúscula/minúscula para uma palavra."""
+        letter_positions = [i for i, c in enumerate(word) if c.isalpha()]
+        if not letter_positions or len(letter_positions) > 10:  # Limita para evitar explosão
+            return [word, word.lower(), word.upper(), word.capitalize()]
+        
+        variants = set()
+        # Gera todas as combinações de case
+        for mask in range(2 ** len(letter_positions)):
+            variant = list(word.lower())
+            for i, pos in enumerate(letter_positions):
+                if mask & (1 << i):
+                    variant[pos] = variant[pos].upper()
+            variants.add(''.join(variant))
+            
+            if len(variants) > 500:  # Limita para performance
+                break
+        
+        return list(variants)
+    
+    def _increment_length_search(self, charset, length, progress, task):
+        """Busca incremental otimizada por comprimento."""
+        with ThreadPoolExecutor(max_workers=self.workers) as executor:
+            batch_size = 1000
+            batch = []
+            
+            # Gera senhas priorizando caracteres mais frequentes
+            def generate_incremental_passwords():
+                # Algoritmo simplificado - em produção seria mais sofisticado
+                for chars in itertools.product(charset, repeat=length):
+                    yield ''.join(chars)
+            
+            for password in generate_incremental_passwords():
+                batch.append(password)
+                
+                if len(batch) >= batch_size:
+                    future = executor.submit(self._test_passwords_chunk, batch)
+                    result = future.result()
+                    if result:
+                        return result
+                    batch = []
+                    
+                    # Atualiza progresso ocasionalmente
+                    if self.attempts % 50000 == 0:
+                        rate = self.attempts / (time.time() - self.start_time) if time.time() > self.start_time else 0
+                        self._update_progress_task(progress, task, self.attempts, None, self.attempts, rate)
+            
+            # Último batch
+            if batch:
+                future = executor.submit(self._test_passwords_chunk, batch)
+                result = future.result()
+                if result:
+                    return result
+        
+        return None
+    
+    def _extract_prince_elements(self, words):
+        """Extrai elementos para ataque PRINCE."""
+        elements = set()
+        
+        for word in words:
+            # Adiciona palavra inteira
+            elements.add(word)
+            
+            # Adiciona substrings
+            for length in range(2, min(len(word) + 1, 8)):  # Até 7 caracteres
+                for i in range(len(word) - length + 1):
+                    elements.add(word[i:i + length])
+        
+        # Filtra elementos muito comuns ou muito raros
+        elements = [e for e in elements if 2 <= len(e) <= 10]
+        
+        # Ordena por frequência (simplificado)
+        return sorted(elements, key=len)[:5000]  # Limita para performance
+    
+    def _prince_generate_candidates(self, elements, chain_length, progress, task):
+        """Gera candidatos PRINCE."""
+        with ThreadPoolExecutor(max_workers=self.workers) as executor:
+            batch_size = 2000
+            batch = []
+            processed = 0
+            
+            # Gera combinações de elementos
+            for combination in itertools.product(elements, repeat=chain_length):
+                candidate = ''.join(combination)
+                
+                # Filtra candidatos muito longos
+                if len(candidate) <= 20:
+                    batch.append(candidate)
+                    processed += 1
+                
+                if len(batch) >= batch_size:
+                    future = executor.submit(self._test_passwords_chunk, batch)
+                    result = future.result()
+                    if result:
+                        return result
+                    batch = []
+                    
+                    # Atualiza progresso
+                    if processed % 10000 == 0:
+                        rate = self.attempts / (time.time() - self.start_time) if time.time() > self.start_time else 0
+                        self._update_progress_task(progress, task, processed, None, self.attempts, rate)
+            
+            # Último batch
+            if batch:
+                future = executor.submit(self._test_passwords_chunk, batch)
+                result = future.result()
+                if result:
+                    return result
+        
+        return None
 
 
 # Funções auxiliares para compatibilidade
@@ -1937,6 +2449,31 @@ def crack_hash(hash_target, wordlist_path=None, hash_type=None, attack_mode='dic
         password = cracker.online_lookup()
         attempts = 0
         time_taken = 0
+    elif attack_mode == 'hybrid':
+        # Ataque híbrido - dictionary + mask
+        mask_suffix = kwargs.get('mask_suffix', '?d?d')
+        mask_prefix = kwargs.get('mask_prefix', '')
+        password, attempts, time_taken = cracker.hybrid_attack(wordlist_path, mask_suffix, mask_prefix)
+    elif attack_mode == 'combinator':
+        # Ataque combinador - duas wordlists
+        wordlist2_path = kwargs.get('wordlist2', None)
+        separator = kwargs.get('separator', '')
+        if not wordlist2_path:
+            return {'error': 'Ataque combinador requer duas wordlists (wordlist2=...)'}
+        password, attempts, time_taken = cracker.combinator_attack(wordlist_path, wordlist2_path, separator)
+    elif attack_mode == 'toggle_case':
+        # Ataque de alternância de case
+        password, attempts, time_taken = cracker.toggle_case_attack(wordlist_path)
+    elif attack_mode == 'increment':
+        # Ataque incremental otimizado
+        min_len = kwargs.get('min_length', 1)
+        max_len = kwargs.get('max_length', 6)
+        charset = kwargs.get('charset', None)
+        password, attempts, time_taken = cracker.increment_attack(min_len, max_len, charset)
+    elif attack_mode == 'prince':
+        # Ataque PRINCE
+        elements_per_chain = kwargs.get('elements_per_chain', 4)
+        password, attempts, time_taken = cracker.prince_attack(wordlist_path, elements_per_chain)
     elif attack_mode == 'all':
         # Tenta todos os métodos em ordem de eficiência
         console.print("[*] Modo 'all': tentando todos os ataques disponíveis")
@@ -1968,8 +2505,63 @@ def crack_hash(hash_target, wordlist_path=None, hash_type=None, attack_mode='dic
                     'success': True
                 }
         
-        # 3. Brute Force (limitado)
-        console.print("\n[*] === TENTATIVA 3: BRUTE FORCE (1-4 chars) ===")
+        # 3. Toggle Case Attack
+        if wordlist_path:
+            console.print("\n[*] === TENTATIVA 3: TOGGLE CASE ATTACK ===")
+            password, attempts, time_taken = cracker.toggle_case_attack(wordlist_path)
+            if password:
+                return {
+                    'hash_type': cracker.hash_type,
+                    'attack_mode': 'toggle_case',
+                    'password': password,
+                    'attempts': attempts,
+                    'time_taken': time_taken,
+                    'success': True
+                }
+        
+        # 4. Hybrid Attack (wordlist + common suffixes)
+        if wordlist_path:
+            console.print("\n[*] === TENTATIVA 4: HYBRID ATTACK (suffix ?d?d) ===")
+            password, attempts, time_taken = cracker.hybrid_attack(wordlist_path, mask_suffix="?d?d")
+            if password:
+                return {
+                    'hash_type': cracker.hash_type,
+                    'attack_mode': 'hybrid',
+                    'password': password,
+                    'attempts': attempts,
+                    'time_taken': time_taken,
+                    'success': True
+                }
+        
+        # 5. PRINCE Attack (se wordlist disponível)
+        if wordlist_path:
+            console.print("\n[*] === TENTATIVA 5: PRINCE ATTACK ===")
+            password, attempts, time_taken = cracker.prince_attack(wordlist_path, elements_per_chain=3)
+            if password:
+                return {
+                    'hash_type': cracker.hash_type,
+                    'attack_mode': 'prince',
+                    'password': password,
+                    'attempts': attempts,
+                    'time_taken': time_taken,
+                    'success': True
+                }
+        
+        # 6. Increment Attack (otimizado)
+        console.print("\n[*] === TENTATIVA 6: INCREMENT ATTACK (1-4 chars) ===")
+        password, attempts, time_taken = cracker.increment_attack(1, 4)
+        if password:
+            return {
+                'hash_type': cracker.hash_type,
+                'attack_mode': 'increment',
+                'password': password,
+                'attempts': attempts,
+                'time_taken': time_taken,
+                'success': True
+            }
+        
+        # 7. Brute Force (último recurso - mais lento)
+        console.print("\n[*] === TENTATIVA 7: BRUTE FORCE (1-4 chars) - ÚLTIMO RECURSO ===")
         password, attempts, time_taken = cracker.brute_force_attack(1, 4, string.ascii_lowercase + string.digits)
         if password:
             return {
@@ -2036,6 +2628,29 @@ def get_supported_algorithms():
     }
 
 
+def get_attack_modes():
+    """Retorna lista de modos de ataque disponíveis."""
+    return {
+        'basic': [
+            'dictionary',     # Ataque de dicionário básico
+            'brute_force',    # Força bruta tradicional
+            'mask',          # Ataque por máscara (estilo hashcat)
+            'rainbow',       # Rainbow tables
+        ],
+        'advanced': [
+            'hybrid',        # Dictionary + Mask (hashcat -a 6/7)
+            'combinator',    # Combina duas wordlists (hashcat -a 1)
+            'toggle_case',   # Alternância de maiúsculas/minúsculas
+            'increment',     # Força bruta incremental otimizada (john-style)
+            'prince',        # PRINCE attack (Probability Infinite Chained Elements)
+        ],
+        'utility': [
+            'online',        # Lookup em serviços online
+            'all',          # Executa todos os ataques em sequência
+        ]
+    }
+
+
 def display_algorithm_info():
     """Exibe informações sobre algoritmos suportados."""
     algorithms = get_supported_algorithms()
@@ -2059,6 +2674,54 @@ def display_algorithm_info():
         console.print(f"  • {algo} {status}")
     
     console.print(f"\n[bold]Total: {len(algorithms['all'])} algoritmos[/bold]")
+
+
+def display_attack_modes_info():
+    """Exibe informações sobre modos de ataque disponíveis."""
+    console.print(f"\n[bold blue]═══ MODOS DE ATAQUE SUPORTADOS ═══[/bold blue]")
+    
+    attack_modes = get_attack_modes()
+    
+    console.print(f"\n[bold green]🔥 ATAQUES BÁSICOS[/bold green]")
+    for mode in attack_modes['basic']:
+        descriptions = {
+            'dictionary': 'Testa senhas de uma wordlist',
+            'brute_force': 'Força bruta tradicional por comprimento',
+            'mask': 'Ataque por máscara (ex: ?l?l?l?d?d)',
+            'rainbow': 'Usa rainbow tables pré-computadas'
+        }
+        console.print(f"  • [cyan]{mode:<12}[/cyan] - {descriptions.get(mode, 'Descrição não disponível')}")
+    
+    console.print(f"\n[bold yellow]⚡ ATAQUES AVANÇADOS[/bold yellow]")
+    for mode in attack_modes['advanced']:
+        descriptions = {
+            'hybrid': 'Dictionary + Mask (ex: palavra + ?d?d)',
+            'combinator': 'Combina palavras de duas wordlists',
+            'toggle_case': 'Variações de maiúscula/minúscula',
+            'increment': 'Força bruta otimizada por frequência',
+            'prince': 'PRINCE - segmentos probabilísticos'
+        }
+        console.print(f"  • [cyan]{mode:<12}[/cyan] - {descriptions.get(mode, 'Descrição não disponível')}")
+    
+    console.print(f"\n[bold magenta]🛠️ UTILITÁRIOS[/bold magenta]")
+    for mode in attack_modes['utility']:
+        descriptions = {
+            'online': 'Consulta bases de hashes online',
+            'all': 'Executa todos os ataques automaticamente'
+        }
+        console.print(f"  • [cyan]{mode:<12}[/cyan] - {descriptions.get(mode, 'Descrição não disponível')}")
+    
+    total_modes = len(attack_modes['basic']) + len(attack_modes['advanced']) + len(attack_modes['utility'])
+    console.print(f"\n[bold]Total: {total_modes} modos de ataque[/bold]")
+    
+    console.print(f"\n[bold blue]💡 EXEMPLOS DE USO:[/bold blue]")
+    console.print(f"  [green]Dictionary:[/green]  --attack-mode dictionary --wordlist rockyou.txt")
+    console.print(f"  [green]Hybrid:[/green]     --attack-mode hybrid --wordlist words.txt --mask-suffix '?d?d'")
+    console.print(f"  [green]Combinator:[/green] --attack-mode combinator --wordlist1 words1.txt --wordlist2 words2.txt")
+    console.print(f"  [green]Toggle Case:[/green]--attack-mode toggle_case --wordlist common.txt")
+    console.print(f"  [green]Increment:[/green]  --attack-mode increment --min-length 1 --max-length 6")
+    console.print(f"  [green]PRINCE:[/green]     --attack-mode prince --wordlist base.txt --elements-per-chain 4")
+    console.print(f"  [green]Automático:[/green] --attack-mode all --wordlist rockyou.txt")
 
 
 def benchmark_hash_algorithms(password="test123", iterations=1000):

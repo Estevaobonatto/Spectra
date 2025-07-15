@@ -1275,7 +1275,102 @@ def main():
                         'time': time_taken
                     }
             
-            elif args.attack_mode == 'dictionary' or args.attack_mode == 'all':
+            # Para modo 'all', executa sequência otimizada diretamente
+            if args.attack_mode == 'all':
+                console.print("[*] Modo 'all': tentando todos os ataques disponíveis")
+                
+                # 1. Rainbow Tables (mais rápido)
+                console.print("\n[*] === TENTATIVA 1: RAINBOW TABLES ===")
+                password, attempts, time_taken = cracker.rainbow_table_attack(auto_generate=False)
+                if password:
+                    password_found = True
+                    results = {
+                        'mode': 'rainbow',
+                        'password': password,
+                        'attempts': attempts,
+                        'time': time_taken
+                    }
+                
+                # 2. Dictionary Attack
+                if not password_found and wordlist_path:
+                    console.print("\n[*] === TENTATIVA 2: DICTIONARY ATTACK ===")
+                    password, attempts, time_taken = cracker.dictionary_attack(wordlist_path)
+                    if password:
+                        password_found = True
+                        results = {
+                            'mode': 'dictionary',
+                            'password': password,
+                            'attempts': attempts,
+                            'time': time_taken
+                        }
+                
+                # 3. Toggle Case Attack
+                if not password_found and wordlist_path:
+                    console.print("\n[*] === TENTATIVA 3: TOGGLE CASE ATTACK ===")
+                    password, attempts, time_taken = cracker.toggle_case_attack(wordlist_path)
+                    if password:
+                        password_found = True
+                        results = {
+                            'mode': 'toggle_case',
+                            'password': password,
+                            'attempts': attempts,
+                            'time': time_taken
+                        }
+                
+                # 4. Hybrid Attack (wordlist + common suffixes)
+                if not password_found and wordlist_path:
+                    console.print("\n[*] === TENTATIVA 4: HYBRID ATTACK (suffix ?d?d) ===")
+                    password, attempts, time_taken = cracker.hybrid_attack(wordlist_path, mask_suffix="?d?d")
+                    if password:
+                        password_found = True
+                        results = {
+                            'mode': 'hybrid',
+                            'password': password,
+                            'attempts': attempts,
+                            'time': time_taken
+                        }
+                
+                # 5. PRINCE Attack (se wordlist disponível)
+                if not password_found and wordlist_path:
+                    console.print("\n[*] === TENTATIVA 5: PRINCE ATTACK ===")
+                    password, attempts, time_taken = cracker.prince_attack(wordlist_path, elements_per_chain=3)
+                    if password:
+                        password_found = True
+                        results = {
+                            'mode': 'prince',
+                            'password': password,
+                            'attempts': attempts,
+                            'time': time_taken
+                        }
+                
+                # 6. Increment Attack (otimizado)
+                if not password_found:
+                    console.print("\n[*] === TENTATIVA 6: INCREMENT ATTACK (1-4 chars) ===")
+                    password, attempts, time_taken = cracker.increment_attack(1, 4)
+                    if password:
+                        password_found = True
+                        results = {
+                            'mode': 'increment',
+                            'password': password,
+                            'attempts': attempts,
+                            'time': time_taken
+                        }
+                
+                # 7. Brute Force (último recurso - mais lento)
+                if not password_found:
+                    console.print("\n[*] === TENTATIVA 7: BRUTE FORCE (1-4 chars) - ÚLTIMO RECURSO ===")
+                    password, attempts, time_taken = cracker.brute_force_attack(1, 4, "abcdefghijklmnopqrstuvwxyz0123456789")
+                    if password:
+                        password_found = True
+                        results = {
+                            'mode': 'brute_force',
+                            'password': password,
+                            'attempts': attempts,
+                            'time': time_taken
+                        }
+            
+            # Para ataques individuais, mantém implementação específica
+            elif args.attack_mode == 'dictionary':
                 if wordlist_path:
                     console.print(f"\n[*] === ATAQUE DE DICIONÁRIO ===")
                     
@@ -1297,7 +1392,87 @@ def main():
                 else:
                     console.print(f"[yellow][!] Wordlist não especificada para ataque de dicionário[/yellow]")
             
-            if not password_found and (args.attack_mode == 'online' or args.attack_mode == 'all'):
+            elif args.attack_mode == 'hybrid':
+                if wordlist_path:
+                    console.print(f"\n[*] === ATAQUE HÍBRIDO ===")
+                    mask_suffix = getattr(args, 'mask_suffix', '?d?d')
+                    mask_prefix = getattr(args, 'mask_prefix', '')
+                    password, attempts, time_taken = cracker.hybrid_attack(wordlist_path, mask_suffix, mask_prefix)
+                    if password:
+                        password_found = True
+                        results = {
+                            'mode': 'hybrid',
+                            'password': password,
+                            'attempts': attempts,
+                            'time': time_taken
+                        }
+                else:
+                    console.print(f"[yellow][!] Wordlist não especificada para ataque híbrido[/yellow]")
+            
+            elif args.attack_mode == 'combinator':
+                if wordlist_path:
+                    wordlist2_path = getattr(args, 'wordlist2', None)
+                    if wordlist2_path:
+                        console.print(f"\n[*] === ATAQUE COMBINADOR ===")
+                        separator = getattr(args, 'separator', '')
+                        password, attempts, time_taken = cracker.combinator_attack(wordlist_path, wordlist2_path, separator)
+                        if password:
+                            password_found = True
+                            results = {
+                                'mode': 'combinator',
+                                'password': password,
+                                'attempts': attempts,
+                                'time': time_taken
+                            }
+                    else:
+                        console.print(f"[yellow][!] Segunda wordlist não especificada (use --wordlist2)[/yellow]")
+                else:
+                    console.print(f"[yellow][!] Wordlists não especificadas para ataque combinador[/yellow]")
+            
+            elif args.attack_mode == 'toggle_case':
+                if wordlist_path:
+                    console.print(f"\n[*] === ATAQUE TOGGLE CASE ===")
+                    password, attempts, time_taken = cracker.toggle_case_attack(wordlist_path)
+                    if password:
+                        password_found = True
+                        results = {
+                            'mode': 'toggle_case',
+                            'password': password,
+                            'attempts': attempts,
+                            'time': time_taken
+                        }
+                else:
+                    console.print(f"[yellow][!] Wordlist não especificada para ataque toggle case[/yellow]")
+            
+            elif args.attack_mode == 'increment':
+                console.print(f"\n[*] === ATAQUE INCREMENTAL ===")
+                password, attempts, time_taken = cracker.increment_attack(args.min_length, args.max_length, args.charset)
+                if password:
+                    password_found = True
+                    results = {
+                        'mode': 'increment',
+                        'password': password,
+                        'attempts': attempts,
+                        'time': time_taken
+                    }
+            
+            elif args.attack_mode == 'prince':
+                if wordlist_path:
+                    console.print(f"\n[*] === ATAQUE PRINCE ===")
+                    elements_per_chain = getattr(args, 'elements_per_chain', 4)
+                    password, attempts, time_taken = cracker.prince_attack(wordlist_path, elements_per_chain)
+                    if password:
+                        password_found = True
+                        results = {
+                            'mode': 'prince',
+                            'password': password,
+                            'attempts': attempts,
+                            'time': time_taken
+                        }
+                else:
+                    console.print(f"[yellow][!] Wordlist não especificada para ataque PRINCE[/yellow]")
+            
+            elif args.attack_mode == 'online':
                 console.print(f"\n[*] === LOOKUP ONLINE ===")
                 password = cracker.online_lookup()
                 if password:
@@ -1309,7 +1484,7 @@ def main():
                         'time': 0
                     }
             
-            if not password_found and (args.attack_mode == 'mask' or args.attack_mode == 'all'):
+            elif args.attack_mode == 'mask':
                 if args.mask_pattern:
                     console.print(f"\n[*] === ATAQUE POR MÁSCARA ===")
                     password, attempts, time_taken = cracker.mask_attack(args.mask_pattern)
@@ -1321,10 +1496,10 @@ def main():
                             'attempts': attempts,
                             'time': time_taken
                         }
-                elif args.attack_mode == 'mask':
+                else:
                     console.print(f"[yellow][!] Padrão de máscara não especificado (use --mask-pattern)[/yellow]")
             
-            if not password_found and (args.attack_mode == 'brute_force' or args.attack_mode == 'all'):
+            elif args.attack_mode == 'brute_force':
                 console.print(f"\n[*] === ATAQUE DE FORÇA BRUTA ===")
                 if args.max_length > 8:
                     console.print(f"[yellow][!] Aviso: Comprimento máximo {args.max_length} pode demorar muito![/yellow]")
