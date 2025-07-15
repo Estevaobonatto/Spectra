@@ -1,1 +1,15 @@
 lfi_scan_results.json
+
+# Arquivos de debug temporários
+debug_import.py
+test_hash_cracker.py
+test_scapy.py
+
+# Wordlists grandes (>1MB) - não commitar
+spectra/data/wordlists/rockyou.txt
+spectra/data/wordlists/bt4-password.txt
+spectra/data/wordlists/darkc0de.txt
+
+# Cache de módulos Python
+**/__pycache__/
+*.pyc

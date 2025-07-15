@@ -1228,7 +1228,7 @@ def main():
                     console.print()
             
             # Cria cracker com configurações GPU
-            cracker = AdvancedHashCracker(args.hash_crack, hash_type, use_gpu=use_gpu)
+            cracker = AdvancedHashCracker(args.hash_crack, hash_type, use_gpu=use_gpu, verbose=args.verbose)
             cracker.set_performance_mode(args.hash_performance)
             
             # Aplica limite de memória GPU se especificado

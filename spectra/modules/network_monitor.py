@@ -15,7 +15,8 @@ import json
 
 try:
     from scapy.all import (
-        sniff, get_if_list, Ether, IP, IPv6, TCP, UDP, ICMP, ICMPv6,
+        sniff, get_if_list, Ether, IP, IPv6, TCP, UDP, ICMP, 
+        ICMPv6EchoRequest, ICMPv6EchoReply, ICMPv6DestUnreach,
         ARP, DNS, conf
     )
     SCAPY_AVAILABLE = True
@@ -720,7 +721,7 @@ class IPv6Analyzer:
                 self._analyze_extension_headers(pkt)
                 
                 # Analisa ICMPv6
-                if pkt.haslayer(ICMPv6):
+                if pkt.haslayer(ICMPv6EchoRequest) or pkt.haslayer(ICMPv6EchoReply) or pkt.haslayer(ICMPv6DestUnreach):
                     self._analyze_icmpv6(pkt)
                 
                 return ipv6_info
@@ -836,7 +837,17 @@ class IPv6Analyzer:
     def _analyze_icmpv6(self, pkt):
         """Analisa mensagens ICMPv6"""
         try:
-            icmpv6_layer = pkt[ICMPv6]
+            # Encontrar o primeiro layer ICMPv6 disponível
+            icmpv6_layer = None
+            if pkt.haslayer(ICMPv6EchoRequest):
+                icmpv6_layer = pkt[ICMPv6EchoRequest]
+            elif pkt.haslayer(ICMPv6EchoReply):
+                icmpv6_layer = pkt[ICMPv6EchoReply]
+            elif pkt.haslayer(ICMPv6DestUnreach):
+                icmpv6_layer = pkt[ICMPv6DestUnreach]
+            
+            if not icmpv6_layer:
+                return
             icmp_type = icmpv6_layer.type
             self.icmpv6_types[icmp_type] += 1
             
@@ -1348,11 +1359,10 @@ class NetworkPacket:
     
     def is_relevant(self) -> bool:
         """Determina se o pacote contém informações relevantes"""
-        # Sempre mostrar se não é tráfego local
+        # Filtra tráfego loopback (sempre irrelevante)
         if self.src_ip and self.dst_ip:
-            # Não é loopback
-            if not (self.src_ip.startswith("127.") or self.dst_ip.startswith("127.")):
-                return True
+            if self.src_ip.startswith("127.") or self.dst_ip.startswith("127."):
+                return False
         
         # Protocolos sempre interessantes
         if self.protocol in ["ICMP", "ARP"]:
@@ -1379,6 +1389,9 @@ class NetworkPacket:
                 # PSH com dados
                 if self.tcp_flags & 0x08:  # PSH bit
                     return True
+                # Só ACK sem dados = não relevante
+                if self.tcp_flags == 0x10:  # Apenas ACK
+                    return False
             
             # Conexões em portas não-efêmeras (< 1024)
             if hasattr(self, 'dst_port') and self.dst_port and self.dst_port < 1024:
@@ -1396,8 +1409,28 @@ class NetworkPacket:
                ["error", "unreachable", "refused", "timeout", "request", "response"]):
             return True
         
-        # Por padrão, puro tráfego ACK em portas altas = não relevante
-        return False
+        # Tráfego TCP comum em portas altas (provavelmente só ACK)
+        if self.protocol == "TCP":
+            if hasattr(self, 'src_port') and hasattr(self, 'dst_port'):
+                # Ambas as portas são altas (> 1024) = tráfego comum
+                if self.src_port > 1024 and self.dst_port > 1024:
+                    return False
+        
+        # Tráfego UDP em portas altas sem conteúdo específico
+        if self.protocol == "UDP":
+            if hasattr(self, 'src_port') and hasattr(self, 'dst_port'):
+                if self.src_port > 1024 and self.dst_port > 1024:
+                    # Só relevante se tem informação específica
+                    if not any(keyword in self.info.lower() for keyword in 
+                              ["dns", "dhcp", "ntp", "request", "response"]):
+                        return False
+        
+        # Por padrão, se chegou até aqui, pode ser relevante
+        return True
+    
+    def is_ipv6(self) -> bool:
+        """Determina se o pacote é IPv6"""
+        return hasattr(self, 'ip_version') and self.ip_version == 6
 
 class NetworkStats:
     """Classe para estatísticas de rede"""
@@ -1447,6 +1480,7 @@ class NetworkMonitorTUI:
         self.hex_view = False
         self.follow_stream = False
         self.show_relevant_only = True  # Por padrão, mostra apenas pacotes relevantes
+        self.show_ipv6 = False  # Por padrão, IPv6 desabilitado
         self.tcp_streams = {}  # Dicionário para armazenar streams TCP
         self.current_stream = None  # Stream atualmente sendo seguido
         self.stream_view = False  # Se está visualizando um stream específico
@@ -1527,8 +1561,9 @@ class NetworkMonitorTUI:
         # Processa análise DNS
         self._process_dns_packet(packet)
         
-        # Processa análise IPv6
-        self._process_ipv6_packet(packet)
+        # Processa análise IPv6 (apenas se habilitado)
+        if self.show_ipv6:
+            self._process_ipv6_packet(packet)
         
         # Análise de alertas (a cada 10 segundos)
         self._process_alert_analysis()
@@ -1741,6 +1776,8 @@ class NetworkMonitorTUI:
                     self._follow_tcp_stream()
                 elif key == ord('r'):
                     self._toggle_relevant_filter()
+                elif key == ord('v'):  # Toggle IPv6 view
+                    self._toggle_ipv6_view()
                 elif key == ord('/'):
                     self._start_search()
                 elif key == ord('n'):
@@ -1833,16 +1870,21 @@ class NetworkMonitorTUI:
     
     def _draw_status_line(self):
         """Desenha linha de status"""
-        # Calcula pacotes relevantes
-        relevant_count = len([p for p in self.packets if p.is_relevant()]) if self.show_relevant_only else len(self.packets)
+        # Calcula pacotes filtrados (relevância + IPv6)
+        filtered_packets = self.packets
+        if self.show_relevant_only:
+            filtered_packets = [p for p in filtered_packets if p.is_relevant()]
+        if not self.show_ipv6:
+            filtered_packets = [p for p in filtered_packets if not p.is_ipv6()]
+        filtered_count = len(filtered_packets)
         
         status = f"Interface: {self.interface or 'None'} | "
         status += f"Capturing: {'Yes' if self.is_capturing else 'No'} | "
         
         if self.show_relevant_only:
-            status += f"Packets: {relevant_count}/{len(self.packets)} (Relevant) | "
+            status += f"Packets: {filtered_count}/{len(self.packets)} (Relevant) | "
         else:
-            status += f"Packets: {len(self.packets)} (All) | "
+            status += f"Packets: {filtered_count}/{len(self.packets)} (All) | "
             
         status += f"Filter: {self.packet_filter or 'None'}"
         
@@ -1853,18 +1895,20 @@ class NetworkMonitorTUI:
         start_y = 4
         height = curses.LINES - 7  # Ajustado para footer de 2 linhas
         
-        # Filtra pacotes por relevância se ativado
+        # Filtra pacotes por relevância e IPv6
+        filtered_packets = self.packets
         if self.show_relevant_only:
-            filtered_packets = [p for p in self.packets if p.is_relevant()]
-        else:
-            filtered_packets = self.packets
+            filtered_packets = [p for p in filtered_packets if p.is_relevant()]
+        if not self.show_ipv6:
+            filtered_packets = [p for p in filtered_packets if not p.is_ipv6()]
         
         # Pacotes mais novos primeiro (ordem reversa)
         reversed_packets = list(reversed(filtered_packets))
         
         # Headers com indicador de filtro - largura fixa para alinhamento
         filter_indicator = "[RELEVANT]" if self.show_relevant_only else "[ALL]     "
-        headers = f"{'#':<6} {'Time':<12} {'Source':<15} {':Port':<6} {'Destination':<15} {':Port':<6} {'Proto':<6} {'Flags':<8} {'Size':<6} {'Info':<20} {filter_indicator}"
+        ipv6_indicator = "[IPv6 ON]" if self.show_ipv6 else "[IPv6 OFF]"
+        headers = f"{'#':<6} {'Time':<12} {'Source':<15} {':Port':<6} {'Destination':<15} {':Port':<6} {'Proto':<6} {'Flags':<8} {'Size':<6} {'Info':<20} {filter_indicator} {ipv6_indicator}"
         self.stdscr.addstr(start_y, 0, headers[:curses.COLS-1], curses.color_pair(1))
         
         # Calcula índices para ordem reversa
@@ -2023,7 +2067,7 @@ class NetworkMonitorTUI:
                 line1 = " NETWORK MONITOR: "
                 
                 # Comandos principais com destaque nas teclas
-                commands1 = "[S]tart/Stop  [C]lear  [E]xport  [I]filter  [R]elevant  [F]ollow  [9]Dashboard"
+                commands1 = "[S]tart/Stop  [C]lear  [E]xport  [I]filter  [R]elevant  [V]IPv6  [F]ollow  [9]Dashboard"
                 commands2 = "[1]Packets [2]Stats [3]Details [4]Interfaces [5]Streams [6]HTTP [7]Security [8]Bandwidth [Q]uit"
                 
                 # Linha 1 - título e comandos principais
@@ -2069,7 +2113,13 @@ class NetworkMonitorTUI:
         """Scroll para cima (navega para pacotes mais novos)"""
         if self.current_view == "packets":
             # Com ordem reversa, scroll up vai para pacotes mais novos (índices maiores)
-            current_list = [p for p in self.packets if p.is_relevant()] if self.show_relevant_only else self.packets
+            # Filtrar pacotes por relevância e IPv6
+            filtered_packets = self.packets
+            if self.show_relevant_only:
+                filtered_packets = [p for p in filtered_packets if p.is_relevant()]
+            if not self.show_ipv6:
+                filtered_packets = [p for p in filtered_packets if not p.is_ipv6()]
+            current_list = filtered_packets
             if self.selected_packet < len(current_list) - 1:
                 self.selected_packet += 1
                 # Ajusta scroll se necessário
@@ -2094,12 +2144,19 @@ class NetworkMonitorTUI:
     def _scroll_down(self):
         """Scroll para baixo (navega para pacotes mais antigos)"""
         if self.current_view == "packets":
+            # Filtrar pacotes por relevância e IPv6
+            filtered_packets = self.packets
+            if self.show_relevant_only:
+                filtered_packets = [p for p in filtered_packets if p.is_relevant()]
+            if not self.show_ipv6:
+                filtered_packets = [p for p in filtered_packets if not p.is_ipv6()]
+            
             # Com ordem reversa, scroll down vai para pacotes mais antigos (índices menores)
             if self.selected_packet > 0:
                 self.selected_packet -= 1
                 # Ajusta scroll se necessário  
                 visible_height = curses.LINES - 7  # Ajustado para footer de 2 linhas
-                display_index = len(self.packets) - 1 - self.selected_packet
+                display_index = len(filtered_packets) - 1 - self.selected_packet
                 if display_index >= self.scroll_offset + visible_height:
                     self.scroll_offset = display_index - visible_height + 1
         elif self.current_view == "interfaces":
@@ -2245,6 +2302,27 @@ class NetworkMonitorTUI:
         # Reset da seleção ao mudar filtro
         self.selected_packet = 0
         self.scroll_offset = 0
+        
+        # Debug: mostrar estado atual no log
+        total_packets = len(self.packets)
+        relevant_packets = len([p for p in self.packets if p.is_relevant()])
+        mode = "RELEVANT" if self.show_relevant_only else "ALL"
+        
+        # Garantir que estamos na view de packets para ver a mudança
+        if self.current_view != "packets":
+            self.current_view = "packets"
+        
+        # Força refresh da tela
+        if hasattr(self, 'stdscr') and self.stdscr:
+            self.stdscr.clear()
+            self.stdscr.refresh()
+    
+    def _toggle_ipv6_view(self):
+        """Alterna visualização de IPv6"""
+        self.show_ipv6 = not self.show_ipv6
+        # Reset da seleção ao mudar filtro
+        self.selected_packet = 0
+        self.scroll_offset = 0
     
     def _draw_streams_view(self):
         """Desenha visualização de TCP streams"""
@@ -2326,11 +2404,12 @@ class NetworkMonitorTUI:
         if self.current_view != "packets" or not self.packets:
             return
         
-        # Filtra pacotes por relevância se ativado
+        # Filtra pacotes por relevância e IPv6
+        filtered_packets = self.packets
         if self.show_relevant_only:
-            filtered_packets = [p for p in self.packets if p.is_relevant()]
-        else:
-            filtered_packets = self.packets
+            filtered_packets = [p for p in filtered_packets if p.is_relevant()]
+        if not self.show_ipv6:
+            filtered_packets = [p for p in filtered_packets if not p.is_ipv6()]
         
         if self.selected_packet >= len(filtered_packets):
             return
@@ -2881,6 +2960,7 @@ class NetworkMonitorTUI:
         
         try:
             filter_win = curses.newwin(filter_win_height, filter_win_width, start_y, start_x)
+            filter_win.keypad(True)  # Habilita teclas especiais
             
             while True:
                 filter_win.clear()
@@ -2919,38 +2999,60 @@ class NetworkMonitorTUI:
                 filter_win.refresh()
                 
                 # Input
-                key = filter_win.getch()
-                
-                if key == 27:  # ESC
-                    break
-                elif key == curses.KEY_UP:
-                    selected_preset = max(0, selected_preset - 1)
-                elif key == curses.KEY_DOWN:
-                    selected_preset = min(len(preset_filters) - 1, selected_preset + 1)
-                elif key == ord('c') or key == ord('C'):
-                    # Modo de entrada customizada
-                    current_filter = self._get_custom_filter_input()
-                    if current_filter is not None:
-                        self._apply_filter(current_filter)
+                try:
+                    key = filter_win.getch()
+                    
+                    if key == -1:  # Timeout ou erro
+                        continue
+                    elif key == 27:  # ESC
                         break
-                elif key == curses.KEY_ENTER or key == 10:
-                    # Aplica filtro selecionado
-                    if selected_preset < len(preset_filters):
-                        name, filter_expr = preset_filters[selected_preset]
-                        if name == "Host específico" or name == "Rede específica":
-                            # Precisa de input adicional
-                            additional_input = self._get_additional_input(name)
-                            if additional_input:
-                                filter_expr += additional_input
-                        self._apply_filter(filter_expr)
-                        break
-            
-            del filter_win
+                    elif key == curses.KEY_UP:
+                        selected_preset = max(0, selected_preset - 1)
+                    elif key == curses.KEY_DOWN:
+                        selected_preset = min(len(preset_filters) - 1, selected_preset + 1)
+                    elif key == ord('c') or key == ord('C'):
+                        # Modo de entrada customizada
+                        try:
+                            current_filter = self._get_custom_filter_input()
+                            if current_filter is not None:
+                                self._apply_filter(current_filter)
+                                break
+                        except Exception:
+                            continue
+                    elif key == curses.KEY_ENTER or key == 10:
+                        # Aplica filtro selecionado
+                        try:
+                            if selected_preset < len(preset_filters):
+                                name, filter_expr = preset_filters[selected_preset]
+                                if name == "Host específico" or name == "Rede específica":
+                                    # Precisa de input adicional
+                                    additional_input = self._get_additional_input(name)
+                                    if additional_input:
+                                        filter_expr += additional_input
+                                self._apply_filter(filter_expr)
+                                break
+                        except Exception:
+                            continue
+                    else:
+                        # Teclas não mapeadas são ignoradas (não fecha o diálogo)
+                        continue
+                except Exception:
+                    continue
             
         except Exception:
+            pass
+        finally:
+            # Cleanup garantido
+            try:
+                if 'filter_win' in locals():
+                    del filter_win
+            except:
+                pass
             curses.noecho()
             curses.curs_set(0)
-            pass
+            # Força refresh da tela principal
+            self.stdscr.clear()
+            self.stdscr.refresh()
     
     def _get_custom_filter_input(self):
         """Obtém entrada customizada para filtro BPF"""

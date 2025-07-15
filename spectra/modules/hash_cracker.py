@@ -8,18 +8,15 @@ import hashlib
 import itertools
 import string
 import time
-import threading
 import multiprocessing
-import re
 import os
-import platform
-import subprocess
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
-from pathlib import Path
-from collections import defaultdict
 import json
+import psutil
+import gc
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from ..core.console import console
+from ..core.console import console, create_progress
 from ..core.logger import get_logger
 from ..utils.network import create_session
 
@@ -49,7 +46,216 @@ except ImportError:
     PYCUDA_AVAILABLE = False
     cuda = None
 
+# Algoritmos de hash adicionais
+try:
+    import argon2
+    ARGON2_AVAILABLE = True
+except ImportError:
+    ARGON2_AVAILABLE = False
+
+try:
+    import scrypt
+    SCRYPT_AVAILABLE = True
+except ImportError:
+    SCRYPT_AVAILABLE = False
+
+try:
+    import bcrypt
+    BCRYPT_AVAILABLE = True
+except ImportError:
+    BCRYPT_AVAILABLE = False
+
 logger = get_logger(__name__)
+
+
+class MemoryManager:
+    """Gerenciador de mem\u00f3ria para otimizar uso de recursos."""
+    
+    def __init__(self):
+        self.memory_threshold = 0.85  # 85% do limite de mem\u00f3ria
+        self.cache_size_limit = 1024 * 1024 * 100  # 100MB
+        self.memory_monitor = True
+        
+    def get_memory_usage(self):
+        """Retorna uso atual de memoria em percentual."""
+        return psutil.virtual_memory().percent / 100.0
+        
+    def is_memory_available(self, required_mb=50):
+        """Verifica se ha memoria disponivel para operacao."""
+        available_mb = psutil.virtual_memory().available / (1024 * 1024)
+        return available_mb > required_mb
+        
+    def optimize_batch_size(self, base_size, item_size_bytes=100):
+        """Otimiza tamanho do batch baseado na memoria disponivel."""
+        available_mb = psutil.virtual_memory().available / (1024 * 1024)
+        
+        # Usa no maximo 25% da memoria disponivel
+        max_memory_mb = available_mb * 0.25
+        max_items = int((max_memory_mb * 1024 * 1024) / item_size_bytes)
+        
+        return min(base_size, max_items, 100000)  # Limite maximo de seguranca
+        
+    def cleanup_cache(self, cache_dict, max_size=None):
+        """Limpa cache quando necessario."""
+        if max_size is None:
+            max_size = self.cache_size_limit
+            
+        if len(cache_dict) > max_size:
+            # Remove metade dos itens mais antigos
+            items_to_remove = len(cache_dict) // 2
+            for _ in range(items_to_remove):
+                cache_dict.popitem()
+        
+        # Forca garbage collection
+        if self.get_memory_usage() > self.memory_threshold:
+            gc.collect()
+
+
+class PerformanceMonitor:
+    """Monitor de performance para otimizar ataques."""
+    
+    def __init__(self):
+        self.start_time = None
+        self.samples = []
+        self.avg_rate = 0
+        self.peak_rate = 0
+        self.efficiency_score = 0
+        
+    def start_monitoring(self):
+        """Inicia monitoramento de performance."""
+        self.start_time = time.time()
+        self.samples = []
+        
+    def record_sample(self, attempts, elapsed_time):
+        """Registra amostra de performance."""
+        if elapsed_time > 0:
+            rate = attempts / elapsed_time
+            self.samples.append({
+                'timestamp': time.time(),
+                'attempts': attempts,
+                'rate': rate,
+                'elapsed': elapsed_time
+            })
+            
+            # Mantem apenas ultimas 100 amostras
+            if len(self.samples) > 100:
+                self.samples.pop(0)
+                
+            self._update_metrics()
+            
+    def _update_metrics(self):
+        """Atualiza metricas de performance."""
+        if not self.samples:
+            return
+            
+        rates = [s['rate'] for s in self.samples]
+        self.avg_rate = sum(rates) / len(rates)
+        self.peak_rate = max(rates)
+        
+        # Calcula eficiencia (consistencia da taxa)
+        if len(rates) > 1:
+            variance = sum((r - self.avg_rate) ** 2 for r in rates) / len(rates)
+            self.efficiency_score = 1.0 / (1.0 + variance / (self.avg_rate ** 2))
+        else:
+            self.efficiency_score = 1.0
+            
+    def get_performance_report(self):
+        """Gera relatorio de performance."""
+        if not self.samples:
+            return {}
+            
+        total_elapsed = time.time() - self.start_time if self.start_time else 0
+        total_attempts = sum(s['attempts'] for s in self.samples)
+        
+        return {
+            'total_attempts': total_attempts,
+            'total_elapsed': total_elapsed,
+            'avg_rate': self.avg_rate,
+            'peak_rate': self.peak_rate,
+            'efficiency_score': self.efficiency_score,
+            'samples_count': len(self.samples)
+        }
+        
+    def suggest_optimizations(self):
+        """Sugere otimizacoes baseadas na performance."""
+        suggestions = []
+        
+        if self.efficiency_score < 0.8:
+            suggestions.append("Consider reducing batch size for more consistent performance")
+            
+        if self.avg_rate < 1000:  # Baixa taxa
+            suggestions.append("Try increasing number of workers or enabling GPU acceleration")
+            
+        if len(self.samples) > 50 and self.peak_rate > self.avg_rate * 2:
+            suggestions.append("Performance is inconsistent - check system resources")
+            
+        return suggestions
+
+
+class BatchOptimizer:
+    """Otimizador de batches para melhor performance."""
+    
+    def __init__(self):
+        self.optimal_batch_size = 1000
+        self.performance_history = []
+        self.learning_rate = 0.1
+        
+    def calculate_optimal_batch_size(self, workers, memory_available_mb, item_size_bytes=100):
+        """Calcula tamanho otimo de batch baseado nos recursos."""
+        # Baseia-se no numero de workers
+        base_size = workers * 500
+        
+        # Ajusta pela memoria disponivel
+        max_memory_items = int((memory_available_mb * 1024 * 1024 * 0.25) / item_size_bytes)
+        
+        # Considera historico de performance
+        if self.performance_history:
+            avg_performance = sum(self.performance_history[-10:]) / min(len(self.performance_history), 10)
+            if avg_performance > 0:
+                base_size = int(base_size * (1 + avg_performance / 10000))
+        
+        self.optimal_batch_size = min(base_size, max_memory_items, 50000)
+        return self.optimal_batch_size
+        
+    def record_batch_performance(self, batch_size, processing_time, success_rate):
+        """Registra performance de um batch."""
+        if processing_time > 0:
+            performance_score = (batch_size * success_rate) / processing_time
+            self.performance_history.append(performance_score)
+            
+            # Mantem historico limitado
+            if len(self.performance_history) > 100:
+                self.performance_history.pop(0)
+                
+            # Ajusta tamanho otimo baseado na performance
+            if len(self.performance_history) >= 5:
+                recent_avg = sum(self.performance_history[-5:]) / 5
+                if recent_avg > sum(self.performance_history[:-5]) / max(len(self.performance_history[:-5]), 1):
+                    # Performance melhorou, aumenta batch
+                    self.optimal_batch_size = int(self.optimal_batch_size * 1.05)
+                else:
+                    # Performance piorou, diminui batch
+                    self.optimal_batch_size = int(self.optimal_batch_size * 0.95)
+                    
+        # Limites de seguranca
+        self.optimal_batch_size = max(100, min(self.optimal_batch_size, 100000))
+        
+    def get_adaptive_batch_size(self, current_performance):
+        """Retorna tamanho de batch adaptativo."""
+        if not self.performance_history:
+            return self.optimal_batch_size
+            
+        # Adapta baseado na performance atual vs historico
+        avg_performance = sum(self.performance_history[-10:]) / min(len(self.performance_history), 10)
+        
+        if current_performance > avg_performance * 1.2:
+            # Performance boa, aumenta batch
+            return int(self.optimal_batch_size * 1.1)
+        elif current_performance < avg_performance * 0.8:
+            # Performance ruim, diminui batch
+            return int(self.optimal_batch_size * 0.9)
+        else:
+            return self.optimal_batch_size
 
 
 class RainbowTableManager:
@@ -130,7 +336,8 @@ class RainbowTableManager:
                     rate = chains_generated / elapsed
                     progress = (chains_generated / self.table_size) * 100
                     eta = (self.table_size - chains_generated) / rate if rate > 0 else 0
-                    console.print(f"\r[*] Progresso: {progress:.1f}% - {chains_generated:,} chains - {rate:.0f} chains/s - ETA: {eta:.0f}s", end="")
+                    progress_line = f"[*] Progresso: {progress:.1f}% - {chains_generated:,} chains - {rate:.0f} chains/s - ETA: {eta:.0f}s"
+                    console.print(f"\r{progress_line:<80}", end="")
         
         elapsed = time.time() - start_time
         console.print(f"\n[bold green][+] Rainbow Table gerada: {table_path}[/bold green]")
@@ -233,7 +440,8 @@ class RainbowTableManager:
                         chain_count += 1
                         
                         if chain_count % 50000 == 0:
-                            console.print(f"\r[*] Carregando: {chain_count:,} chains", end="")
+                            progress_line = f"[*] Carregando: {chain_count:,} chains"
+                            console.print(f"\r{progress_line:<80}", end="")
             
             elapsed = time.time() - start_time
             self.loaded_tables[table_path] = table
@@ -574,7 +782,7 @@ class GPUManager:
 class AdvancedHashCracker:
     """Quebrador avançado de hashes com múltiplos modos de ataque."""
     
-    def __init__(self, hash_target, hash_type=None, workers=None, timeout=None, use_gpu=True):
+    def __init__(self, hash_target, hash_type=None, workers=None, timeout=None, use_gpu=True, verbose=False):
         """
         Inicializa o quebrador de hash.
         
@@ -596,6 +804,12 @@ class AdvancedHashCracker:
         self.cracked_password = None
         self.attack_mode = None
         
+        # Sistema de progresso centralizado
+        self.verbose = verbose
+        self.progress_lock = threading.Lock()
+        self.last_progress_update = 0
+        self.progress_update_interval = 1.0  # 1 segundo
+        
         # GPU Manager
         self.gpu_manager = GPUManager() if use_gpu else None
         self.use_gpu = use_gpu and (self.gpu_manager.gpu_available if self.gpu_manager else False)
@@ -610,9 +824,12 @@ class AdvancedHashCracker:
         self.min_length = 1
         self.max_length = 8
         
-        # Cache e otimizações
+        # Cache e otimizações avançadas
         self.hash_cache = {}
         self.performance_mode = 'balanced'  # balanced, fast, extreme
+        self.memory_manager = MemoryManager()
+        self.performance_monitor = PerformanceMonitor()
+        self.batch_optimizer = BatchOptimizer()
         
         # Detecta tipo de hash automaticamente
         if not self.hash_type:
@@ -621,25 +838,49 @@ class AdvancedHashCracker:
         # Configura algoritmo de hash
         self._setup_hash_algorithm()
         
-        # Ajusta workers baseado na GPU
+        # Ajusta workers baseado na GPU e recursos do sistema
+        self._optimize_workers()
+        
+        logger.info(f"Hash Cracker inicializado: {self.hash_type} ({len(self.hash_target)} chars) - GPU: {self.use_gpu}")
+    
+    def _optimize_workers(self):
+        """Otimiza número de workers baseado nos recursos do sistema."""
+        # Informações do sistema
+        cpu_count = multiprocessing.cpu_count()
+        memory_gb = psutil.virtual_memory().total / (1024**3)
+        
         if self.use_gpu:
             estimated_gain = self.gpu_manager.estimate_performance_gain()
             console.print(f"[bold green][+] GPU detectada! Estimativa de ganho: {estimated_gain:.0f}x[/bold green]")
             # Reduz workers CPU quando usar GPU (GPU faz o trabalho pesado)
-            self.workers = min(multiprocessing.cpu_count(), 8)
+            self.workers = min(cpu_count, 8)
+        else:
+            # Otimização baseada no modo de performance
+            if self.performance_mode == 'fast':
+                self.workers = min(cpu_count * 4, 32)
+            elif self.performance_mode == 'extreme':
+                self.workers = min(cpu_count * 8, 64)
+            else:  # balanced
+                self.workers = min(cpu_count * 2, 16)
+                
+            # Ajusta baseado na memória disponível
+            if memory_gb < 4:
+                self.workers = min(self.workers, cpu_count)
+            elif memory_gb < 8:
+                self.workers = min(self.workers, cpu_count * 2)
         
-        logger.info(f"Hash Cracker inicializado: {self.hash_type} ({len(self.hash_target)} chars) - GPU: {self.use_gpu}")
+        logger.info(f"Workers otimizados: {self.workers} (CPU: {cpu_count}, RAM: {memory_gb:.1f}GB)")
     
     def _detect_hash_type(self):
         """Detecta automaticamente o tipo de hash baseado no formato."""
         hash_length = len(self.hash_target)
         hash_patterns = {
-            32: ['md5', 'ntlm'],
-            40: ['sha1'],
-            56: ['sha224'],
-            64: ['sha256'],
-            96: ['sha384'],
-            128: ['sha512'],
+            32: ['md5', 'ntlm', 'blake2s'],
+            40: ['sha1', 'ripemd160'],
+            56: ['sha224', 'sha3_224'],
+            64: ['sha256', 'sha3_256', 'blake2b'],
+            96: ['sha384', 'sha3_384'],
+            128: ['sha512', 'sha3_512', 'whirlpool'],
             60: ['bcrypt'],  # $2b$...
             16: ['md4'],
         }
@@ -647,6 +888,12 @@ class AdvancedHashCracker:
         # Detecção por padrões específicos
         if self.hash_target.startswith('$2a$') or self.hash_target.startswith('$2b$'):
             return 'bcrypt'
+        elif self.hash_target.startswith('$argon2'):
+            return 'argon2'
+        elif self.hash_target.startswith('$scrypt'):
+            return 'scrypt'
+        elif self.hash_target.startswith('$pbkdf2'):
+            return 'pbkdf2'
         elif self.hash_target.startswith('$6$'):
             return 'sha512crypt'
         elif self.hash_target.startswith('$5$'):
@@ -657,6 +904,10 @@ class AdvancedHashCracker:
             return 'sha1'
         elif self.hash_target.startswith('{MD5}'):
             return 'md5'
+        elif self.hash_target.startswith('{SHA256}'):
+            return 'sha256'
+        elif self.hash_target.startswith('{SHA512}'):
+            return 'sha512'
         elif ':' in self.hash_target and len(self.hash_target.split(':')[0]) == 32:
             return 'ntlm'  # username:hash format
         
@@ -665,7 +916,7 @@ class AdvancedHashCracker:
         
         # Se múltiplas opções, usa a mais comum
         if len(possible_types) > 1:
-            priority = ['md5', 'sha1', 'sha256', 'ntlm']
+            priority = ['md5', 'sha1', 'sha256', 'sha512', 'ntlm', 'blake2b', 'blake2s']
             for hash_type in priority:
                 if hash_type in possible_types:
                     return hash_type
@@ -683,10 +934,26 @@ class AdvancedHashCracker:
             'sha512': hashlib.sha512,
             'md4': self._md4_hash,
             'ntlm': self._ntlm_hash,
+            'blake2b': self._blake2b_hash,
+            'blake2s': self._blake2s_hash,
+            'sha3_224': self._sha3_224_hash,
+            'sha3_256': self._sha3_256_hash,
+            'sha3_384': self._sha3_384_hash,
+            'sha3_512': self._sha3_512_hash,
+            'ripemd160': self._ripemd160_hash,
+            'whirlpool': self._whirlpool_hash,
         }
         
-        if self.hash_type not in self.hash_algorithms:
-            if self.hash_type in ['bcrypt', 'sha512crypt', 'sha256crypt', 'md5crypt']:
+        # Algoritmos que requerem bibliotecas específicas
+        self.special_algorithms = {
+            'bcrypt': self._bcrypt_hash,
+            'argon2': self._argon2_hash,
+            'scrypt': self._scrypt_hash,
+            'pbkdf2': self._pbkdf2_hash,
+        }
+        
+        if self.hash_type not in self.hash_algorithms and self.hash_type not in self.special_algorithms:
+            if self.hash_type in ['sha512crypt', 'sha256crypt', 'md5crypt']:
                 console.print(f"[yellow][!] Tipo {self.hash_type} requer biblioteca específica[/yellow]")
             else:
                 console.print(f"[red][!] Tipo de hash não suportado: {self.hash_type}[/red]")
@@ -705,9 +972,125 @@ class AdvancedHashCracker:
             password = password.encode('utf-16le')
         return self._md4_hash(password)
     
+    def _blake2b_hash(self, data):
+        """Gera hash BLAKE2b."""
+        try:
+            return hashlib.blake2b(data, digest_size=32)
+        except Exception:
+            return hashlib.sha256(data)
+    
+    def _blake2s_hash(self, data):
+        """Gera hash BLAKE2s."""
+        try:
+            return hashlib.blake2s(data, digest_size=32)
+        except Exception:
+            return hashlib.sha256(data)
+    
+    def _sha3_224_hash(self, data):
+        """Gera hash SHA3-224."""
+        try:
+            return hashlib.sha3_224(data)
+        except Exception:
+            return hashlib.sha224(data)
+    
+    def _sha3_256_hash(self, data):
+        """Gera hash SHA3-256."""
+        try:
+            return hashlib.sha3_256(data)
+        except Exception:
+            return hashlib.sha256(data)
+    
+    def _sha3_384_hash(self, data):
+        """Gera hash SHA3-384."""
+        try:
+            return hashlib.sha3_384(data)
+        except Exception:
+            return hashlib.sha384(data)
+    
+    def _sha3_512_hash(self, data):
+        """Gera hash SHA3-512."""
+        try:
+            return hashlib.sha3_512(data)
+        except Exception:
+            return hashlib.sha512(data)
+    
+    def _ripemd160_hash(self, data):
+        """Gera hash RIPEMD160."""
+        try:
+            return hashlib.new('ripemd160', data)
+        except Exception:
+            return hashlib.sha1(data)
+    
+    def _whirlpool_hash(self, data):
+        """Gera hash Whirlpool."""
+        try:
+            return hashlib.new('whirlpool', data)
+        except Exception:
+            return hashlib.sha512(data)
+    
+    def _bcrypt_hash(self, password):
+        """Gera hash bcrypt."""
+        if not BCRYPT_AVAILABLE:
+            console.print("[red][!] bcrypt não disponível. Instale: pip install bcrypt[/red]")
+            return None
+        try:
+            if isinstance(password, str):
+                password = password.encode('utf-8')
+            return bcrypt.hashpw(password, bcrypt.gensalt())
+        except Exception as e:
+            logger.error(f"Erro no bcrypt: {e}")
+            return None
+    
+    def _argon2_hash(self, password):
+        """Gera hash Argon2."""
+        if not ARGON2_AVAILABLE:
+            console.print("[red][!] argon2 não disponível. Instale: pip install argon2-cffi[/red]")
+            return None
+        try:
+            if isinstance(password, str):
+                password = password.encode('utf-8')
+            return argon2.hash_password(password)
+        except Exception as e:
+            logger.error(f"Erro no argon2: {e}")
+            return None
+    
+    def _scrypt_hash(self, password):
+        """Gera hash scrypt."""
+        if not SCRYPT_AVAILABLE:
+            console.print("[red][!] scrypt não disponível. Instale: pip install scrypt[/red]")
+            return None
+        try:
+            if isinstance(password, str):
+                password = password.encode('utf-8')
+            return scrypt.hash(password, salt=b'salt', N=16384, r=8, p=1)
+        except Exception as e:
+            logger.error(f"Erro no scrypt: {e}")
+            return None
+    
+    def _pbkdf2_hash(self, password):
+        """Gera hash PBKDF2."""
+        try:
+            if isinstance(password, str):
+                password = password.encode('utf-8')
+            return hashlib.pbkdf2_hmac('sha256', password, b'salt', 100000)
+        except Exception as e:
+            logger.error(f"Erro no PBKDF2: {e}")
+            return None
+    
     def _hash_password(self, password):
         """Gera hash da senha usando o algoritmo configurado."""
         try:
+            # Algoritmos especiais que retornam hash completo
+            if self.hash_type in self.special_algorithms:
+                hash_func = self.special_algorithms[self.hash_type]
+                result = hash_func(password)
+                if result is None:
+                    return None
+                if isinstance(result, bytes):
+                    return result.hex().lower()
+                return str(result).lower()
+            
+            # Algoritmos standard
             if self.hash_type == 'ntlm':
                 return self._ntlm_hash(password).hexdigest().lower()
             else:
@@ -719,6 +1102,15 @@ class AdvancedHashCracker:
             logger.error(f"Erro ao gerar hash: {e}")
             return None
     
+    def _update_progress_task(self, progress, task_id, completed, total, attempts=None, rate=None):
+        """Atualiza a task de progresso do Rich."""
+        progress.update(task_id, completed=completed)
+        
+        # Se verbose, atualiza descrição com detalhes
+        if self.verbose and attempts is not None and rate is not None:
+            description = f"[green]Quebrando hash[/green] - {attempts:,} tentativas - {rate:.0f} h/s"
+            progress.update(task_id, description=description)
+    
     def _gpu_hash_batch_cuda(self, passwords):
         """Processa batch de hashes usando CUDA."""
         if not self.use_gpu or not PYCUDA_AVAILABLE:
@@ -726,7 +1118,6 @@ class AdvancedHashCracker:
         
         try:
             import pycuda.driver as cuda
-            import pycuda.gpuarray as gpuarray
             from pycuda.compiler import SourceModule
             import numpy as np
             
@@ -849,7 +1240,6 @@ class AdvancedHashCracker:
         
         try:
             import cupy as cp
-            import hashlib
             
             # CuPy kernel personalizado para MD5
             cuda_code = r'''
@@ -1052,7 +1442,7 @@ class AdvancedHashCracker:
         total_passwords = len(passwords)
         console.print(f"[*] Testando {total_passwords:,} senhas...")
         
-        # Executa ataque em paralelo
+        # Executa ataque em paralelo com barra de progresso
         with ThreadPoolExecutor(max_workers=self.workers) as executor:
             chunk_size = max(1, total_passwords // (self.workers * 4))
             
@@ -1062,29 +1452,35 @@ class AdvancedHashCracker:
                 future = executor.submit(self._test_passwords_chunk, chunk)
                 future_to_chunk[future] = i
             
-            # Progress tracking
+            # Progress tracking com Rich
             completed_chunks = 0
             total_chunks = len(future_to_chunk)
             
-            for future in as_completed(future_to_chunk):
-                chunk_start = future_to_chunk[future]
-                result = future.result()
-                completed_chunks += 1
+            with create_progress() as progress:
+                task_description = f"[green]Ataque de dicionário[/green]"
+                if self.verbose:
+                    task_description = f"[green]Ataque de dicionário[/green] - 0 tentativas - 0 h/s"
+                    
+                task = progress.add_task(task_description, total=total_chunks)
                 
-                if result:
-                    # Password found!
-                    self.cracked_password = result
-                    time_taken = time.time() - self.start_time
-                    console.print(f"\n[bold green][+] SENHA ENCONTRADA: {result}[/bold green]")
-                    console.print(f"[*] Tentativas: {self.attempts:,}")
-                    console.print(f"[*] Tempo: {time_taken:.2f}s")
-                    console.print(f"[*] Taxa: {self.attempts/time_taken:.2f} hashes/s")
-                    return result, self.attempts, time_taken
-                
-                # Progress update
-                progress = (completed_chunks / total_chunks) * 100
-                rate = self.attempts / (time.time() - self.start_time) if time.time() > self.start_time else 0
-                console.print(f"\r[*] Progresso: {progress:.1f}% - {self.attempts:,} tentativas - {rate:.0f} h/s", end="")
+                for future in as_completed(future_to_chunk):
+                    result = future.result()
+                    completed_chunks += 1
+                    
+                    if result:
+                        # Password found! Remove a task de progresso
+                        progress.remove_task(task)
+                        self.cracked_password = result
+                        time_taken = time.time() - self.start_time
+                        console.print(f"\n[bold green][+] SENHA ENCONTRADA: {result}[/bold green]")
+                        console.print(f"[*] Tentativas: {self.attempts:,}")
+                        console.print(f"[*] Tempo: {time_taken:.2f}s")
+                        console.print(f"[*] Taxa: {self.attempts/time_taken:.2f} hashes/s")
+                        return result, self.attempts, time_taken
+                    
+                    # Atualiza progresso
+                    rate = self.attempts / (time.time() - self.start_time) if time.time() > self.start_time else 0
+                    self._update_progress_task(progress, task, completed_chunks, total_chunks, self.attempts, rate)
         
         time_taken = time.time() - self.start_time
         console.print(f"\n[red][-] Senha não encontrada no dicionário[/red]")
@@ -1120,17 +1516,27 @@ class AdvancedHashCracker:
         if total_combinations > 10**9:
             console.print(f"[yellow][!] Aviso: Muitas combinações ({total_combinations:,}), isso pode demorar muito![/yellow]")
         
-        # Executa força bruta por comprimento
-        for length in range(min_length, max_length + 1):
-            console.print(f"\n[*] Testando senhas de {length} caracteres...")
+        # Executa força bruta por comprimento com barra de progresso
+        with create_progress() as progress:
+            task_description = f"[green]Força bruta[/green]"
+            if self.verbose:
+                task_description = f"[green]Força bruta[/green] - 0 tentativas - 0 h/s"
+                
+            task = progress.add_task(task_description, total=total_combinations)
             
-            result = self._brute_force_length(charset, length)
-            if result:
-                time_taken = time.time() - self.start_time
-                console.print(f"\n[bold green][+] SENHA ENCONTRADA: {result}[/bold green]")
-                console.print(f"[*] Tentativas: {self.attempts:,}")
-                console.print(f"[*] Tempo: {time_taken:.2f}s")
-                return result, self.attempts, time_taken
+            for length in range(min_length, max_length + 1):
+                if self.verbose:
+                    console.print(f"[*] Testando senhas de {length} caracteres...")
+                
+                result = self._brute_force_length_with_progress(charset, length, progress, task)
+                if result:
+                    # Remove a task de progresso
+                    progress.remove_task(task)
+                    time_taken = time.time() - self.start_time
+                    console.print(f"\n[bold green][+] SENHA ENCONTRADA: {result}[/bold green]")
+                    console.print(f"[*] Tentativas: {self.attempts:,}")
+                    console.print(f"[*] Tempo: {time_taken:.2f}s")
+                    return result, self.attempts, time_taken
         
         time_taken = time.time() - self.start_time
         console.print(f"\n[red][-] Senha não encontrada por força bruta[/red]")
@@ -1179,38 +1585,47 @@ class AdvancedHashCracker:
         
         console.print(f"[*] Total combinações: {total_combinations:,}")
         
-        # Gera e testa senhas baseadas na máscara
-        with ThreadPoolExecutor(max_workers=self.workers) as executor:
-            batch_size = 10000
-            batch = []
-            
-            for password_chars in itertools.product(*positions):
-                password = ''.join(password_chars)
-                batch.append(password)
+        # Gera e testa senhas baseadas na máscara com barra de progresso
+        with create_progress() as progress:
+            task_description = f"[green]Ataque por máscara[/green]"
+            if self.verbose:
+                task_description = f"[green]Ataque por máscara[/green] - 0 tentativas - 0 h/s"
                 
-                if len(batch) >= batch_size:
+            task = progress.add_task(task_description, total=total_combinations)
+            
+            with ThreadPoolExecutor(max_workers=self.workers) as executor:
+                batch_size = 10000
+                batch = []
+                
+                for password_chars in itertools.product(*positions):
+                    password = ''.join(password_chars)
+                    batch.append(password)
+                    
+                    if len(batch) >= batch_size:
+                        future = executor.submit(self._test_passwords_chunk, batch)
+                        result = future.result()
+                        if result:
+                            # Remove a task de progresso
+                            progress.remove_task(task)
+                            time_taken = time.time() - self.start_time
+                            console.print(f"\n[bold green][+] SENHA ENCONTRADA: {result}[/bold green]")
+                            return result, self.attempts, time_taken
+                        batch = []
+                        
+                        # Atualiza progresso
+                        rate = self.attempts / (time.time() - self.start_time) if time.time() > self.start_time else 0
+                        self._update_progress_task(progress, task, self.attempts, total_combinations, self.attempts, rate)
+                
+                # Testa último batch
+                if batch:
                     future = executor.submit(self._test_passwords_chunk, batch)
                     result = future.result()
                     if result:
+                        # Remove a task de progresso
+                        progress.remove_task(task)
                         time_taken = time.time() - self.start_time
                         console.print(f"\n[bold green][+] SENHA ENCONTRADA: {result}[/bold green]")
                         return result, self.attempts, time_taken
-                    batch = []
-                
-                # Progress update
-                if self.attempts % 50000 == 0:
-                    progress = (self.attempts / total_combinations) * 100
-                    rate = self.attempts / (time.time() - self.start_time)
-                    console.print(f"\r[*] {progress:.1f}% - {self.attempts:,} tentativas - {rate:.0f} h/s", end="")
-            
-            # Testa último batch
-            if batch:
-                future = executor.submit(self._test_passwords_chunk, batch)
-                result = future.result()
-                if result:
-                    time_taken = time.time() - self.start_time
-                    console.print(f"\n[bold green][+] SENHA ENCONTRADA: {result}[/bold green]")
-                    return result, self.attempts, time_taken
         
         time_taken = time.time() - self.start_time
         console.print(f"\n[red][-] Senha não encontrada com máscara[/red]")
@@ -1336,7 +1751,7 @@ class AdvancedHashCracker:
         return list(transformed)
     
     def _brute_force_length(self, charset, length):
-        """Executa força bruta para um comprimento específico."""
+        """Executa força bruta para um comprimento específico (versão antiga)."""
         with ThreadPoolExecutor(max_workers=self.workers) as executor:
             batch_size = 1000
             batch = []
@@ -1355,7 +1770,39 @@ class AdvancedHashCracker:
                 # Progress
                 if self.attempts % 10000 == 0:
                     rate = self.attempts / (time.time() - self.start_time)
-                    console.print(f"\r[*] {self.attempts:,} tentativas - {rate:.0f} h/s", end="")
+                    console.print(f"\r[*] {self.attempts:,} tentativas - {rate:.0f} h/s{' '*20}", end="")
+            
+            # Último batch
+            if batch:
+                future = executor.submit(self._test_passwords_chunk, batch)
+                result = future.result()
+                if result:
+                    return result
+        
+        return None
+    
+    def _brute_force_length_with_progress(self, charset, length, progress, task):
+        """Executa força bruta para um comprimento específico com barra de progresso."""
+        with ThreadPoolExecutor(max_workers=self.workers) as executor:
+            batch_size = 1000
+            batch = []
+            processed_passwords = 0
+            
+            for password_chars in itertools.product(charset, repeat=length):
+                password = ''.join(password_chars)
+                batch.append(password)
+                processed_passwords += 1
+                
+                if len(batch) >= batch_size:
+                    future = executor.submit(self._test_passwords_chunk, batch)
+                    result = future.result()
+                    if result:
+                        return result
+                    batch = []
+                    
+                    # Atualiza progresso
+                    rate = self.attempts / (time.time() - self.start_time) if time.time() > self.start_time else 0
+                    self._update_progress_task(progress, task, self.attempts, None, self.attempts, rate)
             
             # Último batch
             if batch:
@@ -1428,7 +1875,8 @@ class AdvancedHashCracker:
         """Consulta um serviço online específico."""
         # Implementação simplificada - em produção seria mais robusta
         if service == 'md5decrypt' and self.hash_type == 'md5':
-            # Simulação de consulta
+            # Simulação de consulta (session seria usado aqui)
+            _ = session  # Placeholder para uso futuro
             return None
         return None
     
@@ -1468,7 +1916,8 @@ def crack_hash(hash_target, wordlist_path=None, hash_type=None, attack_mode='dic
         dict: Resultado do ataque
     """
     use_gpu = kwargs.get('use_gpu', True)
-    cracker = AdvancedHashCracker(hash_target, hash_type, use_gpu=use_gpu)
+    verbose = kwargs.get('verbose', False)
+    cracker = AdvancedHashCracker(hash_target, hash_type, use_gpu=use_gpu, verbose=verbose)
     
     if attack_mode == 'dictionary' and wordlist_path:
         password, attempts, time_taken = cracker.dictionary_attack(wordlist_path)
@@ -1558,3 +2007,829 @@ def detect_hash_type(hash_string):
     """Detecta o tipo de um hash."""
     cracker = AdvancedHashCracker(hash_string)
     return cracker.hash_type
+
+
+def get_supported_algorithms():
+    """Retorna lista de algoritmos suportados."""
+    base_algorithms = [
+        'md5', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512',
+        'md4', 'ntlm', 'blake2b', 'blake2s', 'sha3_224', 'sha3_256',
+        'sha3_384', 'sha3_512', 'ripemd160', 'whirlpool'
+    ]
+    
+    special_algorithms = []
+    
+    if BCRYPT_AVAILABLE:
+        special_algorithms.append('bcrypt')
+    if ARGON2_AVAILABLE:
+        special_algorithms.append('argon2')
+    if SCRYPT_AVAILABLE:
+        special_algorithms.append('scrypt')
+    
+    # PBKDF2 é sempre disponível
+    special_algorithms.append('pbkdf2')
+    
+    return {
+        'base': base_algorithms,
+        'special': special_algorithms,
+        'all': base_algorithms + special_algorithms
+    }
+
+
+def display_algorithm_info():
+    """Exibe informações sobre algoritmos suportados."""
+    algorithms = get_supported_algorithms()
+    
+    console.print("\n[bold blue]═══ ALGORITMOS DE HASH SUPORTADOS ═══[/bold blue]")
+    
+    console.print("\n[bold green]Algoritmos Base:[/bold green]")
+    for algo in algorithms['base']:
+        console.print(f"  • {algo}")
+    
+    console.print("\n[bold yellow]Algoritmos Especiais:[/bold yellow]")
+    for algo in algorithms['special']:
+        status = "[green]✓[/green]"
+        if algo == 'bcrypt' and not BCRYPT_AVAILABLE:
+            status = "[red]✗[/red] (pip install bcrypt)"
+        elif algo == 'argon2' and not ARGON2_AVAILABLE:
+            status = "[red]✗[/red] (pip install argon2-cffi)"
+        elif algo == 'scrypt' and not SCRYPT_AVAILABLE:
+            status = "[red]✗[/red] (pip install scrypt)"
+        
+        console.print(f"  • {algo} {status}")
+    
+    console.print(f"\n[bold]Total: {len(algorithms['all'])} algoritmos[/bold]")
+
+
+def benchmark_hash_algorithms(password="test123", iterations=1000):
+    """Benchmark de algoritmos de hash."""
+    console.print(f"\n[bold blue]═══ BENCHMARK DE ALGORITMOS ═══[/bold blue]")
+    console.print(f"Password: {password} | Iterações: {iterations:,}")
+    
+    results = {}
+    algorithms = get_supported_algorithms()
+    
+    for algo in algorithms['base']:
+        try:
+            start_time = time.time()
+            cracker = AdvancedHashCracker("dummy_hash")
+            cracker.hash_type = algo
+            
+            for _ in range(iterations):
+                cracker._hash_password(password)
+            
+            elapsed = time.time() - start_time
+            rate = iterations / elapsed
+            results[algo] = rate
+            
+        except Exception as e:
+            results[algo] = f"Error: {e}"
+    
+    # Ordena por performance
+    sorted_results = sorted(
+        [(k, v) for k, v in results.items() if isinstance(v, (int, float))],
+        key=lambda x: x[1],
+        reverse=True
+    )
+    
+    console.print("\n[bold green]Resultados (hashes/segundo):[/bold green]")
+    for algo, rate in sorted_results:
+        console.print(f"  {algo:15} {rate:10.0f} h/s")
+    
+    # Mostra erros se houver
+    errors = [(k, v) for k, v in results.items() if not isinstance(v, (int, float))]
+    if errors:
+        console.print("\n[bold red]Erros:[/bold red]")
+        for algo, error in errors:
+            console.print(f"  {algo}: {error}")
+    
+    return results
+
+
+def get_hash_info(hash_string):
+    """Retorna informações detalhadas sobre um hash."""
+    hash_length = len(hash_string)
+    detected_type = detect_hash_type(hash_string)
+    
+    info = {
+        'hash': hash_string,
+        'length': hash_length,
+        'detected_type': detected_type,
+        'entropy': calculate_entropy(hash_string),
+        'charset': analyze_charset(hash_string),
+        'possible_types': []
+    }
+    
+    # Determina tipos possíveis baseado no comprimento
+    length_patterns = {
+        32: ['md5', 'ntlm', 'blake2s'],
+        40: ['sha1', 'ripemd160'],
+        56: ['sha224', 'sha3_224'],
+        64: ['sha256', 'sha3_256', 'blake2b'],
+        96: ['sha384', 'sha3_384'],
+        128: ['sha512', 'sha3_512', 'whirlpool'],
+    }
+    
+    info['possible_types'] = length_patterns.get(hash_length, [])
+    
+    return info
+
+
+def calculate_entropy(text):
+    """Calcula entropia de uma string."""
+    if not text:
+        return 0
+    
+    # Conta frequência de caracteres
+    char_counts = {}
+    for char in text:
+        char_counts[char] = char_counts.get(char, 0) + 1
+    
+    # Calcula entropia
+    entropy = 0
+    text_length = len(text)
+    for count in char_counts.values():
+        probability = count / text_length
+        entropy -= probability * (probability.bit_length() - 1)
+    
+    return entropy
+
+
+def analyze_charset(text):
+    """Analisa conjunto de caracteres usado em uma string."""
+    if not text:
+        return []
+    
+    charset_info = []
+    
+    if any(c.islower() for c in text):
+        charset_info.append('lowercase')
+    if any(c.isupper() for c in text):
+        charset_info.append('uppercase')
+    if any(c.isdigit() for c in text):
+        charset_info.append('digits')
+    if any(c in '!@#$%^&*()_+-=[]{}|;:,.<>?' for c in text):
+        charset_info.append('special')
+    if any(ord(c) > 127 for c in text):
+        charset_info.append('unicode')
+    
+    return charset_info
+
+
+def display_hash_info(hash_string):
+    """Exibe informações detalhadas sobre um hash."""
+    info = get_hash_info(hash_string)
+    
+    console.print(f"\n[bold blue]═══ INFORMAÇÕES DO HASH ═══[/bold blue]")
+    console.print(f"Hash: {info['hash']}")
+    console.print(f"Comprimento: {info['length']} caracteres")
+    console.print(f"Tipo detectado: [bold green]{info['detected_type']}[/bold green]")
+    console.print(f"Entropia: {info['entropy']:.2f}")
+    console.print(f"Charset: {', '.join(info['charset'])}")
+    
+    if info['possible_types']:
+        console.print(f"Tipos possíveis: {', '.join(info['possible_types'])}")
+    
+    console.print()
+
+
+def generate_sample_hashes(password="test123"):
+    """Gera hashes de exemplo para diferentes algoritmos."""
+    console.print(f"\n[bold blue]═══ HASHES DE EXEMPLO ═══[/bold blue]")
+    console.print(f"Password: {password}")
+    
+    algorithms = ['md5', 'sha1', 'sha256', 'sha512', 'blake2b']
+    
+    for algo in algorithms:
+        try:
+            if algo == 'md5':
+                hash_result = hashlib.md5(password.encode()).hexdigest()
+            elif algo == 'sha1':
+                hash_result = hashlib.sha1(password.encode()).hexdigest()
+            elif algo == 'sha256':
+                hash_result = hashlib.sha256(password.encode()).hexdigest()
+            elif algo == 'sha512':
+                hash_result = hashlib.sha512(password.encode()).hexdigest()
+            elif algo == 'blake2b':
+                hash_result = hashlib.blake2b(password.encode(), digest_size=32).hexdigest()
+            
+            console.print(f"{algo:10} {hash_result}")
+            
+        except Exception as e:
+            console.print(f"{algo:10} Error: {e}")
+    
+    console.print()
+
+
+class SecurityValidator:
+    """Validador de segurança para entradas e operações."""
+    
+    def __init__(self):
+        self.max_hash_length = 1024
+        self.max_password_length = 128
+        self.max_wordlist_size = 100 * 1024 * 1024  # 100MB
+        self.allowed_hash_chars = set('0123456789abcdefABCDEF${}[]():.-_')
+        
+    def validate_hash(self, hash_string):
+        """Valida se um hash é seguro para processar."""
+        if not hash_string:
+            return False, "Hash vazio"
+        
+        if len(hash_string) > self.max_hash_length:
+            return False, f"Hash muito longo (max: {self.max_hash_length})"
+        
+        # Verifica caracteres suspeitos
+        if not all(c in self.allowed_hash_chars for c in hash_string):
+            return False, "Hash contém caracteres inválidos"
+        
+        return True, "Hash válido"
+    
+    def validate_password(self, password):
+        """Valida se uma senha é segura para processar."""
+        if not password:
+            return False, "Senha vazia"
+        
+        if len(password) > self.max_password_length:
+            return False, f"Senha muito longa (max: {self.max_password_length})"
+        
+        # Verifica caracteres de controle perigosos
+        if any(ord(c) < 32 and c not in '\t\n\r' for c in password):
+            return False, "Senha contém caracteres de controle"
+        
+        return True, "Senha válida"
+    
+    def validate_wordlist_path(self, wordlist_path):
+        """Valida se um caminho de wordlist é seguro."""
+        if not wordlist_path:
+            return False, "Caminho vazio"
+        
+        # Verifica se o arquivo existe
+        if not os.path.exists(wordlist_path):
+            return False, "Arquivo não encontrado"
+        
+        # Verifica se é um arquivo (não diretório)
+        if not os.path.isfile(wordlist_path):
+            return False, "Caminho não é um arquivo"
+        
+        # Verifica tamanho do arquivo
+        try:
+            file_size = os.path.getsize(wordlist_path)
+            if file_size > self.max_wordlist_size:
+                return False, f"Arquivo muito grande (max: {self.max_wordlist_size // (1024*1024)}MB)"
+        except OSError:
+            return False, "Erro ao verificar tamanho do arquivo"
+        
+        # Verifica se não é um executável
+        if os.access(wordlist_path, os.X_OK):
+            return False, "Arquivo executável não permitido"
+        
+        return True, "Wordlist válida"
+    
+    def sanitize_path(self, path):
+        """Sanitiza um caminho de arquivo."""
+        if not path:
+            return None
+        
+        # Remove caracteres perigosos
+        dangerous_chars = ['..', '~', '$', '`', '|', '&', ';', '(', ')', '<', '>']
+        for char in dangerous_chars:
+            path = path.replace(char, '')
+        
+        # Normaliza o caminho
+        path = os.path.normpath(path)
+        
+        return path
+    
+    def check_resource_limits(self):
+        """Verifica limites de recursos do sistema."""
+        memory_percent = psutil.virtual_memory().percent
+        cpu_percent = psutil.cpu_percent()
+        
+        warnings = []
+        
+        if memory_percent > 90:
+            warnings.append("Uso de memória crítico (>90%)")
+        elif memory_percent > 80:
+            warnings.append("Uso de memória alto (>80%)")
+        
+        if cpu_percent > 95:
+            warnings.append("Uso de CPU crítico (>95%)")
+        elif cpu_percent > 85:
+            warnings.append("Uso de CPU alto (>85%)")
+        
+        return warnings
+    
+    def validate_attack_parameters(self, attack_mode, **kwargs):
+        """Valida parâmetros de ataque."""
+        if attack_mode == 'brute_force':
+            max_length = kwargs.get('max_length', 8)
+            charset = kwargs.get('charset', '')
+            
+            if max_length > 12:
+                return False, "Comprimento máximo muito alto para força bruta (max: 12)"
+            
+            if len(charset) > 256:
+                return False, "Charset muito grande"
+            
+            # Calcula complexidade
+            complexity = sum(len(charset) ** i for i in range(1, max_length + 1))
+            if complexity > 10**12:
+                return False, f"Complexidade muito alta: {complexity:,} combinações"
+        
+        elif attack_mode == 'mask':
+            mask = kwargs.get('mask', '')
+            if len(mask) > 20:
+                return False, "Máscara muito longa"
+        
+        return True, "Parâmetros válidos"
+
+
+class AuditLogger:
+    """Logger de auditoria para operações de hash cracking."""
+    
+    def __init__(self, log_file=None):
+        self.log_file = log_file or os.path.join(os.path.dirname(__file__), '..', 'logs', 'hash_cracker_audit.log')
+        self.session_id = int(time.time())
+        
+        # Garante que o diretório de logs existe
+        os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
+        
+        # Inicia sessão
+        self.log_event('SESSION_START', {'session_id': self.session_id})
+    
+    def log_event(self, event_type, data):
+        """Registra um evento de auditoria."""
+        timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+        log_entry = {
+            'timestamp': timestamp,
+            'session_id': self.session_id,
+            'event_type': event_type,
+            'data': data
+        }
+        
+        try:
+            with open(self.log_file, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(log_entry) + '\n')
+        except Exception as e:
+            logger.error(f"Erro ao escrever log de auditoria: {e}")
+    
+    def log_attack_start(self, hash_type, attack_mode, **kwargs):
+        """Registra início de ataque."""
+        self.log_event('ATTACK_START', {
+            'hash_type': hash_type,
+            'attack_mode': attack_mode,
+            'parameters': kwargs
+        })
+    
+    def log_attack_end(self, success, attempts, time_taken):
+        """Registra fim de ataque."""
+        self.log_event('ATTACK_END', {
+            'success': success,
+            'attempts': attempts,
+            'time_taken': time_taken
+        })
+    
+    def log_security_warning(self, warning_type, details):
+        """Registra aviso de segurança."""
+        self.log_event('SECURITY_WARNING', {
+            'warning_type': warning_type,
+            'details': details
+        })
+    
+    def log_error(self, error_type, error_message):
+        """Registra erro."""
+        self.log_event('ERROR', {
+            'error_type': error_type,
+            'error_message': error_message
+        })
+
+
+def secure_hash_crack(hash_target, **kwargs):
+    """Versão segura da função de quebra de hash."""
+    validator = SecurityValidator()
+    audit_logger = AuditLogger()
+    
+    # Valida hash
+    is_valid, message = validator.validate_hash(hash_target)
+    if not is_valid:
+        audit_logger.log_security_warning('INVALID_HASH', message)
+        console.print(f"[red][!] Hash inválido: {message}[/red]")
+        return None
+    
+    # Valida parâmetros de ataque
+    attack_mode = kwargs.get('attack_mode', 'dictionary')
+    is_valid, message = validator.validate_attack_parameters(attack_mode, **kwargs)
+    if not is_valid:
+        audit_logger.log_security_warning('INVALID_PARAMS', message)
+        console.print(f"[red][!] Parâmetros inválidos: {message}[/red]")
+        return None
+    
+    # Valida wordlist se necessário
+    wordlist_path = kwargs.get('wordlist_path')
+    if wordlist_path:
+        wordlist_path = validator.sanitize_path(wordlist_path)
+        is_valid, message = validator.validate_wordlist_path(wordlist_path)
+        if not is_valid:
+            audit_logger.log_security_warning('INVALID_WORDLIST', message)
+            console.print(f"[red][!] Wordlist inválida: {message}[/red]")
+            return None
+        kwargs['wordlist_path'] = wordlist_path
+    
+    # Verifica recursos do sistema
+    resource_warnings = validator.check_resource_limits()
+    if resource_warnings:
+        for warning in resource_warnings:
+            audit_logger.log_security_warning('RESOURCE_WARNING', warning)
+            console.print(f"[yellow][!] {warning}[/yellow]")
+    
+    # Registra início do ataque
+    audit_logger.log_attack_start(kwargs.get('hash_type'), attack_mode, **kwargs)
+    
+    try:
+        # Executa ataque
+        result = crack_hash(hash_target, **kwargs)
+        
+        # Registra resultado
+        audit_logger.log_attack_end(
+            success=result.get('success', False),
+            attempts=result.get('attempts', 0),
+            time_taken=result.get('time_taken', 0)
+        )
+        
+        return result
+        
+    except Exception as e:
+        audit_logger.log_error('ATTACK_ERROR', str(e))
+        console.print(f"[red][!] Erro durante ataque: {e}[/red]")
+        return None
+
+
+def get_security_recommendations():
+    """Retorna recomendações de segurança."""
+    recommendations = [
+        "Use apenas hashes de fontes confiáveis",
+        "Não execute ataques em sistemas que não são seus",
+        "Monitore o uso de recursos durante ataques",
+        "Mantenha logs de auditoria para compliance",
+        "Use wordlists de fontes confiáveis",
+        "Implemente rate limiting para ataques online",
+        "Use ambientes isolados para testes",
+        "Mantenha backups de rainbow tables",
+        "Valide todos os inputs antes do processamento",
+        "Use criptografia adequada para armazenar resultados"
+    ]
+    
+    console.print("\n[bold blue]═══ RECOMENDAÇÕES DE SEGURANÇA ═══[/bold blue]")
+    for i, rec in enumerate(recommendations, 1):
+        console.print(f"{i:2d}. {rec}")
+    console.print()
+    
+    return recommendations
+
+
+class AdvancedStatistics:
+    """Sistema avançado de estatísticas para hash cracking."""
+    
+    def __init__(self):
+        self.sessions = []
+        self.current_session = None
+        self.benchmarks = {}
+        self.success_rates = {}
+        
+    def start_session(self, hash_type, attack_mode):
+        """Inicia uma nova sessão de estatísticas."""
+        self.current_session = {
+            'session_id': int(time.time()),
+            'hash_type': hash_type,
+            'attack_mode': attack_mode,
+            'start_time': time.time(),
+            'end_time': None,
+            'attempts': 0,
+            'success': False,
+            'password_found': None,
+            'performance_samples': [],
+            'memory_usage': [],
+            'cpu_usage': [],
+            'gpu_usage': [],
+            'errors': []
+        }
+        
+    def record_performance_sample(self, attempts, rate, memory_percent, cpu_percent, gpu_percent=0):
+        """Registra amostra de performance."""
+        if not self.current_session:
+            return
+            
+        timestamp = time.time()
+        sample = {
+            'timestamp': timestamp,
+            'attempts': attempts,
+            'rate': rate,
+            'memory_percent': memory_percent,
+            'cpu_percent': cpu_percent,
+            'gpu_percent': gpu_percent
+        }
+        
+        self.current_session['performance_samples'].append(sample)
+        self.current_session['memory_usage'].append(memory_percent)
+        self.current_session['cpu_usage'].append(cpu_percent)
+        if gpu_percent > 0:
+            self.current_session['gpu_usage'].append(gpu_percent)
+    
+    def record_error(self, error_type, error_message):
+        """Registra erro."""
+        if not self.current_session:
+            return
+            
+        error = {
+            'timestamp': time.time(),
+            'type': error_type,
+            'message': error_message
+        }
+        
+        self.current_session['errors'].append(error)
+    
+    def end_session(self, success=False, password_found=None):
+        """Finaliza sessão atual."""
+        if not self.current_session:
+            return
+            
+        self.current_session['end_time'] = time.time()
+        self.current_session['success'] = success
+        self.current_session['password_found'] = password_found
+        
+        # Calcula estatísticas finais
+        self._calculate_session_stats()
+        
+        # Adiciona à lista de sessões
+        self.sessions.append(self.current_session)
+        
+        # Atualiza estatísticas globais
+        self._update_global_stats()
+        
+        self.current_session = None
+    
+    def _calculate_session_stats(self):
+        """Calcula estatísticas da sessão atual."""
+        if not self.current_session or not self.current_session['performance_samples']:
+            return
+            
+        samples = self.current_session['performance_samples']
+        
+        # Estatísticas de performance
+        rates = [s['rate'] for s in samples]
+        self.current_session['avg_rate'] = sum(rates) / len(rates)
+        self.current_session['peak_rate'] = max(rates)
+        self.current_session['min_rate'] = min(rates)
+        
+        # Estatísticas de recursos
+        if self.current_session['memory_usage']:
+            self.current_session['avg_memory'] = sum(self.current_session['memory_usage']) / len(self.current_session['memory_usage'])
+            self.current_session['peak_memory'] = max(self.current_session['memory_usage'])
+        
+        if self.current_session['cpu_usage']:
+            self.current_session['avg_cpu'] = sum(self.current_session['cpu_usage']) / len(self.current_session['cpu_usage'])
+            self.current_session['peak_cpu'] = max(self.current_session['cpu_usage'])
+        
+        if self.current_session['gpu_usage']:
+            self.current_session['avg_gpu'] = sum(self.current_session['gpu_usage']) / len(self.current_session['gpu_usage'])
+            self.current_session['peak_gpu'] = max(self.current_session['gpu_usage'])
+        
+        # Tempo total
+        self.current_session['duration'] = self.current_session['end_time'] - self.current_session['start_time']
+        
+        # Eficiência
+        if self.current_session['duration'] > 0:
+            self.current_session['efficiency'] = self.current_session['attempts'] / self.current_session['duration']
+    
+    def _update_global_stats(self):
+        """Atualiza estatísticas globais."""
+        if not self.current_session:
+            return
+            
+        hash_type = self.current_session['hash_type']
+        attack_mode = self.current_session['attack_mode']
+        
+        # Atualiza benchmarks
+        if hash_type not in self.benchmarks:
+            self.benchmarks[hash_type] = {}
+        
+        if attack_mode not in self.benchmarks[hash_type]:
+            self.benchmarks[hash_type][attack_mode] = {
+                'sessions': 0,
+                'total_attempts': 0,
+                'total_time': 0,
+                'success_count': 0,
+                'avg_rate': 0,
+                'peak_rate': 0
+            }
+        
+        benchmark = self.benchmarks[hash_type][attack_mode]
+        benchmark['sessions'] += 1
+        benchmark['total_attempts'] += self.current_session['attempts']
+        benchmark['total_time'] += self.current_session['duration']
+        
+        if self.current_session['success']:
+            benchmark['success_count'] += 1
+        
+        if 'avg_rate' in self.current_session:
+            benchmark['avg_rate'] = (benchmark['avg_rate'] * (benchmark['sessions'] - 1) + self.current_session['avg_rate']) / benchmark['sessions']
+        
+        if 'peak_rate' in self.current_session:
+            benchmark['peak_rate'] = max(benchmark['peak_rate'], self.current_session['peak_rate'])
+        
+        # Atualiza taxa de sucesso
+        key = f"{hash_type}_{attack_mode}"
+        if key not in self.success_rates:
+            self.success_rates[key] = {'attempts': 0, 'successes': 0}
+        
+        self.success_rates[key]['attempts'] += 1
+        if self.current_session['success']:
+            self.success_rates[key]['successes'] += 1
+    
+    def get_session_report(self, session_id=None):
+        """Gera relatório de uma sessão específica."""
+        if session_id is None and self.current_session:
+            session = self.current_session
+        else:
+            session = next((s for s in self.sessions if s['session_id'] == session_id), None)
+        
+        if not session:
+            return None
+        
+        report = {
+            'session_id': session['session_id'],
+            'hash_type': session['hash_type'],
+            'attack_mode': session['attack_mode'],
+            'duration': session.get('duration', 0),
+            'attempts': session['attempts'],
+            'success': session['success'],
+            'password_found': session.get('password_found', 'N/A'),
+            'performance': {
+                'avg_rate': session.get('avg_rate', 0),
+                'peak_rate': session.get('peak_rate', 0),
+                'min_rate': session.get('min_rate', 0),
+                'efficiency': session.get('efficiency', 0)
+            },
+            'resources': {
+                'avg_memory': session.get('avg_memory', 0),
+                'peak_memory': session.get('peak_memory', 0),
+                'avg_cpu': session.get('avg_cpu', 0),
+                'peak_cpu': session.get('peak_cpu', 0),
+                'avg_gpu': session.get('avg_gpu', 0),
+                'peak_gpu': session.get('peak_gpu', 0)
+            },
+            'errors': len(session.get('errors', [])),
+            'samples': len(session.get('performance_samples', []))
+        }
+        
+        return report
+    
+    def get_global_report(self):
+        """Gera relatório global de estatísticas."""
+        total_sessions = len(self.sessions)
+        total_attempts = sum(s['attempts'] for s in self.sessions)
+        total_successes = sum(1 for s in self.sessions if s['success'])
+        
+        if total_sessions == 0:
+            return {'message': 'Nenhuma sessão registrada'}
+        
+        report = {
+            'summary': {
+                'total_sessions': total_sessions,
+                'total_attempts': total_attempts,
+                'total_successes': total_successes,
+                'global_success_rate': (total_successes / total_sessions) * 100,
+                'avg_attempts_per_session': total_attempts / total_sessions if total_sessions > 0 else 0
+            },
+            'benchmarks': self.benchmarks,
+            'success_rates': {
+                key: {
+                    'rate': (data['successes'] / data['attempts']) * 100 if data['attempts'] > 0 else 0,
+                    'attempts': data['attempts'],
+                    'successes': data['successes']
+                }
+                for key, data in self.success_rates.items()
+            },
+            'recent_sessions': [
+                self.get_session_report(s['session_id'])
+                for s in self.sessions[-5:]  # Últimas 5 sessões
+            ]
+        }
+        
+        return report
+    
+    def display_session_report(self, session_id=None):
+        """Exibe relatório de sessão."""
+        report = self.get_session_report(session_id)
+        if not report:
+            console.print("[red][!] Sessão não encontrada[/red]")
+            return
+        
+        console.print(f"\n[bold blue]═══ RELATÓRIO DA SESSÃO {report['session_id']} ═══[/bold blue]")
+        console.print(f"Hash Type: {report['hash_type']}")
+        console.print(f"Attack Mode: {report['attack_mode']}")
+        console.print(f"Duration: {report['duration']:.2f}s")
+        console.print(f"Attempts: {report['attempts']:,}")
+        console.print(f"Success: {'✓' if report['success'] else '✗'}")
+        
+        if report['password_found'] != 'N/A':
+            console.print(f"Password: {report['password_found']}")
+        
+        console.print(f"\n[bold green]Performance:[/bold green]")
+        console.print(f"  Avg Rate: {report['performance']['avg_rate']:.0f} h/s")
+        console.print(f"  Peak Rate: {report['performance']['peak_rate']:.0f} h/s")
+        console.print(f"  Efficiency: {report['performance']['efficiency']:.0f} h/s")
+        
+        console.print(f"\n[bold yellow]Resources:[/bold yellow]")
+        console.print(f"  Avg Memory: {report['resources']['avg_memory']:.1f}%")
+        console.print(f"  Peak Memory: {report['resources']['peak_memory']:.1f}%")
+        console.print(f"  Avg CPU: {report['resources']['avg_cpu']:.1f}%")
+        console.print(f"  Peak CPU: {report['resources']['peak_cpu']:.1f}%")
+        
+        if report['resources']['avg_gpu'] > 0:
+            console.print(f"  Avg GPU: {report['resources']['avg_gpu']:.1f}%")
+            console.print(f"  Peak GPU: {report['resources']['peak_gpu']:.1f}%")
+        
+        console.print(f"\n[bold red]Errors:[/bold red] {report['errors']}")
+        console.print(f"[bold]Samples:[/bold] {report['samples']}")
+        console.print()
+    
+    def display_global_report(self):
+        """Exibe relatório global."""
+        report = self.get_global_report()
+        
+        if 'message' in report:
+            console.print(f"[yellow]{report['message']}[/yellow]")
+            return
+        
+        console.print(f"\n[bold blue]═══ RELATÓRIO GLOBAL DE ESTATÍSTICAS ═══[/bold blue]")
+        
+        summary = report['summary']
+        console.print(f"\n[bold green]Resumo:[/bold green]")
+        console.print(f"  Total Sessions: {summary['total_sessions']}")
+        console.print(f"  Total Attempts: {summary['total_attempts']:,}")
+        console.print(f"  Total Successes: {summary['total_successes']}")
+        console.print(f"  Global Success Rate: {summary['global_success_rate']:.1f}%")
+        console.print(f"  Avg Attempts/Session: {summary['avg_attempts_per_session']:.0f}")
+        
+        console.print(f"\n[bold yellow]Success Rates by Type:[/bold yellow]")
+        for key, data in report['success_rates'].items():
+            console.print(f"  {key}: {data['rate']:.1f}% ({data['successes']}/{data['attempts']})")
+        
+        console.print(f"\n[bold cyan]Benchmarks:[/bold cyan]")
+        for hash_type, attacks in report['benchmarks'].items():
+            console.print(f"  {hash_type}:")
+            for attack_mode, stats in attacks.items():
+                console.print(f"    {attack_mode}: {stats['avg_rate']:.0f} h/s avg, {stats['peak_rate']:.0f} h/s peak")
+        
+        console.print()
+    
+    def export_statistics(self, filename=None):
+        """Exporta estatísticas para arquivo JSON."""
+        if not filename:
+            filename = f"hash_cracker_stats_{int(time.time())}.json"
+        
+        data = {
+            'export_time': time.time(),
+            'sessions': self.sessions,
+            'benchmarks': self.benchmarks,
+            'success_rates': self.success_rates,
+            'global_report': self.get_global_report()
+        }
+        
+        try:
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            
+            console.print(f"[green][+] Estatísticas exportadas para: {filename}[/green]")
+            return filename
+            
+        except Exception as e:
+            console.print(f"[red][!] Erro ao exportar estatísticas: {e}[/red]")
+            return None
+    
+    def import_statistics(self, filename):
+        """Importa estatísticas de arquivo JSON."""
+        try:
+            with open(filename, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            self.sessions.extend(data.get('sessions', []))
+            self.benchmarks.update(data.get('benchmarks', {}))
+            self.success_rates.update(data.get('success_rates', {}))
+            
+            console.print(f"[green][+] Estatísticas importadas de: {filename}[/green]")
+            return True
+            
+        except Exception as e:
+            console.print(f"[red][!] Erro ao importar estatísticas: {e}[/red]")
+            return False
+
+
+# Instância global de estatísticas
+stats = AdvancedStatistics()
+
+
+def get_statistics():
+    """Retorna instância global de estatísticas."""
+    return stats
