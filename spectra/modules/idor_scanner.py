@@ -527,12 +527,16 @@ class AdvancedIDORScanner:
             self.logger.debug(f"Erro ao verificar robots.txt: {e}")
 
     def _validate_url(self, url: str) -> str:
-        """Valida e sanitiza a URL de entrada."""
+        """Valida e sanitiza a URL de entrada com verificações robustas."""
         if not url or not isinstance(url, str):
             raise ValueError("URL deve ser uma string não vazia")
         
         # Remove espaços e caracteres de controle
         url = url.strip()
+        
+        # Verifica comprimento mínimo
+        if len(url) < 10:
+            raise ValueError("URL muito curta para ser válida")
         
         # Verifica se é uma URL válida
         try:
@@ -543,6 +547,22 @@ class AdvancedIDORScanner:
             # Verifica schemes permitidos
             if parsed.scheme not in ['http', 'https']:
                 raise ValueError("Apenas URLs HTTP/HTTPS são permitidas")
+            
+            # Verifica se o netloc não contém caracteres suspeitos
+            if any(char in parsed.netloc for char in ['<', '>', '"', "'"]):
+                raise ValueError("URL contém caracteres suspeitos no domínio")
+            
+            # Verifica se não é um IP privado (opcional, para segurança)
+            try:
+                import ipaddress
+                # Extrai IP se for um endereço IP direto
+                hostname = parsed.netloc.split(':')[0]
+                if hostname.replace('.', '').isdigit():
+                    ip = ipaddress.ip_address(hostname)
+                    if ip.is_private and not self.deep_scan:
+                        print_warning(f"Detectado IP privado: {ip}. Use --deep-scan para continuar")
+            except (ValueError, ipaddress.AddressValueError):
+                pass  # Não é um IP, continua normalmente
             
             return url
         except Exception as e:
@@ -558,11 +578,21 @@ class AdvancedIDORScanner:
         
         # IDs sequenciais no range especificado
         start, end = self.enumerate_range
+        
+        # Validação de range
+        if start < 0:
+            print_warning("Range inicial negativo, ajustando para 1")
+            start = 1
+        
+        if end <= start:
+            print_warning("Range final deve ser maior que inicial, ajustando")
+            end = start + 100
+        
         if end - start > 10000:  # Limite para evitar overhead
             print_warning(f"Range muito grande ({end - start} IDs), limitando a 10000")
             end = start + 10000
         
-        test_ids.update(str(i) for i in range(start, end + 1))
+        test_ids.update(str(i) for i in range(start, min(end + 1, start + 10001)))
         
         # IDs negativos
         if self.test_negative_ids:
@@ -665,10 +695,13 @@ class AdvancedIDORScanner:
     def _extract_path_ids(self, url):
         """Extrai IDs potenciais do path da URL."""
         parsed = urlparse(url)
-        path_parts = [part for part in parsed.path.split('/') if part]
+        path_parts = parsed.path.split('/')  # Mantém partes vazias para posicionamento correto
         
         potential_ids = []
         for i, part in enumerate(path_parts):
+            if not part:  # Pula partes vazias
+                continue
+                
             # Verifica se é um ID numérico
             if part.isdigit():
                 potential_ids.append((i, part, 'numeric'))
@@ -678,6 +711,9 @@ class AdvancedIDORScanner:
             # Verifica se é um hash
             elif self._is_hash(part):
                 potential_ids.append((i, part, 'hash'))
+            # Verifica se parece com um ID alfanumérico
+            elif len(part) > 2 and any(c.isdigit() for c in part) and any(c.isalpha() for c in part):
+                potential_ids.append((i, part, 'alphanumeric'))
         
         return potential_ids
 
@@ -706,8 +742,8 @@ class AdvancedIDORScanner:
         
         return False
 
-    def _make_request(self, url, method='GET', data=None, headers=None):
-        """Faz uma requisição HTTP com tratamento de erros."""
+    def _make_request(self, url, method='GET', data=None, headers=None, bypass_technique=None):
+        """Faz uma requisição HTTP com tratamento de erros e técnicas de bypass."""
         try:
             with self.stats_lock:
                 self.stats['total_requests'] += 1
@@ -715,6 +751,14 @@ class AdvancedIDORScanner:
             if headers is None:
                 headers = {}
             
+            # Aplica técnicas de bypass se especificadas
+            if bypass_technique:
+                headers = self._apply_bypass_technique(headers, bypass_technique)
+            
+            # Aplica rate limiting
+            self.rate_limiter.wait()
+            
+            start_time = time.time()
             response = self.session.request(
                 method=method,
                 url=url,
@@ -723,6 +767,7 @@ class AdvancedIDORScanner:
                 timeout=10,
                 allow_redirects=False
             )
+            response_time = time.time() - start_time
             
             with self.stats_lock:
                 self.stats['successful_requests'] += 1
@@ -734,12 +779,43 @@ class AdvancedIDORScanner:
                     self.stats['forbidden_responses'] += 1
                 elif response.status_code == 404:
                     self.stats['not_found_responses'] += 1
+                elif response.status_code == 429:
+                    self.stats['rate_limited_responses'] += 1
+                elif response.status_code >= 500:
+                    self.stats['server_error_responses'] += 1
+            
+            # Notifica rate limiter sobre sucesso
+            self.rate_limiter.on_success(response_time)
             
             return response
             
         except requests.exceptions.RequestException as e:
             self.logger.debug(f"Erro na requisição para {url}: {e}")
+            # Notifica rate limiter sobre erro
+            self.rate_limiter.on_error()
             return None
+    
+    def _apply_bypass_technique(self, headers: Dict[str, str], technique: str) -> Dict[str, str]:
+        """Aplica técnicas de bypass aos headers."""
+        bypass_headers = headers.copy()
+        
+        if technique == 'x_forwarded_for':
+            bypass_headers['X-Forwarded-For'] = '127.0.0.1'
+            bypass_headers['X-Real-IP'] = '127.0.0.1'
+        elif technique == 'x_forwarded_host':
+            bypass_headers['X-Forwarded-Host'] = 'localhost'
+            bypass_headers['X-Forwarded-Proto'] = 'https'
+        elif technique == 'method_override':
+            bypass_headers['X-HTTP-Method-Override'] = 'GET'
+            bypass_headers['X-Method-Override'] = 'GET'
+        elif technique == 'content_type_override':
+            bypass_headers['Content-Type'] = 'application/json'
+            bypass_headers['Accept'] = 'application/json'
+        elif technique == 'cors_bypass':
+            bypass_headers['Origin'] = 'null'
+            bypass_headers['Access-Control-Request-Method'] = 'GET'
+        
+        return bypass_headers
 
     def _analyze_response(self, response: requests.Response, test_id: str, 
                          original_response: Optional[requests.Response] = None,
@@ -764,7 +840,7 @@ class AdvancedIDORScanner:
             # Diferentes status codes podem indicar acesso
             if response.status_code != original_response.status_code:
                 if response.status_code == 200 and original_response.status_code in [401, 403, 404]:
-                    vulnerability_indicators.append(f"Status mudou de {original_response.status_code} para 200")a 200")
+                    vulnerability_indicators.append(f"Status mudou de {original_response.status_code} para 200")
                     confidence += 0.6
                 elif response.status_code in [401, 403] and original_response.status_code == 404:
                     vulnerability_indicators.append(f"Objeto existe mas acesso negado (status {response.status_code})")
