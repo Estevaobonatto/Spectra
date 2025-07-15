@@ -23,6 +23,7 @@ from ..modules.sql_injection_scanner import sql_injection_scan
 from ..modules.xss_scanner import xss_scan
 from ..modules.command_injection_scanner import command_injection_scan
 from ..modules.lfi_scanner import lfi_scan
+from ..modules.idor_scanner import idor_scan
 from ..modules.cve_integrator import integrate_cve_data, CVEIntegrator
 from ..modules.hash_cracker import AdvancedHashCracker, crack_hash, detect_hash_type
 from ..modules.network_monitor import network_monitor_interface
@@ -128,6 +129,14 @@ Exemplos de uso:
   %(prog)s -xss http://example.com/form --xss-stored --xss-dom
   %(prog)s -cmdi http://example.com/cmd --cmdi-level 3
   %(prog)s -lfi http://example.com/file?name=test
+  %(prog)s -idor http://example.com/user/123 --idor-range 1-1000 --test-uuid --test-hash
+
+[ IDOR Scanner Avançado - Insecure Direct Object Reference ]
+  %(prog)s -idor http://site.com/profile?id=123 --idor-range 1-500
+  %(prog)s -idor http://api.com/user/456 --test-uuid --idor-methods GET,POST,PUT,DELETE
+  %(prog)s -idor http://app.com/document/789 --test-hash --idor-wordlist custom_ids.txt
+  %(prog)s -idor http://admin.com/order?order_id=100 --idor-range 1-10000 --idor-delay 0.05
+  %(prog)s -idor http://secure.com/file/abc123 --test-uuid --test-hash --workers 20
 
 [ Hash Cracker Avançado - 27+ Algoritmos + 11 Modos de Ataque ]
   %(prog)s -hc 5d41402abc4b2a76b9719d911017c592 --attack-mode dictionary
@@ -466,6 +475,36 @@ Exemplos de uso:
                        type=int,
                        default=10,
                        help='Profundidade de path traversal para LFI (padrão: 10)')
+    
+    # === IDOR SCANNER ===
+    parser.add_argument('-idor', '--idor-scan',
+                       metavar='URL',
+                       help='Executa scan de IDOR (Insecure Direct Object Reference)')
+    
+    parser.add_argument('--idor-range',
+                       metavar='START-END',
+                       help='Range de IDs para enumerar (ex: 1-1000, padrão: 1-100)')
+    
+    parser.add_argument('--idor-wordlist',
+                       metavar='FILE',
+                       help='Wordlist customizada com IDs para teste')
+    
+    parser.add_argument('--test-uuid',
+                       action='store_true',
+                       help='Inclui testes com UUIDs comuns e aleatórios')
+    
+    parser.add_argument('--test-hash',
+                       action='store_true',
+                       help='Inclui testes com hashes MD5/SHA1/SHA256')
+    
+    parser.add_argument('--idor-methods',
+                       default='GET,POST,PUT,DELETE',
+                       help='Métodos HTTP para testar (padrão: GET,POST,PUT,DELETE)')
+    
+    parser.add_argument('--idor-delay',
+                       type=float,
+                       default=0.1,
+                       help='Delay entre requisições IDOR em segundos (padrão: 0.1)')
     
     # === HASH CRACKER AVANÇADO ===
     parser.add_argument('-hc', '--hash-crack',
@@ -1170,6 +1209,49 @@ def main():
                 stop_on_first=args.lfi_stop_first
             )
         
+        # === IDOR SCANNER ===
+        elif args.idor_scan:
+            print_info(f"Executando scan de IDOR em: {args.idor_scan}")
+            
+            # Parse do range de IDs
+            enumerate_range = None
+            if args.idor_range:
+                try:
+                    if '-' in args.idor_range:
+                        start, end = map(int, args.idor_range.split('-'))
+                        enumerate_range = (start, end)
+                    else:
+                        print_error("Formato de range inválido. Use: START-END (ex: 1-1000)")
+                        return
+                except ValueError:
+                    print_error("Range deve conter números inteiros. Ex: 1-1000")
+                    return
+            
+            # Parse dos métodos HTTP
+            http_methods = ['GET']
+            if args.idor_methods:
+                http_methods = [method.strip().upper() for method in args.idor_methods.split(',')]
+                valid_methods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']
+                http_methods = [m for m in http_methods if m in valid_methods]
+                if not http_methods:
+                    print_error("Nenhum método HTTP válido especificado")
+                    return
+            
+            vulnerabilities = idor_scan(
+                url=args.idor_scan,
+                enumerate_range=enumerate_range,
+                test_uuid=args.test_uuid,
+                test_hash=args.test_hash,
+                custom_wordlist=args.idor_wordlist,
+                max_workers=args.workers,
+                delay=args.idor_delay
+            )
+            
+            if vulnerabilities:
+                print_success(f"Encontradas {len(vulnerabilities)} vulnerabilidades IDOR")
+            else:
+                print_info("Nenhuma vulnerabilidade IDOR detectada")
+        
         # === RAINBOW TABLES MANAGEMENT ===
         elif args.rainbow_list:
             from ..modules.hash_cracker import RainbowTableManager
@@ -1607,6 +1689,9 @@ def main():
                 elif args.lfi_scan:
                     scan_type = "LFI/RFI"
                     target_url = args.lfi_scan
+                elif args.idor_scan:
+                    scan_type = "IDOR"
+                    target_url = args.idor_scan
                 elif args.port_scan:
                     scan_type = "Port Scan"
                     target_url = args.port_scan
