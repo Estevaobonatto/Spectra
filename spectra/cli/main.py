@@ -334,6 +334,14 @@ Exemplos de uso:
                        metavar='URL',
                        help='Detecta WAF (Web Application Firewall)')
     
+    parser.add_argument('--test-bypasses',
+                       action='store_true',
+                       help='Testa técnicas de bypass do WAF')
+    
+    parser.add_argument('--timing-analysis',
+                       action='store_true',
+                       help='Executa análise de timing para detecção de WAF')
+    
     # === ANALISADOR SSL/TLS ===
     parser.add_argument('-ssl', '--ssl-info',
                        metavar='HOSTNAME',
@@ -1013,12 +1021,26 @@ def main():
         
         # === ANALISADOR SSL/TLS ===
         elif args.ssl_info:
-            hostname, port = args.ssl_info
+            # Parse URL ou hostname
+            ssl_input = args.ssl_info
+            
+            # Remove esquema se presente
+            if ssl_input.startswith(('https://', 'http://')):
+                ssl_input = ssl_input.replace('https://', '').replace('http://', '')
+            
+            # Extrai hostname e porta
+            if ':' in ssl_input and not ssl_input.startswith('['):  # Não IPv6
+                hostname, port_str = ssl_input.split(':', 1)
+                port = int(port_str)
+            else:
+                hostname = ssl_input
+                port = 443  # Porta padrão SSL
+            
             print_info(f"Analisando SSL/TLS de {hostname}:{port}")
             
             results = get_ssl_info(
                 hostname=hostname,
-                port=int(port),
+                port=port,
                 output_format=args.output_format
             )
         
