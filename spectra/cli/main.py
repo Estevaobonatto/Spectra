@@ -81,16 +81,21 @@ Exemplos de uso:
   • Taxa de sucesso e métricas de rate limiting em tempo real
 
 [ Hash Cracker Profissional - Competitivo com HashCat/John + GPU Acceleration ]
-  • Detecção automática de 10+ tipos de hash (MD5, SHA1/256/512, NTLM, bcrypt)
-  • 4 modos de ataque: Dictionary, Brute Force, Mask Attack, Online Lookup
+  • Detecção automática de 27+ tipos de hash (MD5, SHA1/256/512, NTLM, bcrypt, LM, CRC32, xxHash)
+  • 11 modos de ataque: Dictionary, Brute Force, Mask, Rainbow, Hybrid, Combinator, PRINCE, Toggle Case, Increment, Online
+  • Algoritmos seguros: SHA-256/512, SHA-3, BLAKE2B/S, Argon2, scrypt, bcrypt
+  • Algoritmos legados: MD5, SHA1, LM Hash, MD4, RIPEMD160, Whirlpool  
+  • Checksums rápidos: CRC32, Adler32, xxHash32/64 (>10M hashes/s)
+  • Unix Crypt variants: MD5/SHA-256/SHA-512 crypt ($1$, $5$, $6$)
   • Rule-based transformations (uppercase, digits, leet speak, years, reverse)
   • Mask attacks com padrões HashCat (?l ?u ?d ?s ?a)
-  • Performance threading otimizado (até 64 workers em modo extreme)
+  • Performance threading otimizado (até 500 workers em modo aggressive)
   • Cache inteligente para evitar re-computação de hashes
-  • Estatísticas em tempo real (tentativas/s, progresso, ETA)
+  • Estatísticas em tempo real (tentativas/s, progresso, ETA, performance score)
   • Wordlists integradas + suporte a wordlists customizadas
   • Online hash lookup em múltiplos serviços
-  • Progress tracking detalhado com estimativa de tempo
+  • Rainbow tables com geração automática e lookup O(1)
+  • Sistema de help avançado com exemplos e benchmarks
   
 [ GPU Acceleration - 50-1000x Performance Boost ]
   • Auto-detecção de NVIDIA CUDA, CuPy e OpenCL
@@ -124,13 +129,14 @@ Exemplos de uso:
   %(prog)s -cmdi http://example.com/cmd --cmdi-level 3
   %(prog)s -lfi http://example.com/file?name=test
 
-[ Hash Cracker Avançado - GPU-Accelerated Cracking ]
+[ Hash Cracker Avançado - 27+ Algoritmos + 11 Modos de Ataque ]
   %(prog)s -hc 5d41402abc4b2a76b9719d911017c592 --attack-mode dictionary
   %(prog)s -hc 356a192b7913b04c54574d18c28d46e6395428ab --hash-type sha1 --attack-mode all
-  %(prog)s -hc d8578edf8458ce06fbc5bb76a58c5ca4 --attack-mode brute_force --max-length 5
+  %(prog)s -hc F054A2BB --hash-type crc32 --attack-mode brute_force --max-length 8
+  %(prog)s -hc AAD3B435B51404EEAAD3B435B51404EE --hash-type lm --attack-mode dictionary
   %(prog)s -hc 098f6bcd4621d373cade4e832627b4f6 --attack-mode mask --mask-pattern "?l?l?l?l"
-  %(prog)s -hc 5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8 --hash-wordlist custom.txt --hash-rules uppercase,digits
-  %(prog)s -hc ad0234829205b9033196ba818f7a872b --hash-performance extreme --show-hash-stats
+  %(prog)s -hc 5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8 --attack-mode hybrid --hash-wordlist base.txt
+  %(prog)s -hc ad0234829205b9033196ba818f7a872b --attack-mode prince --hash-performance extreme --show-hash-stats
   
 [ GPU Hash Cracking - Performance Extrema ]
   %(prog)s -hc d41d8cd98f00b204e9800998ecf8427e --use-gpu --gpu-info
@@ -146,6 +152,24 @@ Exemplos de uso:
   %(prog)s --rainbow-info md5_1_6_36chars.rt
   %(prog)s -hc d41d8cd98f00b204e9800998ecf8427e --attack-mode rainbow --rainbow-charset "abc123" --rainbow-max-length 4
   %(prog)s -hc 356a192b7913b04c54574d18c28d46e6395428ab --attack-mode all
+
+[ Novos Algoritmos e Ataques Avançados - Atualização v3.4+ ]
+  • Checksums ultra-rápidos (>10M h/s): CRC32, Adler32, xxHash32/64
+  %(prog)s -hc F054A2BB --hash-type crc32 --attack-mode increment --max-length 6
+  %(prog)s -hc ACA0257 --hash-type adler32 --attack-mode brute_force --max-length 5
+  
+  • Windows LM Hash (extremamente fraco - para análise forense):
+  %(prog)s -hc AAD3B435B51404EEAAD3B435B51404EE --hash-type lm --attack-mode dictionary
+  
+  • Unix/Linux Crypt variants ($1$, $5$, $6$):
+  %(prog)s -hc '$6$rounds=5000$salt$hash...' --hash-type sha512crypt --attack-mode dictionary
+  
+  • Novos modos de ataque profissionais:
+  %(prog)s -hc hash --attack-mode hybrid --hash-wordlist base.txt  # Dictionary + mask suffix
+  %(prog)s -hc hash --attack-mode combinator --hash-wordlist words1.txt --wordlist2 words2.txt
+  %(prog)s -hc hash --attack-mode toggle_case --hash-wordlist common.txt  # Case variations
+  %(prog)s -hc hash --attack-mode increment --min-length 1 --max-length 6  # Optimized brute force
+  %(prog)s -hc hash --attack-mode prince --hash-wordlist base.txt --elements-per-chain 4
 
 [ Network Monitor - Análise de Tráfego em Tempo Real ]
   %(prog)s -nm
@@ -459,14 +483,18 @@ Exemplos de uso:
                        help='Quebra hash usando múltiplos métodos de ataque (dictionary, brute force, mask, online)')
     
     parser.add_argument('--hash-type',
-                       choices=['md5', 'sha1', 'sha256', 'sha512', 'ntlm', 'bcrypt', 'auto'],
+                       choices=['md5', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512', 'md4', 'ntlm', 'lm', 
+                               'blake2b', 'blake2s', 'sha3_224', 'sha3_256', 'sha3_384', 'sha3_512', 
+                               'ripemd160', 'whirlpool', 'adler32', 'crc32', 'xxhash32', 'xxhash64',
+                               'bcrypt', 'argon2', 'scrypt', 'pbkdf2', 'md5crypt', 'sha256crypt', 'sha512crypt', 'auto'],
                        default='auto',
-                       help='Tipo de hash (auto-detectado por padrão)')
+                       help='Tipo de hash (27+ algoritmos suportados, auto-detectado por padrão)')
     
     parser.add_argument('--attack-mode',
-                       choices=['dictionary', 'brute_force', 'mask', 'rainbow', 'online', 'all'],
+                       choices=['dictionary', 'brute_force', 'mask', 'rainbow', 'hybrid', 'combinator', 
+                               'toggle_case', 'increment', 'prince', 'online', 'all'],
                        default='dictionary',
-                       help='Modo de ataque para quebra de hash')
+                       help='Modo de ataque para quebra de hash (11 modos disponíveis)')
     
     parser.add_argument('--hash-wordlist',
                        metavar='FILE',
@@ -629,7 +657,7 @@ Exemplos de uso:
     
     parser.add_argument('--version',
                        action='version',
-                       version='Spectra v3.3.0 - Advanced Directory Scanner Edition')
+                       version='Spectra v3.4.0 - Advanced Hash Cracker Edition (27+ Algorithms)')
     
     return parser
 

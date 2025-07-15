@@ -2808,10 +2808,79 @@ def display_algorithm_info():
             status = "[red]✗[/red] (pip install argon2-cffi)"
         elif algo == 'scrypt' and not SCRYPT_AVAILABLE:
             status = "[red]✗[/red] (pip install scrypt)"
+        elif algo in ['md5crypt', 'sha256crypt', 'sha512crypt'] and not CRYPT_AVAILABLE:
+            status = "[red]✗[/red] (sistema Unix necessário)"
         
         console.print(f"  • {algo} {status}")
     
     console.print(f"\n[bold]Total: {len(algorithms['all'])} algoritmos[/bold]")
+
+
+def display_detailed_algorithm_info():
+    """Exibe informações detalhadas sobre algoritmos de hash com descrições."""
+    console.print("\n[bold blue]═══ ALGORITMOS DE HASH DETALHADOS ═══[/bold blue]")
+    
+    # Algoritmos organizados por categoria
+    categories = {
+        "[bold green]🔐 ALGORITMOS CRIPTOGRÁFICOS SEGUROS[/bold green]": {
+            'sha256': 'SHA-256 - Padrão seguro, amplamente usado',
+            'sha512': 'SHA-512 - Versão de 512 bits do SHA-2',
+            'sha3_256': 'SHA-3 256 - Algoritmo Keccak, padrão NIST',
+            'sha3_512': 'SHA-3 512 - Versão de 512 bits do SHA-3',
+            'blake2b': 'BLAKE2b - Rápido e seguro, alternativa ao SHA-3',
+            'blake2s': 'BLAKE2s - Versão otimizada para 32-bit'
+        },
+        "[bold yellow]⚠️ ALGORITMOS LEGADOS[/bold yellow]": {
+            'md5': 'MD5 - Quebrado, usado apenas para compatibilidade',
+            'sha1': 'SHA-1 - Depreciado, vulnerabilidades conhecidas',
+            'md4': 'MD4 - Algoritmo antigo, muito inseguro',
+            'lm': 'LM Hash - Windows legado, extremamente fraco',
+            'ripemd160': 'RIPEMD-160 - Usado em Bitcoin',
+            'whirlpool': 'Whirlpool - Padrão ISO/IEC'
+        },
+        "[bold cyan]🏢 ALGORITMOS CORPORATIVOS[/bold cyan]": {
+            'ntlm': 'NTLM - Windows NT LAN Manager',
+            'bcrypt': 'bcrypt - Blowfish-based, com salt adaptativo',
+            'scrypt': 'scrypt - Resistente a ataques de hardware',
+            'argon2': 'Argon2 - Vencedor PHC, padrão moderno',
+            'pbkdf2': 'PBKDF2 - Password-Based Key Derivation Function'
+        },
+        "[bold magenta]⚡ CHECKSUMS E ALGORITMOS RÁPIDOS[/bold magenta]": {
+            'crc32': 'CRC32 - Detecção de erros, não criptográfico',
+            'adler32': 'Adler-32 - Checksum rápido, usado em zlib',
+            'xxhash32': 'xxHash32 - Extremamente rápido, não-criptográfico',
+            'xxhash64': 'xxHash64 - Versão 64-bit do xxHash'
+        },
+        "[bold red]🐧 ALGORITMOS UNIX CRYPT[/bold red]": {
+            'md5crypt': 'MD5 Crypt - Formato $1$ do Unix',
+            'sha256crypt': 'SHA-256 Crypt - Formato $5$ do Unix',
+            'sha512crypt': 'SHA-512 Crypt - Formato $6$ do Unix'
+        }
+    }
+    
+    algorithms = get_supported_algorithms()
+    
+    for category, algos in categories.items():
+        console.print(f"\n{category}")
+        for algo, description in algos.items():
+            if algo in algorithms['all']:
+                # Verificar disponibilidade
+                status = "[green]✓[/green]"
+                if algo == 'bcrypt' and not BCRYPT_AVAILABLE:
+                    status = "[red]✗[/red]"
+                elif algo == 'argon2' and not ARGON2_AVAILABLE:
+                    status = "[red]✗[/red]"
+                elif algo == 'scrypt' and not SCRYPT_AVAILABLE:
+                    status = "[red]✗[/red]"
+                elif algo in ['xxhash32', 'xxhash64'] and not XXHASH_AVAILABLE:
+                    status = "[yellow]○[/yellow]"  # Fallback disponível
+                elif algo in ['md5crypt', 'sha256crypt', 'sha512crypt'] and not CRYPT_AVAILABLE:
+                    status = "[yellow]○[/yellow]"  # Fallback disponível
+                
+                console.print(f"  {status} [cyan]{algo:<12}[/cyan] - {description}")
+    
+    console.print(f"\n[bold]Legenda:[/bold] [green]✓[/green] Disponível | [yellow]○[/yellow] Fallback | [red]✗[/red] Indisponível")
+    console.print(f"[bold]Total: {len(algorithms['all'])} algoritmos suportados[/bold]")
 
 
 def display_attack_modes_info():
@@ -2907,6 +2976,185 @@ def benchmark_hash_algorithms(password="test123", iterations=1000):
     return results
 
 
+def display_hash_examples():
+    """Exibe exemplos práticos de uso com diferentes tipos de hash."""
+    console.print("\n[bold blue]═══ EXEMPLOS DE USO POR TIPO DE HASH ═══[/bold blue]")
+    
+    examples = {
+        "[bold green]🔐 HASHES CRIPTOGRÁFICOS[/bold green]": [
+            {
+                "tipo": "MD5",
+                "hash": "5d41402abc4b2a76b9719d911017c592",
+                "comando": "python -m spectra.modules.hash_cracker -t md5 -H 5d41402abc4b2a76b9719d911017c592 -w wordlist.txt",
+                "nota": "Hash MD5 de 'hello' - algoritmo quebrado, apenas para compatibilidade"
+            },
+            {
+                "tipo": "SHA-256", 
+                "hash": "2cf24dba4f21d4288094e8626b2bfc738d2b60f...",
+                "comando": "python -m spectra.modules.hash_cracker -t sha256 -H <hash> -a brute_force --charset=lowercase --max-length=6",
+                "nota": "Força bruta em SHA-256 com charset customizado"
+            }
+        ],
+        "[bold yellow]⚠️ HASHES LEGADOS[/bold yellow]": [
+            {
+                "tipo": "LM Hash",
+                "hash": "AAD3B435B51404EEAAD3B435B51404EE",
+                "comando": "python -m spectra.modules.hash_cracker -t lm -H AAD3B435B51404EEAAD3B435B51404EE -a dictionary",
+                "nota": "LM Hash vazio (senha em branco) - extremamente fraco"
+            },
+            {
+                "tipo": "NTLM",
+                "hash": "b4b9b02e6f09a9bd760f388b67351e2b",
+                "comando": "python -m spectra.modules.hash_cracker -t ntlm -H <hash> -w rockyou.txt",
+                "nota": "Hash NTLM - ainda usado em redes Windows"
+            }
+        ],
+        "[bold cyan]🏢 HASHES CORPORATIVOS[/bold cyan]": [
+            {
+                "tipo": "bcrypt",
+                "hash": "$2b$12$GhvMmNVjRW29ulnudl.LbuAnawmCURk...",
+                "comando": "python -m spectra.modules.hash_cracker -t bcrypt -H '<hash>' -w passwords.txt --threads 4",
+                "nota": "bcrypt com custo 12 - muito lento, use poucos threads"
+            },
+            {
+                "tipo": "Unix SHA-512",
+                "hash": "$6$rounds=5000$salt$hash...",
+                "comando": "python -m spectra.modules.hash_cracker -t sha512crypt -H '<hash>' -a hybrid -w common.txt",
+                "nota": "SHA-512 crypt do Linux - formato $6$"
+            }
+        ],
+        "[bold magenta]⚡ CHECKSUMS RÁPIDOS[/bold magenta]": [
+            {
+                "tipo": "CRC32",
+                "hash": "F054A2BB",
+                "comando": "python -m spectra.modules.hash_cracker -t crc32 -H F054A2BB -a brute_force --max-length=8",
+                "nota": "CRC32 quebra muito rápido - não é criptográfico"
+            },
+            {
+                "tipo": "Adler32", 
+                "hash": "ACA0257",
+                "comando": "python -m spectra.modules.hash_cracker -t adler32 -H ACA0257 -a increment --min-length=1",
+                "nota": "Adler32 ainda mais rápido que CRC32"
+            }
+        ]
+    }
+    
+    for category, hash_list in examples.items():
+        console.print(f"\n{category}")
+        for example in hash_list:
+            console.print(f"\n  [bold cyan]{example['tipo']}:[/bold cyan]")
+            console.print(f"  Hash: [yellow]{example['hash']}[/yellow]")
+            console.print(f"  Uso:  [green]{example['comando']}[/green]")
+            console.print(f"  📝 {example['nota']}")
+    
+    console.print(f"\n[bold blue]💡 DICAS GERAIS:[/bold blue]")
+    console.print(f"  • Use --timeout para limitar tempo de execução")
+    console.print(f"  • --gpu-accel para acelerar com GPU (se disponível)")
+    console.print(f"  • --output-format para salvar resultados em diferentes formatos")
+    console.print(f"  • --verbose para ver progresso detalhado")
+    console.print(f"  • --rules para aplicar regras de transformação de senhas")
+
+
+def display_complete_help():
+    """Exibe help completo do sistema de hash cracking."""
+    console.print("\n[bold blue]═══ SPECTRA HASH CRACKER - AJUDA COMPLETA ═══[/bold blue]")
+    
+    console.print(f"\n[bold green]📋 FUNCIONALIDADES PRINCIPAIS:[/bold green]")
+    console.print(f"  • Suporte a 27+ algoritmos de hash diferentes")
+    console.print(f"  • 11 modos de ataque (dictionary, brute force, hybrid, etc.)")
+    console.print(f"  • Aceleration GPU com CUDA, OpenCL e CuPy")
+    console.print(f"  • Rainbow tables para ataques rápidos")
+    console.print(f"  • Sistema de benchmark e análise de performance")
+    console.print(f"  • Detecção automática de tipo de hash")
+    console.print(f"  • Suporte a wordlists e regras personalizadas")
+    
+    console.print(f"\n[bold yellow]🚀 COMANDOS RÁPIDOS:[/bold yellow]")
+    console.print(f"  [cyan]Quebrar hash automaticamente:[/cyan]")
+    console.print(f"    crack_hash('5d41402abc4b2a76b9719d911017c592', 'wordlist.txt')")
+    console.print(f"  [cyan]Ver algoritmos suportados:[/cyan]")
+    console.print(f"    display_algorithm_info()")
+    console.print(f"  [cyan]Benchmark de performance:[/cyan]") 
+    console.print(f"    benchmark_hash_algorithms()")
+    console.print(f"  [cyan]Gerar hashes de exemplo:[/cyan]")
+    console.print(f"    generate_sample_hashes('minhasenha')")
+    
+    console.print(f"\n[bold red]⚠️ AVISOS DE SEGURANÇA:[/bold red]")
+    console.print(f"  • Use apenas em sistemas próprios ou com autorização")
+    console.print(f"  • Algoritmos MD5, SHA1, LM são inseguros")
+    console.print(f"  • bcrypt/scrypt/argon2 são mais resistentes")
+    console.print(f"  • GPU acceleration pode causar aquecimento")
+    
+    console.print(f"\n[bold magenta]📚 PARA MAIS INFORMAÇÕES:[/bold magenta]")
+    console.print(f"  • display_detailed_algorithm_info() - Detalhes dos algoritmos")
+    console.print(f"  • display_attack_modes_info() - Modos de ataque")
+    console.print(f"  • display_hash_examples() - Exemplos práticos")
+    console.print(f"  • get_hash_info('hash') - Análise de hash específico")
+
+
+def display_algorithm_stats():
+    """Exibe estatísticas detalhadas dos algoritmos de hash."""
+    console.print("\n[bold blue]═══ ESTATÍSTICAS DOS ALGORITMOS ═══[/bold blue]")
+    
+    algorithms = get_supported_algorithms()
+    
+    # Contar por categoria
+    categories = {
+        "Seguros": ['sha256', 'sha512', 'sha3_256', 'sha3_512', 'blake2b', 'blake2s'],
+        "Legados": ['md5', 'sha1', 'md4', 'lm', 'ripemd160', 'whirlpool'],
+        "Corporativos": ['ntlm', 'bcrypt', 'scrypt', 'argon2', 'pbkdf2'],
+        "Checksums": ['crc32', 'adler32', 'xxhash32', 'xxhash64'],
+        "Unix Crypt": ['md5crypt', 'sha256crypt', 'sha512crypt']
+    }
+    
+    total_available = 0
+    total_optional = 0
+    
+    for category, algos in categories.items():
+        available = len([a for a in algos if a in algorithms['all']])
+        total_cat = len(algos)
+        total_available += available
+        
+        # Contar opcionais indisponíveis
+        optional_missing = 0
+        for algo in algos:
+            if algo == 'bcrypt' and not BCRYPT_AVAILABLE:
+                optional_missing += 1
+            elif algo == 'argon2' and not ARGON2_AVAILABLE:
+                optional_missing += 1
+            elif algo == 'scrypt' and not SCRYPT_AVAILABLE:
+                optional_missing += 1
+            elif algo in ['xxhash32', 'xxhash64'] and not XXHASH_AVAILABLE:
+                optional_missing += 1
+            elif algo in ['md5crypt', 'sha256crypt', 'sha512crypt'] and not CRYPT_AVAILABLE:
+                optional_missing += 1
+        
+        total_optional += optional_missing
+        
+        percentage = (available / total_cat) * 100
+        status_color = "green" if percentage == 100 else "yellow" if percentage > 50 else "red"
+        
+        console.print(f"  [{status_color}]{category:15}[/{status_color}] {available:2}/{total_cat:2} algoritmos ({percentage:5.1f}%)")
+    
+    console.print(f"\n[bold green]📊 RESUMO GERAL:[/bold green]")
+    console.print(f"  Total implementado: {len(algorithms['all'])} algoritmos")
+    console.print(f"  Disponíveis agora:  {len(algorithms['all']) - total_optional} algoritmos")
+    console.print(f"  Requer bibliotecas: {total_optional} algoritmos")
+    
+    # Performance estimada por categoria
+    console.print(f"\n[bold yellow]⚡ PERFORMANCE ESTIMADA:[/bold yellow]")
+    performance_guide = {
+        "Checksums (CRC32, Adler32)": "🔥 Extremamente rápido (>10M h/s)",
+        "Legados (MD5, SHA1)": "🚀 Muito rápido (1-5M h/s)", 
+        "Seguros (SHA-256, BLAKE2)": "⚡ Rápido (100K-1M h/s)",
+        "Corporativos (bcrypt, scrypt)": "🐌 Lento (100-10K h/s)",
+        "Unix Crypt": "🕐 Moderado (10K-100K h/s)"
+    }
+    
+    for perf_cat, description in performance_guide.items():
+        console.print(f"  {description}")
+        console.print(f"    └─ {perf_cat}")
+
+
 def get_hash_info(hash_string):
     """Retorna informações detalhadas sobre um hash."""
     hash_length = len(hash_string)
@@ -2923,12 +3171,14 @@ def get_hash_info(hash_string):
     
     # Determina tipos possíveis baseado no comprimento
     length_patterns = {
-        32: ['md5', 'ntlm', 'blake2s'],
+        32: ['md5', 'ntlm', 'blake2s', 'lm'],
         40: ['sha1', 'ripemd160'],
         56: ['sha224', 'sha3_224'],
         64: ['sha256', 'sha3_256', 'blake2b'],
         96: ['sha384', 'sha3_384'],
         128: ['sha512', 'sha3_512', 'whirlpool'],
+        16: ['md4', 'xxhash64'],
+        8: ['adler32', 'crc32', 'xxhash32'],
     }
     
     info['possible_types'] = length_patterns.get(hash_length, [])
@@ -2946,12 +3196,14 @@ def calculate_entropy(text):
     for char in text:
         char_counts[char] = char_counts.get(char, 0) + 1
     
-    # Calcula entropia
+    # Calcula entropia usando log2
+    import math
     entropy = 0
     text_length = len(text)
     for count in char_counts.values():
         probability = count / text_length
-        entropy -= probability * (probability.bit_length() - 1)
+        if probability > 0:
+            entropy -= probability * math.log2(probability)
     
     return entropy
 
