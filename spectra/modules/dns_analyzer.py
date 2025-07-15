@@ -5,6 +5,7 @@ import socket
 import dns.resolver
 import dns.zone
 import dns.query
+from urllib.parse import urlparse
 from rich.table import Table
 
 from ..core.console import console
@@ -29,6 +30,35 @@ class DNSAnalyzer:
         
         logger.info("Analisador DNS inicializado")
     
+    def _normalize_domain(self, domain):
+        """
+        Normaliza domínio removendo esquemas e paths.
+        
+        Args:
+            domain (str): Domínio ou URL para normalizar.
+            
+        Returns:
+            str: Domínio normalizado.
+        """
+        # Remove esquemas HTTP/HTTPS se presentes
+        if domain.startswith(('http://', 'https://')):
+            parsed = urlparse(domain)
+            domain = parsed.netloc
+        
+        # Remove porta se presente
+        if ':' in domain and not domain.startswith('['):  # Não IPv6
+            domain = domain.split(':')[0]
+        
+        # Remove path se presente
+        if '/' in domain:
+            domain = domain.split('/')[0]
+        
+        # Remove 'www.' se presente para normalização
+        if domain.startswith('www.'):
+            domain = domain[4:]
+        
+        return domain.lower().strip()
+    
     def query_dns(self, domain, record_type='ALL'):
         """
         Consulta avançada de registros DNS com análise de vulnerabilidades.
@@ -40,7 +70,13 @@ class DNSAnalyzer:
         Returns:
             dict: Resultados da consulta DNS.
         """
+        # Normaliza o domínio
+        original_domain = domain
+        domain = self._normalize_domain(domain)
+        
         console.print("-" * 60)
+        if original_domain != domain:
+            console.print(f"[*] URL normalizada: [dim]{original_domain}[/dim] → [bold cyan]{domain}[/bold cyan]")
         console.print(f"[*] Consultando registros para [bold cyan]{domain}[/bold cyan]")
         console.print("-" * 60)
 
@@ -54,6 +90,11 @@ class DNSAnalyzer:
             for r_type in record_types:
                 status.update(f"[bold green]Consultando registro {r_type}...[/bold green]")
                 try:
+                    # Configura timeout específico para cada tipo de consulta
+                    resolver_timeout = 8 if r_type in ['TXT', 'CAA', 'SRV'] else 5
+                    old_timeout = self.resolver.lifetime
+                    self.resolver.lifetime = resolver_timeout
+                    
                     answers = self.resolver.resolve(domain, r_type)
                     
                     # Processa diferentes tipos de registros
@@ -77,6 +118,9 @@ class DNSAnalyzer:
                         results[r_type] = self._process_loc_records(answers, domain)
                     else:
                         results[r_type] = self._process_basic_records(answers, domain, r_type)
+                    
+                    # Restaura timeout original
+                    self.resolver.lifetime = old_timeout
 
                 except dns.resolver.NoAnswer:
                     console.print(f"[bold yellow][-] Nenhum registro {r_type} encontrado para {domain}.[/bold yellow]")
@@ -84,10 +128,22 @@ class DNSAnalyzer:
                     console.print(f"[bold red][!] Erro: O domínio {domain} não existe.[/bold red]")
                     break 
                 except dns.resolver.LifetimeTimeout:
-                    console.print(f"[bold red][!] Erro ao consultar {r_type}: Timeout na consulta DNS.[/bold red]")
+                    console.print(f"[bold yellow][!] Timeout ao consultar {r_type} (>{resolver_timeout}s) - pulando...[/bold yellow]")
+                    logger.warning(f"Timeout na consulta DNS {r_type} para {domain} após {resolver_timeout}s")
+                except dns.resolver.Timeout:
+                    console.print(f"[bold yellow][!] Timeout ao consultar {r_type} - pulando...[/bold yellow]")
+                except dns.exception.DNSException as e:
+                    console.print(f"[bold yellow][!] Erro DNS ao consultar {r_type}: {str(e)[:50]}... - pulando[/bold yellow]")
+                    logger.warning(f"Erro DNS {r_type} para {domain}: {e}")
                 except Exception as e:
-                    console.print(f"[bold red][!] Erro ao consultar {r_type}: {e}[/bold red]")
+                    console.print(f"[bold red][!] Erro inesperado ao consultar {r_type}: {str(e)[:50]}...[/bold red]")
                     logger.error(f"Erro na consulta DNS {r_type} para {domain}: {e}")
+                finally:
+                    # Garante que o timeout seja restaurado
+                    try:
+                        self.resolver.lifetime = old_timeout
+                    except:
+                        pass
                 
                 console.print()
         
@@ -206,14 +262,37 @@ class DNSAnalyzer:
         processed_records = []
         
         for rdata in answers:
-            analysis = self._analyze_caa_record(rdata.tag, rdata.value)
-            table.add_row(str(rdata.flags), rdata.tag, rdata.value, analysis)
-            processed_records.append({
-                'flags': rdata.flags,
-                'tag': rdata.tag,
-                'value': rdata.value,
-                'analysis': analysis
-            })
+            try:
+                # Converte valor CAA para string de forma segura
+                tag = rdata.tag if hasattr(rdata, 'tag') else 'N/A'
+                
+                # Se tag for bytes, converte para string
+                if isinstance(tag, bytes):
+                    tag = tag.decode('utf-8', errors='ignore')
+                else:
+                    tag = str(tag)
+                
+                value = rdata.value
+                
+                # Se value for bytes, converte para string
+                if isinstance(value, bytes):
+                    value = value.decode('utf-8', errors='ignore')
+                else:
+                    value = str(value)
+                
+                flags = str(rdata.flags) if hasattr(rdata, 'flags') else '0'
+                
+                analysis = self._analyze_caa_record(tag, value)
+                table.add_row(flags, tag, value, analysis)
+                processed_records.append({
+                    'flags': int(flags) if flags.isdigit() else 0,
+                    'tag': tag,
+                    'value': value,
+                    'analysis': analysis
+                })
+            except Exception as e:
+                logger.error(f"Erro ao processar registro CAA: {e}")
+                table.add_row("0", "ERROR", str(e), "Erro de processamento")
         
         console.print(table)
         return processed_records
@@ -344,7 +423,9 @@ class DNSAnalyzer:
         # Verifica Zone Transfer
         if self.nameservers:
             zone_transfer_results = self._check_zone_transfer(domain)
-            if zone_transfer_results:
+            vulnerable_ns = [ns for ns, status in zone_transfer_results.items() if status == "vulnerable"]
+            
+            if vulnerable_ns:
                 console.print("[bold red]⚠️  VULNERABILIDADE: Zone Transfer habilitado![/bold red]")
                 for ns, status in zone_transfer_results.items():
                     if status == "vulnerable":
@@ -353,6 +434,11 @@ class DNSAnalyzer:
                         console.print(f"    • {ns}: [green]Protegido[/green]")
             else:
                 console.print("[green]✅ Zone Transfer: Protegido[/green]")
+                if zone_transfer_results:
+                    # Mostra apenas alguns nameservers testados se não há vulnerabilidades
+                    tested_ns = list(zone_transfer_results.keys())[:2]
+                    if tested_ns:
+                        console.print(f"    • Testado: {', '.join(tested_ns)}")
         
         # Verifica DNS Cache Poisoning
         cache_poisoning_risk = self._check_dns_cache_poisoning(domain)
@@ -417,11 +503,15 @@ class DNSAnalyzer:
             'cloudflare.com': 'Cloudflare',
             'google.com': 'Google Cloud DNS',
             'amazonaws.com': 'Amazon Route 53',
+            'awsdns': 'Amazon Route 53',
             'azure-dns.com': 'Microsoft Azure DNS',
             'digitalocean.com': 'DigitalOcean DNS',
             'linode.com': 'Linode DNS',
             'godaddy.com': 'GoDaddy DNS',
-            'namecheap.com': 'Namecheap DNS'
+            'namecheap.com': 'Namecheap DNS',
+            'nsone.net': 'NS1',
+            'dnsimple.com': 'DNSimple',
+            'route53.com': 'Amazon Route 53'
         }
         
         for pattern, provider in dns_providers.items():
@@ -503,13 +593,32 @@ class DNSAnalyzer:
         
         for ns in self.nameservers[:3]:  # Testa apenas os primeiros 3 NS
             try:
-                # Tenta zone transfer
-                transfer = dns.zone.from_xfr(dns.query.xfr(ns, domain, timeout=5))
-                if transfer:
-                    results[ns] = "vulnerable"
-                else:
+                # Resolve IP do nameserver primeiro
+                ns_ip = self._resolve_nameserver_ip(ns)
+                if not ns_ip:
                     results[ns] = "protected"
-            except:
+                    continue
+                
+                # Tenta zone transfer
+                try:
+                    transfer = dns.zone.from_xfr(dns.query.xfr(ns_ip, domain, timeout=3))
+                    if transfer and len(transfer.nodes) > 1:  # Zone transfer bem-sucedido
+                        results[ns] = "vulnerable"
+                    else:
+                        results[ns] = "protected"
+                except (dns.query.TransferError, dns.exception.FormError, ConnectionRefusedError):
+                    # Estes erros indicam que zone transfer foi negado (bom)
+                    results[ns] = "protected"
+                except dns.exception.Timeout:
+                    # Timeout pode indicar proteção ou problema de rede
+                    results[ns] = "protected"
+                except Exception as e:
+                    # Outros erros geralmente indicam proteção
+                    logger.debug(f"Zone transfer para {ns} falhou: {e}")
+                    results[ns] = "protected"
+                    
+            except Exception as e:
+                logger.debug(f"Erro ao testar zone transfer em {ns}: {e}")
                 results[ns] = "protected"
         
         return results
