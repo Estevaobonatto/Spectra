@@ -13,3 +13,4 @@ spectra/data/wordlists/darkc0de.txt
 # Cache de módulos Python
 **/__pycache__/
 *.pyc
+*.kiro

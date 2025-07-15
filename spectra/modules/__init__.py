@@ -22,7 +22,7 @@ from .metadata_extractor import MetadataExtractor, extract_metadata
 from .subdomain_scanner import SubdomainScanner, discover_subdomains
 from .dns_analyzer import DNSAnalyzer, query_dns
 from .whois_analyzer import WhoisAnalyzer, get_whois_info
-from .idor_scanner import IDORScanner, idor_scan
+from .idor_scanner import AdvancedIDORScanner, idor_scan
 
 __all__ = [
     'port_scanner', 'banner_grabber', 'directory_scanner', 'metadata_extractor', 
@@ -30,5 +30,5 @@ __all__ = [
     'scan_ports', 'AdvancedPortScanner', 'BannerGrabber', 'AdvancedDirectoryScanner', 
     'advanced_directory_scan', 'MetadataExtractor', 'extract_metadata', 
     'SubdomainScanner', 'discover_subdomains', 'DNSAnalyzer', 'query_dns',
-    'WhoisAnalyzer', 'get_whois_info', 'IDORScanner', 'idor_scan'
+    'WhoisAnalyzer', 'get_whois_info', 'AdvancedIDORScanner', 'idor_scan'
 ]
