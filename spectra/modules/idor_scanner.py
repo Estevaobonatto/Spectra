@@ -764,7 +764,7 @@ class AdvancedIDORScanner:
             # Diferentes status codes podem indicar acesso
             if response.status_code != original_response.status_code:
                 if response.status_code == 200 and original_response.status_code in [401, 403, 404]:
-                    vulnerability_indicators.append(f"Status mudou de {original_response.status_code} para 200")
+                    vulnerability_indicators.append(f"Status mudou de {original_response.status_code} para 200")a 200")
                     confidence += 0.6
                 elif response.status_code in [401, 403] and original_response.status_code == 404:
                     vulnerability_indicators.append(f"Objeto existe mas acesso negado (status {response.status_code})")
