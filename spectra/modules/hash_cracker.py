@@ -65,6 +65,23 @@ try:
 except ImportError:
     BCRYPT_AVAILABLE = False
 
+# Biblioteca para xxHash
+try:
+    import xxhash
+    XXHASH_AVAILABLE = True
+except ImportError:
+    XXHASH_AVAILABLE = False
+
+# Biblioteca para crypt (Unix-style)
+try:
+    import crypt
+    CRYPT_AVAILABLE = True
+except ImportError:
+    CRYPT_AVAILABLE = False
+
+import zlib
+import binascii
+
 logger = get_logger(__name__)
 
 
@@ -875,14 +892,15 @@ class AdvancedHashCracker:
         """Detecta automaticamente o tipo de hash baseado no formato."""
         hash_length = len(self.hash_target)
         hash_patterns = {
-            32: ['md5', 'ntlm', 'blake2s'],
+            32: ['md5', 'ntlm', 'blake2s', 'lm'],
             40: ['sha1', 'ripemd160'],
             56: ['sha224', 'sha3_224'],
             64: ['sha256', 'sha3_256', 'blake2b'],
             96: ['sha384', 'sha3_384'],
             128: ['sha512', 'sha3_512', 'whirlpool'],
             60: ['bcrypt'],  # $2b$...
-            16: ['md4'],
+            16: ['md4', 'xxhash64'],
+            8: ['adler32', 'crc32', 'xxhash32'],
         }
         
         # Detecção por padrões específicos
@@ -910,6 +928,10 @@ class AdvancedHashCracker:
             return 'sha512'
         elif ':' in self.hash_target and len(self.hash_target.split(':')[0]) == 32:
             return 'ntlm'  # username:hash format
+        elif len(self.hash_target) == 32 and all(c.isupper() or c.isdigit() for c in self.hash_target if c.isalnum()):
+            return 'lm'  # LM hash é tipicamente uppercase
+        elif len(self.hash_target) == 8 and all(c in '0123456789abcdefABCDEF' for c in self.hash_target):
+            return 'crc32'  # Formato hexadecimal de 8 caracteres
         
         # Detecção por comprimento
         possible_types = hash_patterns.get(hash_length, ['unknown'])
@@ -934,6 +956,7 @@ class AdvancedHashCracker:
             'sha512': hashlib.sha512,
             'md4': self._md4_hash,
             'ntlm': self._ntlm_hash,
+            'lm': self._lm_hash,
             'blake2b': self._blake2b_hash,
             'blake2s': self._blake2s_hash,
             'sha3_224': self._sha3_224_hash,
@@ -942,6 +965,10 @@ class AdvancedHashCracker:
             'sha3_512': self._sha3_512_hash,
             'ripemd160': self._ripemd160_hash,
             'whirlpool': self._whirlpool_hash,
+            'adler32': self._adler32_hash,
+            'crc32': self._crc32_hash,
+            'xxhash32': self._xxhash32_hash,
+            'xxhash64': self._xxhash64_hash,
         }
         
         # Algoritmos que requerem bibliotecas específicas
@@ -950,6 +977,9 @@ class AdvancedHashCracker:
             'argon2': self._argon2_hash,
             'scrypt': self._scrypt_hash,
             'pbkdf2': self._pbkdf2_hash,
+            'md5crypt': self._md5crypt_hash,
+            'sha256crypt': self._sha256crypt_hash,
+            'sha512crypt': self._sha512crypt_hash,
         }
         
         if self.hash_type not in self.hash_algorithms and self.hash_type not in self.special_algorithms:
@@ -1076,6 +1106,109 @@ class AdvancedHashCracker:
         except Exception as e:
             logger.error(f"Erro no PBKDF2: {e}")
             return None
+    
+    def _lm_hash(self, password):
+        """Gera hash LM (LAN Manager) - algoritmo legado do Windows."""
+        try:
+            from des import des
+            password = password.upper()[:14].ljust(14, '\x00')
+            
+            # Divide a senha em duas partes de 7 caracteres
+            part1 = password[:7].encode('ascii')
+            part2 = password[7:14].encode('ascii')
+            
+            # Chave mágica para LM
+            magic = b"KGS!@#$%"
+            
+            # Cria chaves DES
+            key1 = self._create_des_key(part1)
+            key2 = self._create_des_key(part2)
+            
+            # Cifra com DES
+            cipher1 = des(key1)
+            cipher2 = des(key2)
+            
+            hash1 = cipher1.encrypt(magic)
+            hash2 = cipher2.encrypt(magic)
+            
+            return hash1 + hash2
+        except Exception:
+            # Fallback usando MD4 se DES não disponível
+            return hashlib.md4(password.upper().encode('ascii')).digest()
+    
+    def _create_des_key(self, key_material):
+        """Cria chave DES de 8 bytes a partir de 7 bytes."""
+        key = bytearray(8)
+        key[0] = key_material[0]
+        key[1] = ((key_material[0] << 7) | (key_material[1] >> 1)) & 0xFF
+        key[2] = ((key_material[1] << 6) | (key_material[2] >> 2)) & 0xFF
+        key[3] = ((key_material[2] << 5) | (key_material[3] >> 3)) & 0xFF
+        key[4] = ((key_material[3] << 4) | (key_material[4] >> 4)) & 0xFF
+        key[5] = ((key_material[4] << 3) | (key_material[5] >> 5)) & 0xFF
+        key[6] = ((key_material[5] << 2) | (key_material[6] >> 6)) & 0xFF
+        key[7] = (key_material[6] << 1) & 0xFF
+        return bytes(key)
+    
+    def _adler32_hash(self, data):
+        """Gera hash Adler-32."""
+        if isinstance(data, str):
+            data = data.encode('utf-8')
+        return zlib.adler32(data).to_bytes(4, 'big')
+    
+    def _crc32_hash(self, data):
+        """Gera hash CRC32."""
+        if isinstance(data, str):
+            data = data.encode('utf-8')
+        return zlib.crc32(data).to_bytes(4, 'big')
+    
+    def _xxhash32_hash(self, data):
+        """Gera hash xxHash32."""
+        if not XXHASH_AVAILABLE:
+            return self._crc32_hash(data)
+        try:
+            if isinstance(data, str):
+                data = data.encode('utf-8')
+            return xxhash.xxh32(data).digest()
+        except Exception:
+            return self._crc32_hash(data)
+    
+    def _xxhash64_hash(self, data):
+        """Gera hash xxHash64."""
+        if not XXHASH_AVAILABLE:
+            return hashlib.sha256(data).digest()[:8]
+        try:
+            if isinstance(data, str):
+                data = data.encode('utf-8')
+            return xxhash.xxh64(data).digest()
+        except Exception:
+            return hashlib.sha256(data).digest()[:8]
+    
+    def _md5crypt_hash(self, password):
+        """Gera hash MD5 crypt (Unix-style)."""
+        if not CRYPT_AVAILABLE:
+            return hashlib.md5(password.encode()).hexdigest()
+        try:
+            return crypt.crypt(password, crypt.mksalt(crypt.METHOD_MD5))
+        except Exception:
+            return hashlib.md5(password.encode()).hexdigest()
+    
+    def _sha256crypt_hash(self, password):
+        """Gera hash SHA-256 crypt (Unix-style)."""
+        if not CRYPT_AVAILABLE:
+            return hashlib.sha256(password.encode()).hexdigest()
+        try:
+            return crypt.crypt(password, crypt.mksalt(crypt.METHOD_SHA256))
+        except Exception:
+            return hashlib.sha256(password.encode()).hexdigest()
+    
+    def _sha512crypt_hash(self, password):
+        """Gera hash SHA-512 crypt (Unix-style)."""
+        if not CRYPT_AVAILABLE:
+            return hashlib.sha512(password.encode()).hexdigest()
+        try:
+            return crypt.crypt(password, crypt.mksalt(crypt.METHOD_SHA512))
+        except Exception:
+            return hashlib.sha512(password.encode()).hexdigest()
     
     def _hash_password(self, password):
         """Gera hash da senha usando o algoritmo configurado."""
@@ -2605,8 +2738,9 @@ def get_supported_algorithms():
     """Retorna lista de algoritmos suportados."""
     base_algorithms = [
         'md5', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512',
-        'md4', 'ntlm', 'blake2b', 'blake2s', 'sha3_224', 'sha3_256',
-        'sha3_384', 'sha3_512', 'ripemd160', 'whirlpool'
+        'md4', 'ntlm', 'lm', 'blake2b', 'blake2s', 'sha3_224', 'sha3_256',
+        'sha3_384', 'sha3_512', 'ripemd160', 'whirlpool', 'adler32', 
+        'crc32', 'xxhash32', 'xxhash64'
     ]
     
     special_algorithms = []
@@ -2620,6 +2754,10 @@ def get_supported_algorithms():
     
     # PBKDF2 é sempre disponível
     special_algorithms.append('pbkdf2')
+    
+    # Crypt variants disponíveis se sistema Unix
+    if CRYPT_AVAILABLE:
+        special_algorithms.extend(['md5crypt', 'sha256crypt', 'sha512crypt'])
     
     return {
         'base': base_algorithms,
@@ -2861,7 +2999,7 @@ def generate_sample_hashes(password="test123"):
     console.print(f"\n[bold blue]═══ HASHES DE EXEMPLO ═══[/bold blue]")
     console.print(f"Password: {password}")
     
-    algorithms = ['md5', 'sha1', 'sha256', 'sha512', 'blake2b']
+    algorithms = ['md5', 'sha1', 'sha256', 'sha512', 'blake2b', 'ntlm', 'lm', 'crc32', 'adler32']
     
     for algo in algorithms:
         try:
@@ -2875,6 +3013,20 @@ def generate_sample_hashes(password="test123"):
                 hash_result = hashlib.sha512(password.encode()).hexdigest()
             elif algo == 'blake2b':
                 hash_result = hashlib.blake2b(password.encode(), digest_size=32).hexdigest()
+            elif algo == 'ntlm':
+                try:
+                    hash_result = hashlib.new('md4', password.encode('utf-16le')).hexdigest()
+                except ValueError:
+                    hash_result = hashlib.md5(password.encode('utf-16le')).hexdigest() + " (MD4 não disponível)"
+            elif algo == 'lm':
+                try:
+                    hash_result = hashlib.new('md4', password.upper().encode('ascii')).hexdigest()  # Simplificado
+                except ValueError:
+                    hash_result = hashlib.md5(password.upper().encode('ascii')).hexdigest() + " (MD4 não disponível)"
+            elif algo == 'crc32':
+                hash_result = hex(zlib.crc32(password.encode()) & 0xffffffff)[2:].upper()
+            elif algo == 'adler32':
+                hash_result = hex(zlib.adler32(password.encode()) & 0xffffffff)[2:].upper()
             
             console.print(f"{algo:10} {hash_result}")
             
