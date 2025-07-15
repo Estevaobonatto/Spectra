@@ -80,7 +80,7 @@ Exemplos de uso:
   • Controle granular de workers via CLI (--workers 1-500)
   • Taxa de sucesso e métricas de rate limiting em tempo real
 
-[ Hash Cracker Profissional - Competitivo com HashCat/John + GPU Acceleration ]
+[ Hash Cracker ]
   • Detecção automática de 27+ tipos de hash (MD5, SHA1/256/512, NTLM, bcrypt, LM, CRC32, xxHash)
   • 11 modos de ataque: Dictionary, Brute Force, Mask, Rainbow, Hybrid, Combinator, PRINCE, Toggle Case, Increment, Online
   • Algoritmos seguros: SHA-256/512, SHA-3, BLAKE2B/S, Argon2, scrypt, bcrypt
@@ -152,24 +152,6 @@ Exemplos de uso:
   %(prog)s --rainbow-info md5_1_6_36chars.rt
   %(prog)s -hc d41d8cd98f00b204e9800998ecf8427e --attack-mode rainbow --rainbow-charset "abc123" --rainbow-max-length 4
   %(prog)s -hc 356a192b7913b04c54574d18c28d46e6395428ab --attack-mode all
-
-[ Novos Algoritmos e Ataques Avançados - Atualização v3.4+ ]
-  • Checksums ultra-rápidos (>10M h/s): CRC32, Adler32, xxHash32/64
-  %(prog)s -hc F054A2BB --hash-type crc32 --attack-mode increment --max-length 6
-  %(prog)s -hc ACA0257 --hash-type adler32 --attack-mode brute_force --max-length 5
-  
-  • Windows LM Hash (extremamente fraco - para análise forense):
-  %(prog)s -hc AAD3B435B51404EEAAD3B435B51404EE --hash-type lm --attack-mode dictionary
-  
-  • Unix/Linux Crypt variants ($1$, $5$, $6$):
-  %(prog)s -hc '$6$rounds=5000$salt$hash...' --hash-type sha512crypt --attack-mode dictionary
-  
-  • Novos modos de ataque profissionais:
-  %(prog)s -hc hash --attack-mode hybrid --hash-wordlist base.txt  # Dictionary + mask suffix
-  %(prog)s -hc hash --attack-mode combinator --hash-wordlist words1.txt --wordlist2 words2.txt
-  %(prog)s -hc hash --attack-mode toggle_case --hash-wordlist common.txt  # Case variations
-  %(prog)s -hc hash --attack-mode increment --min-length 1 --max-length 6  # Optimized brute force
-  %(prog)s -hc hash --attack-mode prince --hash-wordlist base.txt --elements-per-chain 4
 
 [ Network Monitor - Análise de Tráfego em Tempo Real ]
   %(prog)s -nm
@@ -657,7 +639,7 @@ Exemplos de uso:
     
     parser.add_argument('--version',
                        action='version',
-                       version='Spectra v3.4.0 - Advanced Hash Cracker Edition (27+ Algorithms)')
+                       version='Spectra v3.3.0 - Advanced Directory Scanner Edition')
     
     return parser
 
