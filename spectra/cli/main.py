@@ -139,6 +139,7 @@ Exemplos de uso:
   %(prog)s -xxe http://upload.example.com/import --xxe-payloads custom_xxe.txt
   %(prog)s -xxe http://rss.example.com/feed --xxe-timeout 20 --workers 15
   %(prog)s -xxe http://secure.example.com/api --xxe-collaborator http://oast.com --verbose
+  %(prog)s -xxe http://enterprise.com/soap --verbose --workers 20 --xxe-timeout 25
 
 [ IDOR Scanner Avançado - Insecure Direct Object Reference ]
   %(prog)s -idor http://site.com/profile?id=123 --idor-range 1-500
@@ -516,6 +517,8 @@ Exemplos de uso:
                        type=int,
                        default=15,
                        help='Timeout para requests XXE em segundos (padrão: 15)')
+    
+
     
     # === IDOR SCANNER ===
     parser.add_argument('-idor', '--idor-scan',
@@ -1266,6 +1269,7 @@ def main():
                 max_workers=args.workers,
                 timeout=args.xxe_timeout,
                 custom_payloads=args.xxe_payloads,
+                verbose=args.verbose,
                 return_findings=True
             ))
             

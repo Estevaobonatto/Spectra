@@ -278,11 +278,12 @@ class XXEScanner:
     
     def __init__(self, target_url: str, collaborator_url: Optional[str] = None,
                  max_workers: int = 10, timeout: int = 15, 
-                 custom_payloads: Optional[str] = None):
+                 custom_payloads: Optional[str] = None, verbose: bool = False):
         self.target_url = target_url.rstrip('/')
         self.collaborator_url = collaborator_url
         self.max_workers = max_workers
         self.timeout = timeout
+        self.verbose = verbose
         self.logger = get_logger(__name__)
         
         # Configurações
@@ -397,6 +398,12 @@ class XXEScanner:
         for path in common_paths:
             endpoints.append(urljoin(self.target_url, path))
         
+        if self.verbose:
+            print_info(f"[VERBOSE] Testando {len(endpoints)} endpoints potenciais para XML:")
+            for endpoint in endpoints:
+                print_info(f"[VERBOSE]   • {endpoint}")
+            print("")
+        
         # Filtra endpoints válidos
         valid_endpoints = []
         
@@ -414,16 +421,27 @@ class XXEScanner:
                 try:
                     async with self.session.get(endpoint) as response:
                         response_text = await response.text()
+                        headers = dict(response.headers)
                         
-                        if self._is_xml_endpoint(endpoint, response_text, dict(response.headers)):
+                        if self._is_xml_endpoint(endpoint, response_text, headers):
                             valid_endpoints.append(endpoint)
                             with self.stats_lock:
                                 self.stats['xml_endpoints_found'] += 1
+                            
+                            if self.verbose:
+                                print_success(f"[VERBOSE] Endpoint XML encontrado: {endpoint}")
+                                print_info(f"[VERBOSE]   • Status: {response.status}")
+                                print_info(f"[VERBOSE]   • Content-Type: {headers.get('content-type', 'N/A')}")
+                                print_info(f"[VERBOSE]   • Content-Length: {len(response_text)} bytes")
+                        elif self.verbose:
+                            print_warning(f"[VERBOSE] Endpoint não processa XML: {endpoint} (Status: {response.status})")
                         
                         with self.stats_lock:
                             self.stats['total_requests'] += 1
                 
                 except Exception as e:
+                    if self.verbose:
+                        print_error(f"[VERBOSE] Erro ao testar {endpoint}: {e}")
                     self.logger.debug(f"Erro ao testar endpoint {endpoint}: {e}")
                 
                 progress.update(task, advance=1)
@@ -594,6 +612,16 @@ class XXEScanner:
         vulnerabilities_found = []
         
         print_info(f"[yellow]Iniciando testes XXE em {len(endpoints)} endpoints com {len(payloads)} payloads...[/yellow]")
+        
+        if self.verbose:
+            print_info("[bold blue]Modo Verbose Ativado - Detalhes Completos:[/bold blue]")
+            print_info(f"  • Workers: {self.max_workers}")
+            print_info(f"  • Timeout: {self.timeout}s")
+            print_info(f"  • Collaborator: {self.collaborator_url or 'Não configurado'}")
+            print_info(f"  • Payloads customizados: {len(self.custom_payloads) if self.custom_payloads else 0}")
+            print_info(f"  • Total de testes: {total_tests}")
+            print("")
+        
         print("")
         
         with Progress(
@@ -637,12 +665,26 @@ class XXEScanner:
                                 self.stats['blind_xxe'] += 1
                             elif 'dos' in result.payload_type:
                                 self.stats['dos_vulnerabilities'] += 1
+                        
+                        # Modo verbose: exibe descobertas em tempo real
+                        if self.verbose:
+                            print_error(f"[VERBOSE] XXE encontrado: {result.vulnerability_type} em {result.url}")
+                            print_info(f"[VERBOSE]   • Payload: {result.payload_type}")
+                            print_info(f"[VERBOSE]   • Status: {result.status_code} | Tempo: {result.response_time:.2f}s")
+                            print_info(f"[VERBOSE]   • Evidência: {result.evidence}")
                 
                 # Atualiza progresso
                 progress.update(task, advance=len(batch))
                 
                 # Acumula vulnerabilidades encontradas
                 vulnerabilities_found.extend(batch_vulnerabilities)
+                
+                # Modo verbose: estatísticas em tempo real
+                if self.verbose and batch_vulnerabilities:
+                    with self.stats_lock:
+                        current_vulns = self.stats['vulnerabilities_found']
+                        current_progress = ((i + len(batch)) / len(tasks)) * 100
+                    print_info(f"[VERBOSE] Progresso: {current_progress:.1f}% | Vulnerabilidades: {current_vulns}")
         
         # Após o progresso, exibe as descobertas de forma organizada
         if vulnerabilities_found:
@@ -982,6 +1024,7 @@ class XXEScanner:
 async def xxe_scan(url: str, collaborator_url: Optional[str] = None,
                    max_workers: int = 10, timeout: int = 15,
                    custom_payloads: Optional[str] = None,
+                   verbose: bool = False,
                    return_findings: bool = False) -> Optional[List[XXEResult]]:
     """
     Executa scan de XXE em uma URL.
@@ -1002,7 +1045,8 @@ async def xxe_scan(url: str, collaborator_url: Optional[str] = None,
         collaborator_url=collaborator_url,
         max_workers=max_workers,
         timeout=timeout,
-        custom_payloads=custom_payloads
+        custom_payloads=custom_payloads,
+        verbose=verbose
     )
     
     results = await scanner.scan()
@@ -1015,3 +1059,4 @@ async def xxe_scan(url: str, collaborator_url: Optional[str] = None,
 def xxe_scan_sync(url: str, **kwargs) -> Optional[List[XXEResult]]:
     """Versão síncrona do scanner XXE."""
     return asyncio.run(xxe_scan(url, **kwargs))
+
