@@ -27,6 +27,7 @@ from ..modules.idor_scanner import idor_scan
 from ..modules.cve_integrator import integrate_cve_data, CVEIntegrator
 from ..modules.hash_cracker import AdvancedHashCracker, crack_hash, detect_hash_type
 from ..modules.network_monitor import network_monitor_interface
+from ..modules.xxe_scanner import xxe_scan
 
 def create_parser():
     """Cria o parser de argumentos da linha de comando."""
@@ -129,7 +130,15 @@ Exemplos de uso:
   %(prog)s -xss http://example.com/form --xss-stored --xss-dom
   %(prog)s -cmdi http://example.com/cmd --cmdi-level 3
   %(prog)s -lfi http://example.com/file?name=test
+  %(prog)s -xxe http://example.com/api --xxe-collaborator http://your-server.com
   %(prog)s -idor http://example.com/user/123 --idor-range 1-1000 --test-uuid --test-hash
+
+[ XXE Scanner Avançado - XML External Entity ]
+  %(prog)s -xxe http://api.example.com/xml
+  %(prog)s -xxe http://soap.example.com/service --xxe-collaborator http://collaborator.com
+  %(prog)s -xxe http://upload.example.com/import --xxe-payloads custom_xxe.txt
+  %(prog)s -xxe http://rss.example.com/feed --xxe-timeout 20 --workers 15
+  %(prog)s -xxe http://secure.example.com/api --xxe-collaborator http://oast.com --verbose
 
 [ IDOR Scanner Avançado - Insecure Direct Object Reference ]
   %(prog)s -idor http://site.com/profile?id=123 --idor-range 1-500
@@ -489,6 +498,24 @@ Exemplos de uso:
                        type=int,
                        default=10,
                        help='Profundidade de path traversal para LFI (padrão: 10)')
+    
+    # === XXE SCANNER ===
+    parser.add_argument('-xxe', '--xxe-scan',
+                       metavar='URL',
+                       help='Executa scan de XXE (XML External Entity)')
+    
+    parser.add_argument('--xxe-collaborator',
+                       metavar='URL',
+                       help='URL do servidor OAST para detecção de Blind XXE')
+    
+    parser.add_argument('--xxe-payloads',
+                       metavar='FILE',
+                       help='Arquivo com payloads XXE customizados')
+    
+    parser.add_argument('--xxe-timeout',
+                       type=int,
+                       default=15,
+                       help='Timeout para requests XXE em segundos (padrão: 15)')
     
     # === IDOR SCANNER ===
     parser.add_argument('-idor', '--idor-scan',
@@ -1227,6 +1254,41 @@ def main():
                 stop_on_first=args.lfi_stop_first
             )
         
+        # === XXE SCANNER ===
+        elif args.xxe_scan:
+            print_info(f"Executando scan de XXE em: {args.xxe_scan}")
+            
+            import asyncio
+            
+            results = asyncio.run(xxe_scan(
+                url=args.xxe_scan,
+                collaborator_url=args.xxe_collaborator,
+                max_workers=args.workers,
+                timeout=args.xxe_timeout,
+                custom_payloads=args.xxe_payloads,
+                return_findings=True
+            ))
+            
+            # Converte resultados para formato padrão do Spectra
+            if results:
+                formatted_results = []
+                for result in results:
+                    formatted_results.append({
+                        'Risco': result.severity,
+                        'Tipo': f'XXE - {result.vulnerability_type}',
+                        'Detalhe': f'{result.evidence} em {result.url}',
+                        'Recomendação': result.recommendation,
+                        'URL': result.url,
+                        'Método': result.method,
+                        'Parâmetro': result.parameter,
+                        'Payload': result.payload[:100] + '...' if len(result.payload) > 100 else result.payload,
+                        'Status Code': result.status_code,
+                        'Response Time': f'{result.response_time:.2f}s'
+                    })
+                results = formatted_results
+            else:
+                results = []
+        
         # === IDOR SCANNER ===
         elif args.idor_scan:
             print_info(f"Executando scan de IDOR em: {args.idor_scan}")
@@ -1709,6 +1771,9 @@ def main():
                 elif args.lfi_scan:
                     scan_type = "LFI/RFI"
                     target_url = args.lfi_scan
+                elif args.xxe_scan:
+                    scan_type = "XXE"
+                    target_url = args.xxe_scan
                 elif args.idor_scan:
                     scan_type = "IDOR"
                     target_url = args.idor_scan
