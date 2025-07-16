@@ -38,6 +38,48 @@ from ..core.logger import get_logger
 from ..utils.network import create_session
 
 
+class DevelopmentWarningManager:
+    """Gerencia avisos sobre status de desenvolvimento do módulo IDOR."""
+    
+    @staticmethod
+    def show_development_warning(verbose: bool = False):
+        """Exibe aviso de desenvolvimento com detalhes baseados no modo verbose."""
+        console.print("\n" + "⚠️ " * 20)
+        console.print("[bold yellow]AVISO: MÓDULO EM DESENVOLVIMENTO[/bold yellow]")
+        console.print("⚠️ " * 20)
+        
+        console.print("\n[yellow]O Scanner IDOR está em desenvolvimento ativo e pode apresentar:[/yellow]")
+        console.print("  • [red]Falsos positivos[/red] - Vulnerabilidades reportadas incorretamente")
+        console.print("  • [red]Falsos negativos[/red] - Vulnerabilidades não detectadas")
+        console.print("  • [yellow]Instabilidade[/yellow] - Comportamento inconsistente em alguns cenários")
+        
+        console.print("\n[cyan]RECOMENDAÇÕES IMPORTANTES:[/cyan]")
+        console.print("  ✓ [green]Sempre valide manualmente[/green] os resultados encontrados")
+        console.print("  ✓ [green]Use em ambiente de teste[/green] antes de produção")
+        console.print("  ✓ [green]Reporte bugs e problemas[/green] para melhorar o módulo")
+        
+        if verbose:
+            console.print("\n[dim]DETALHES TÉCNICOS (Modo Verbose):[/dim]")
+            console.print("  • [dim]Análise de resposta pode ser imprecisa em alguns casos[/dim]")
+            console.print("  • [dim]Detecção de dados sensíveis usa padrões heurísticos[/dim]")
+            console.print("  • [dim]Rate limiting pode não ser ideal para todos os targets[/dim]")
+            console.print("  • [dim]Classificação de severidade é baseada em indicadores simples[/dim]")
+        
+        console.print("\n[green]Continue apenas se você entende essas limitações.[/green]")
+        console.print("=" * 60 + "\n")
+    
+    @staticmethod
+    def show_post_scan_recommendations():
+        """Mostra recomendações após o scan."""
+        console.print("\n[cyan]📋 PRÓXIMOS PASSOS RECOMENDADOS:[/cyan]")
+        console.print("  1. [yellow]Valide manualmente[/yellow] cada vulnerabilidade encontrada")
+        console.print("  2. [yellow]Teste os payloads[/yellow] em ambiente controlado")
+        console.print("  3. [yellow]Documente os achados[/yellow] com evidências adicionais")
+        console.print("  4. [yellow]Considere usar outras ferramentas[/yellow] para confirmação")
+        console.print("  5. [yellow]Reporte falsos positivos[/yellow] para melhorar o scanner")
+        console.print("")
+
+
 class Severity(Enum):
     """Enum para níveis de severidade."""
     CRITICAL = "CRÍTICA"
@@ -428,7 +470,7 @@ class AdvancedIDORScanner:
                  custom_wordlist: Optional[str] = None, max_workers: int = 10, 
                  delay: float = 0.1, session_cookies: Optional[Dict[str, str]] = None,
                  auth_headers: Optional[Dict[str, str]] = None, 
-                 respect_robots: bool = True, deep_scan: bool = False):
+                 respect_robots: bool = True, deep_scan: bool = False, verbose: bool = False):
         self.base_url = self._validate_url(base_url)
         self.session = create_session()
         self.vulnerable_endpoints = []
@@ -440,6 +482,11 @@ class AdvancedIDORScanner:
         self.delay = delay
         self.respect_robots = respect_robots
         self.deep_scan = deep_scan
+        self.verbose = verbose
+        
+        # Otimizações de performance
+        import os
+        self.max_workers = min(max_workers, os.cpu_count() * 2, 50)  # Limita workers baseado no sistema
         
         # Configurações avançadas
         self.test_negative_ids = True
@@ -649,7 +696,8 @@ class AdvancedIDORScanner:
                 with open(self.custom_wordlist, 'r', encoding='utf-8') as f:
                     custom_ids = [line.strip() for line in f if line.strip()]
                     test_ids.update(custom_ids[:1000])  # Limite de 1000 IDs
-                    print_info(f"Carregados {len(custom_ids[:1000])} IDs da wordlist customizada")
+                    if self.verbose:
+                        print_info(f"Carregados {len(custom_ids[:1000])} IDs da wordlist customizada")
             except Exception as e:
                 print_warning(f"Erro ao carregar wordlist: {e}")
         
@@ -1165,7 +1213,7 @@ class AdvancedIDORScanner:
         # Agrupa vulnerabilidades por severidade
         by_severity = defaultdict(list)
         for vuln in vulnerabilities:
-            by_severity[vuln['severity']].append(vuln)
+            by_severity[vuln.severity.value].append(vuln)
         
         # Exibe estatísticas gerais
         console.print("\n" + "="*60)
@@ -1208,18 +1256,18 @@ class AdvancedIDORScanner:
                 vuln_table.add_column("Indicadores", style="red", max_width=40)
                 
                 for vuln in by_severity[severity][:10]:  # Mostra até 10 por severidade
-                    param_info = vuln.get('parameter', f"Path pos {vuln.get('path_position', 'N/A')}")
-                    indicators_text = "; ".join(vuln['indicators'][:3])  # Primeiros 3 indicadores
-                    if len(vuln['indicators']) > 3:
+                    param_info = vuln.parameter or vuln.header_name or vuln.cookie_name or f"Path pos {vuln.path_position or 'N/A'}"
+                    indicators_text = "; ".join(vuln.indicators[:3])  # Primeiros 3 indicadores
+                    if len(vuln.indicators) > 3:
                         indicators_text += "..."
                     
                     vuln_table.add_row(
-                        vuln['url'][:47] + "..." if len(vuln['url']) > 50 else vuln['url'],
-                        vuln['method'],
+                        vuln.url[:47] + "..." if len(vuln.url) > 50 else vuln.url,
+                        vuln.method,
                         param_info,
-                        str(vuln.get('original_value', 'N/A'))[:15],
-                        str(vuln['test_value'])[:15],
-                        str(vuln['status_code']),
+                        str(vuln.original_value or 'N/A')[:15],
+                        str(vuln.test_value)[:15],
+                        str(vuln.status_code),
                         indicators_text
                     )
                 
@@ -1230,58 +1278,87 @@ class AdvancedIDORScanner:
 
     def scan(self) -> List[VulnerabilityInfo]:
         """Executa o scan IDOR completo com técnicas avançadas."""
+        # Exibe aviso de desenvolvimento
+        DevelopmentWarningManager.show_development_warning(verbose=self.verbose)
+        
         print_info(f"Iniciando scan IDOR avançado em: [bold cyan]{self.base_url}[/bold cyan]")
         
         # Gera IDs para teste
         test_ids = self._generate_test_ids()
         print_info(f"Gerados [bold cyan]{len(test_ids)}[/bold cyan] IDs para teste")
         
+        if self.verbose:
+            print_info(f"Configurações do scan:")
+            console.print(f"  [dim cyan]→[/dim cyan] [dim]Workers: {self.max_workers}[/dim]")
+            console.print(f"  [dim cyan]→[/dim cyan] [dim]Delay: {self.delay}s[/dim]")
+            console.print(f"  [dim cyan]→[/dim cyan] [dim]Range: {self.enumerate_range[0]}-{self.enumerate_range[1]}[/dim]")
+            console.print(f"  [dim cyan]→[/dim cyan] [dim]UUID: {'Sim' if self.test_uuid else 'Não'}[/dim]")
+            console.print(f"  [dim cyan]→[/dim cyan] [dim]Hash: {'Sim' if self.test_hash else 'Não'}[/dim]")
+            console.print(f"  [dim cyan]→[/dim cyan] [dim]Deep Scan: {'Sim' if self.deep_scan else 'Não'}[/dim]")
+            console.print(f"  [dim cyan]→[/dim cyan] [dim]Robots.txt: {'Respeitado' if self.respect_robots else 'Ignorado'}[/dim]")
+        
         all_vulnerabilities = []
         
         # Estabelece baseline
-        print_info("Estabelecendo baseline de respostas...")
+        if self.verbose:
+            print_info("Estabelecendo baseline de respostas...")
         self._establish_baseline()
         
         # Testa parâmetros da URL
         url_params = self._extract_parameters_from_url(self.base_url)
         if url_params:
-            print_info(f"Encontrados [bold cyan]{len(url_params)}[/bold cyan] parâmetros para teste")
+            if self.verbose:
+                print_info(f"Encontrados [bold cyan]{len(url_params)}[/bold cyan] parâmetros para teste")
             
             for param_name, original_value in url_params:
-                print_info(f"Testando parâmetro: [bold yellow]{param_name}[/bold yellow]")
+                if self.verbose:
+                    print_info(f"Testando parâmetro: [bold yellow]{param_name}[/bold yellow]")
                 param_vulns = self._test_parameter_idor(self.base_url, param_name, original_value, test_ids)
                 all_vulnerabilities.extend(param_vulns)
         
         # Testa IDs no path
         path_ids = self._extract_path_ids(self.base_url)
         if path_ids:
-            print_info(f"Encontrados [bold cyan]{len(path_ids)}[/bold cyan] IDs no path para teste")
+            if self.verbose:
+                print_info(f"Encontrados [bold cyan]{len(path_ids)}[/bold cyan] IDs no path para teste")
             path_vulns = self._test_path_idor(self.base_url, path_ids, test_ids)
             all_vulnerabilities.extend(path_vulns)
         
-        # Testa headers se habilitado
-        if self.test_header_injection:
-            print_info("Testando injeção de headers...")
+        # Testa headers se habilitado (apenas em deep scan para evitar travamento)
+        if self.test_header_injection and self.deep_scan:
+            if self.verbose:
+                print_info("Testando injeção de headers...")
             header_vulns = self._test_header_injection(self.base_url, test_ids)
             all_vulnerabilities.extend(header_vulns)
+        elif self.test_header_injection and self.verbose:
+            print_info("Teste de headers pulado (use --deep-scan para ativar)")
         
-        # Testa cookies se habilitado
-        if self.test_cookie_manipulation:
-            print_info("Testando manipulação de cookies...")
+        # Testa cookies se habilitado (apenas em deep scan para evitar travamento)
+        if self.test_cookie_manipulation and self.deep_scan:
+            if self.verbose:
+                print_info("Testando manipulação de cookies...")
             cookie_vulns = self._test_cookie_manipulation(self.base_url, test_ids)
             all_vulnerabilities.extend(cookie_vulns)
+        elif self.test_cookie_manipulation and self.verbose:
+            print_info("Teste de cookies pulado (use --deep-scan para ativar)")
         
-        # Testa falhas lógicas
-        if self.test_logic_flaws:
-            print_info("Testando falhas lógicas...")
+        # Testa falhas lógicas (apenas em deep scan para evitar travamento)
+        if self.test_logic_flaws and self.deep_scan:
+            if self.verbose:
+                print_info("Testando falhas lógicas...")
             logic_vulns = self._test_logic_flaws(self.base_url, test_ids)
             all_vulnerabilities.extend(logic_vulns)
+        elif self.test_logic_flaws and self.verbose:
+            print_info("Teste de falhas lógicas pulado (use --deep-scan para ativar)")
         
-        # Testa técnicas de bypass
-        if self.test_bypass_techniques:
-            print_info("Testando técnicas de bypass...")
+        # Testa técnicas de bypass (apenas em deep scan para evitar travamento)
+        if self.test_bypass_techniques and self.deep_scan:
+            if self.verbose:
+                print_info("Testando técnicas de bypass...")
             bypass_vulns = self._test_bypass_techniques(self.base_url, test_ids)
             all_vulnerabilities.extend(bypass_vulns)
+        elif self.test_bypass_techniques and self.verbose:
+            print_info("Teste de bypass pulado (use --deep-scan para ativar)")
         
         if not url_params and not path_ids:
             print_warning("Nenhum parâmetro ou ID identificado na URL para teste IDOR")
@@ -1292,6 +1369,10 @@ class AdvancedIDORScanner:
         
         # Exibe resultados
         self._display_results(filtered_vulnerabilities)
+        
+        # Mostra recomendações pós-scan
+        if filtered_vulnerabilities:
+            DevelopmentWarningManager.show_post_scan_recommendations()
         
         # Salva vulnerabilidades para uso posterior
         self.vulnerable_endpoints = filtered_vulnerabilities
@@ -1324,30 +1405,45 @@ class AdvancedIDORScanner:
         
         baseline_response = self._make_request(url)
         
-        for header_name in id_headers:
-            for test_id in test_ids[:100]:  # Limita para evitar overhead
-                headers = {header_name: str(test_id)}
-                response = self._make_request(url, headers=headers)
-                
-                if response:
-                    is_vulnerable, indicators, confidence = self._analyze_response(
-                        response, test_id, baseline_response, IDORTechnique.MIXED
-                    )
+        # Limita IDs para evitar overhead excessivo
+        limited_test_ids = test_ids[:10]  # Reduz de 100 para 10 IDs
+        total_tests = len(id_headers) * len(limited_test_ids)
+        
+        if self.verbose:
+            print_info(f"Testando {len(id_headers)} headers com {len(limited_test_ids)} IDs cada ({total_tests} testes)")
+        
+        with create_progress() as progress:
+            task = progress.add_task(
+                f"[cyan]Testando headers...", 
+                total=total_tests
+            )
+            
+            for header_name in id_headers:
+                for test_id in limited_test_ids:
+                    headers = {header_name: str(test_id)}
+                    response = self._make_request(url, headers=headers)
                     
-                    if is_vulnerable:
-                        vuln_info = VulnerabilityInfo(
-                            url=url,
-                            method='GET',
-                            technique=IDORTechnique.MIXED,
-                            header_name=header_name,
-                            test_value=test_id,
-                            status_code=response.status_code,
-                            response_size=len(response.content),
-                            indicators=indicators,
-                            confidence=confidence,
-                            severity=self._calculate_severity(indicators, confidence)
+                    if response:
+                        is_vulnerable, indicators, confidence = self._analyze_response(
+                            response, test_id, baseline_response, IDORTechnique.MIXED
                         )
-                        vulnerabilities.append(vuln_info)
+                        
+                        if is_vulnerable:
+                            vuln_info = VulnerabilityInfo(
+                                url=url,
+                                method='GET',
+                                technique=IDORTechnique.MIXED,
+                                header_name=header_name,
+                                test_value=test_id,
+                                status_code=response.status_code,
+                                response_size=len(response.content),
+                                indicators=indicators,
+                                confidence=confidence,
+                                severity=self._calculate_severity(indicators, confidence)
+                            )
+                            vulnerabilities.append(vuln_info)
+                    
+                    progress.advance(task)
         
         return vulnerabilities
 
@@ -1363,36 +1459,51 @@ class AdvancedIDORScanner:
         
         baseline_response = self._make_request(url)
         
-        for cookie_name in id_cookies:
-            for test_id in test_ids[:50]:  # Limita para cookies
-                # Adiciona cookie temporariamente
-                original_cookies = self.session.cookies.copy()
-                self.session.cookies[cookie_name] = str(test_id)
-                
-                response = self._make_request(url)
-                
-                # Restaura cookies originais
-                self.session.cookies = original_cookies
-                
-                if response:
-                    is_vulnerable, indicators, confidence = self._analyze_response(
-                        response, test_id, baseline_response, IDORTechnique.MIXED
-                    )
+        # Limita IDs para evitar overhead excessivo
+        limited_test_ids = test_ids[:5]  # Reduz de 50 para 5 IDs
+        total_tests = len(id_cookies) * len(limited_test_ids)
+        
+        if self.verbose:
+            print_info(f"Testando {len(id_cookies)} cookies com {len(limited_test_ids)} IDs cada ({total_tests} testes)")
+        
+        with create_progress() as progress:
+            task = progress.add_task(
+                f"[cyan]Testando cookies...", 
+                total=total_tests
+            )
+            
+            for cookie_name in id_cookies:
+                for test_id in limited_test_ids:
+                    # Adiciona cookie temporariamente
+                    original_cookies = self.session.cookies.copy()
+                    self.session.cookies[cookie_name] = str(test_id)
                     
-                    if is_vulnerable:
-                        vuln_info = VulnerabilityInfo(
-                            url=url,
-                            method='GET',
-                            technique=IDORTechnique.MIXED,
-                            cookie_name=cookie_name,
-                            test_value=test_id,
-                            status_code=response.status_code,
-                            response_size=len(response.content),
-                            indicators=indicators,
-                            confidence=confidence,
-                            severity=self._calculate_severity(indicators, confidence)
+                    response = self._make_request(url)
+                    
+                    # Restaura cookies originais
+                    self.session.cookies = original_cookies
+                    
+                    if response:
+                        is_vulnerable, indicators, confidence = self._analyze_response(
+                            response, test_id, baseline_response, IDORTechnique.MIXED
                         )
-                        vulnerabilities.append(vuln_info)
+                        
+                        if is_vulnerable:
+                            vuln_info = VulnerabilityInfo(
+                                url=url,
+                                method='GET',
+                                technique=IDORTechnique.MIXED,
+                                cookie_name=cookie_name,
+                                test_value=test_id,
+                                status_code=response.status_code,
+                                response_size=len(response.content),
+                                indicators=indicators,
+                                confidence=confidence,
+                                severity=self._calculate_severity(indicators, confidence)
+                            )
+                            vulnerabilities.append(vuln_info)
+                    
+                    progress.advance(task)
         
         return vulnerabilities
 
@@ -1597,7 +1708,8 @@ def idor_scan(url: str, enumerate_range: Optional[Tuple[int, int]] = None,
               delay: float = 0.1, session_cookies: Optional[Dict[str, str]] = None,
               auth_headers: Optional[Dict[str, str]] = None, 
               respect_robots: bool = True, deep_scan: bool = False,
-              export_format: Optional[str] = None, output_file: Optional[str] = None) -> List[VulnerabilityInfo]:
+              verbose: bool = False, export_format: Optional[str] = None, 
+              output_file: Optional[str] = None) -> List[VulnerabilityInfo]:
     """Função principal para executar scan IDOR avançado."""
     try:
         scanner = AdvancedIDORScanner(
@@ -1611,7 +1723,8 @@ def idor_scan(url: str, enumerate_range: Optional[Tuple[int, int]] = None,
             session_cookies=session_cookies,
             auth_headers=auth_headers,
             respect_robots=respect_robots,
-            deep_scan=deep_scan
+            deep_scan=deep_scan,
+            verbose=verbose
         )
         
         # Limpa cache para garantir execução consistente
