@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-Unit tests for module metadata system
+Tests for module metadata system
 """
 
 import pytest
 from spectra.core.module_metadata import (
-    ModuleMetadata, Parameter, Example, UseCase,
-    ModuleCategory, ParameterType, MetadataValidator,
-    ValidationResult, ValidationReport
+    ModuleMetadata, Parameter, Example, UseCase, ModuleCategory,
+    ParameterType, ExampleLevel, MetadataValidator, ValidationResult
 )
 
 
@@ -17,18 +16,28 @@ class TestParameter:
     def test_parameter_creation(self):
         """Test basic parameter creation"""
         param = Parameter(
-            name="test-param",
-            description="Test parameter",
+            name="port-scan",
+            short_name="ps",
+            description="Execute port scan on target",
             param_type=ParameterType.STRING,
             required=True
         )
         
-        assert param.name == "test-param"
-        assert param.description == "Test parameter"
+        assert param.name == "port-scan"
+        assert param.short_name == "ps"
+        assert param.description == "Execute port scan on target"
         assert param.param_type == ParameterType.STRING
         assert param.required is True
-        assert param.examples == []
-        assert param.depends_on == []
+    
+    def test_parameter_validation(self):
+        """Test parameter validation"""
+        # Empty name should raise error
+        with pytest.raises(ValueError, match="Parameter name cannot be empty"):
+            Parameter(name="", description="Test")
+        
+        # Empty description should raise error
+        with pytest.raises(ValueError, match="must have a description"):
+            Parameter(name="test", description="")
     
     def test_parameter_with_choices(self):
         """Test parameter with choices"""
@@ -42,18 +51,6 @@ class TestParameter:
         
         assert param.choices == ["tcp", "udp", "syn"]
         assert param.default_value == "tcp"
-    
-    def test_parameter_with_dependencies(self):
-        """Test parameter with dependencies"""
-        param = Parameter(
-            name="advanced-scan",
-            description="Advanced scanning options",
-            depends_on=["scan-type"],
-            conflicts_with=["quick-scan"]
-        )
-        
-        assert "scan-type" in param.depends_on
-        assert "quick-scan" in param.conflicts_with
 
 
 class TestExample:
@@ -63,345 +60,357 @@ class TestExample:
         """Test basic example creation"""
         example = Example(
             title="Basic Port Scan",
-            description="Scan common ports on a target",
+            description="Scan common ports on target",
             command="spectra -ps example.com",
-            level="basic"
+            level=ExampleLevel.BASIC
         )
         
         assert example.title == "Basic Port Scan"
-        assert example.level == "basic"
-        assert example.prerequisites == []
+        assert example.description == "Scan common ports on target"
+        assert example.command == "spectra -ps example.com"
+        assert example.level == ExampleLevel.BASIC
     
-    def test_example_with_prerequisites(self):
-        """Test example with prerequisites"""
-        example = Example(
-            title="Advanced Scan",
-            description="Advanced scanning with wordlist",
-            command="spectra -ds https://example.com -w wordlist.txt",
-            level="advanced",
-            prerequisites=["wordlist.txt file", "target accessible"]
+    def test_example_validation(self):
+        """Test example validation"""
+        # Empty title should raise error
+        with pytest.raises(ValueError, match="Example title cannot be empty"):
+            Example(title="", description="Test", command="test")
+        
+        # Empty description should raise error
+        with pytest.raises(ValueError, match="Example description cannot be empty"):
+            Example(title="Test", description="", command="test")
+        
+        # Empty command should raise error
+        with pytest.raises(ValueError, match="Example command cannot be empty"):
+            Example(title="Test", description="Test", command="")
+
+
+class TestUseCase:
+    """Test UseCase class"""
+    
+    def test_use_case_creation(self):
+        """Test basic use case creation"""
+        use_case = UseCase(
+            title="Network Reconnaissance",
+            description="Discover open ports and services",
+            scenario="When you need to assess network security",
+            steps=["Run port scan", "Analyze results", "Generate report"]
         )
         
-        assert len(example.prerequisites) == 2
-        assert "wordlist.txt file" in example.prerequisites
+        assert use_case.title == "Network Reconnaissance"
+        assert use_case.description == "Discover open ports and services"
+        assert use_case.scenario == "When you need to assess network security"
+        assert len(use_case.steps) == 3
+    
+    def test_use_case_validation(self):
+        """Test use case validation"""
+        # Empty title should raise error
+        with pytest.raises(ValueError, match="Use case title cannot be empty"):
+            UseCase(title="", description="Test", scenario="Test")
+        
+        # Empty description should raise error
+        with pytest.raises(ValueError, match="Use case description cannot be empty"):
+            UseCase(title="Test", description="", scenario="Test")
 
 
 class TestModuleMetadata:
     """Test ModuleMetadata class"""
     
-    def create_sample_metadata(self):
-        """Create sample metadata for testing"""
-        return ModuleMetadata(
-            name="test_scanner",
-            display_name="Test Scanner",
+    def test_module_metadata_creation(self):
+        """Test basic module metadata creation"""
+        metadata = ModuleMetadata(
+            name="port_scanner",
+            display_name="Port Scanner",
             category=ModuleCategory.RECONNAISSANCE,
-            description="A test scanner module",
-            detailed_description="This is a detailed description of the test scanner module",
-            parameters=[
-                Parameter(
-                    name="target",
-                    description="Target to scan",
-                    param_type=ParameterType.STRING,
-                    required=True
-                ),
-                Parameter(
-                    name="port",
-                    short_name="p",
-                    description="Port to scan",
-                    param_type=ParameterType.PORT,
-                    default_value=80
-                )
-            ],
-            examples=[
-                Example(
-                    title="Basic Scan",
-                    description="Basic scanning example",
-                    command="spectra --test-scanner example.com",
-                    level="basic"
-                )
-            ]
+            description="Advanced port scanning capabilities"
         )
-    
-    def test_metadata_creation(self):
-        """Test basic metadata creation"""
-        metadata = self.create_sample_metadata()
         
-        assert metadata.name == "test_scanner"
+        assert metadata.name == "port_scanner"
+        assert metadata.display_name == "Port Scanner"
         assert metadata.category == ModuleCategory.RECONNAISSANCE
-        assert len(metadata.parameters) == 2
-        assert len(metadata.examples) == 1
+        assert metadata.description == "Advanced port scanning capabilities"
+    
+    def test_module_metadata_validation(self):
+        """Test module metadata validation"""
+        # Empty name should raise error
+        with pytest.raises(ValueError, match="Module name cannot be empty"):
+            ModuleMetadata(
+                name="",
+                display_name="Test",
+                category=ModuleCategory.RECONNAISSANCE,
+                description="Test"
+            )
+        
+        # Invalid category should raise error
+        with pytest.raises(ValueError, match="Module category must be a ModuleCategory enum"):
+            ModuleMetadata(
+                name="test",
+                display_name="Test",
+                category="invalid",  # type: ignore
+                description="Test"
+            )
     
     def test_get_parameter(self):
         """Test parameter retrieval"""
-        metadata = self.create_sample_metadata()
+        param1 = Parameter(name="port-scan", short_name="ps", description="Port scan")
+        param2 = Parameter(name="verbose", short_name="v", description="Verbose output")
         
-        # Test by full name
-        param = metadata.get_parameter("target")
-        assert param is not None
-        assert param.name == "target"
+        metadata = ModuleMetadata(
+            name="test_module",
+            display_name="Test Module",
+            category=ModuleCategory.RECONNAISSANCE,
+            description="Test module",
+            parameters=[param1, param2]
+        )
         
-        # Test by short name
-        param = metadata.get_parameter("p")
-        assert param is not None
-        assert param.name == "port"
+        # Test retrieval by full name
+        found_param = metadata.get_parameter("port-scan")
+        assert found_param is not None
+        assert found_param.name == "port-scan"
+        
+        # Test retrieval by short name
+        found_param = metadata.get_parameter("v")
+        assert found_param is not None
+        assert found_param.name == "verbose"
         
         # Test non-existent parameter
-        param = metadata.get_parameter("nonexistent")
-        assert param is None
-    
-    def test_get_required_parameters(self):
-        """Test required parameter filtering"""
-        metadata = self.create_sample_metadata()
-        required = metadata.get_required_parameters()
-        
-        assert len(required) == 1
-        assert required[0].name == "target"
-    
-    def test_get_optional_parameters(self):
-        """Test optional parameter filtering"""
-        metadata = self.create_sample_metadata()
-        optional = metadata.get_optional_parameters()
-        
-        assert len(optional) == 1
-        assert optional[0].name == "port"
+        found_param = metadata.get_parameter("nonexistent")
+        assert found_param is None
     
     def test_get_examples_by_level(self):
         """Test example filtering by level"""
-        metadata = self.create_sample_metadata()
-        
-        # Add more examples
-        metadata.examples.append(
-            Example(
-                title="Advanced Scan",
-                description="Advanced example",
-                command="spectra --test-scanner example.com --advanced",
-                level="advanced"
-            )
+        basic_example = Example(
+            title="Basic", description="Basic usage", command="test", level=ExampleLevel.BASIC
+        )
+        advanced_example = Example(
+            title="Advanced", description="Advanced usage", command="test", level=ExampleLevel.ADVANCED
         )
         
-        basic_examples = metadata.get_examples_by_level("basic")
-        advanced_examples = metadata.get_examples_by_level("advanced")
+        metadata = ModuleMetadata(
+            name="test_module",
+            display_name="Test Module",
+            category=ModuleCategory.RECONNAISSANCE,
+            description="Test module",
+            examples=[basic_example, advanced_example]
+        )
         
+        basic_examples = metadata.get_examples_by_level(ExampleLevel.BASIC)
         assert len(basic_examples) == 1
-        assert len(advanced_examples) == 1
-        assert basic_examples[0].title == "Basic Scan"
-    
-    def test_validate_parameter_dependencies(self):
-        """Test parameter dependency validation"""
-        metadata = self.create_sample_metadata()
+        assert basic_examples[0].title == "Basic"
         
-        # Add parameter with invalid dependency
-        metadata.parameters.append(
-            Parameter(
-                name="advanced-option",
-                description="Advanced option",
-                depends_on=["nonexistent-param"]
-            )
+        advanced_examples = metadata.get_examples_by_level(ExampleLevel.ADVANCED)
+        assert len(advanced_examples) == 1
+        assert advanced_examples[0].title == "Advanced"
+    
+    def test_required_optional_parameters(self):
+        """Test required and optional parameter filtering"""
+        required_param = Parameter(name="target", description="Target host", required=True)
+        optional_param = Parameter(name="verbose", description="Verbose output", required=False)
+        
+        metadata = ModuleMetadata(
+            name="test_module",
+            display_name="Test Module",
+            category=ModuleCategory.RECONNAISSANCE,
+            description="Test module",
+            parameters=[required_param, optional_param]
         )
         
-        issues = metadata.validate_parameter_dependencies()
-        assert len(issues) == 1
-        assert "nonexistent-param" in issues[0]
+        required_params = metadata.get_required_parameters()
+        assert len(required_params) == 1
+        assert required_params[0].name == "target"
+        
+        optional_params = metadata.get_optional_parameters()
+        assert len(optional_params) == 1
+        assert optional_params[0].name == "verbose"
     
-    def test_to_dict(self):
-        """Test dictionary conversion"""
-        metadata = self.create_sample_metadata()
+    def test_to_dict_conversion(self):
+        """Test conversion to dictionary"""
+        param = Parameter(name="test-param", description="Test parameter")
+        example = Example(title="Test", description="Test example", command="test command")
+        
+        metadata = ModuleMetadata(
+            name="test_module",
+            display_name="Test Module",
+            category=ModuleCategory.RECONNAISSANCE,
+            description="Test module",
+            parameters=[param],
+            examples=[example]
+        )
+        
         data = metadata.to_dict()
         
-        assert data['name'] == "test_scanner"
+        assert data['name'] == "test_module"
+        assert data['display_name'] == "Test Module"
         assert data['category'] == "reconnaissance"
-        assert len(data['parameters']) == 2
+        assert len(data['parameters']) == 1
         assert len(data['examples']) == 1
+        assert data['parameters'][0]['name'] == "test-param"
+        assert data['examples'][0]['title'] == "Test"
+    
+    def test_from_dict_conversion(self):
+        """Test creation from dictionary"""
+        data = {
+            'name': 'test_module',
+            'display_name': 'Test Module',
+            'category': 'reconnaissance',
+            'description': 'Test module',
+            'parameters': [
+                {
+                    'name': 'test-param',
+                    'description': 'Test parameter',
+                    'type': 'string',
+                    'required': False
+                }
+            ],
+            'examples': [
+                {
+                    'title': 'Test Example',
+                    'description': 'Test description',
+                    'command': 'test command',
+                    'level': 'basic'
+                }
+            ],
+            'use_cases': []
+        }
         
-        # Check parameter structure
-        param_data = data['parameters'][0]
-        assert 'name' in param_data
-        assert 'description' in param_data
-        assert 'type' in param_data
+        metadata = ModuleMetadata.from_dict(data)
+        
+        assert metadata.name == "test_module"
+        assert metadata.display_name == "Test Module"
+        assert metadata.category == ModuleCategory.RECONNAISSANCE
+        assert len(metadata.parameters) == 1
+        assert len(metadata.examples) == 1
+        assert metadata.parameters[0].name == "test-param"
+        assert metadata.examples[0].title == "Test Example"
 
 
 class TestMetadataValidator:
     """Test MetadataValidator class"""
     
-    def create_valid_metadata(self):
-        """Create valid metadata for testing"""
-        return ModuleMetadata(
-            name="valid_scanner",
-            display_name="Valid Scanner",
+    def test_valid_metadata(self):
+        """Test validation of valid metadata"""
+        validator = MetadataValidator()
+        
+        metadata = ModuleMetadata(
+            name="port_scanner",
+            display_name="Port Scanner",
             category=ModuleCategory.RECONNAISSANCE,
-            description="A valid scanner module for testing",
-            detailed_description="This is a detailed description of the valid scanner module that provides comprehensive information about its functionality",
+            description="Advanced port scanning tool for network reconnaissance",
+            detailed_description="This module provides comprehensive port scanning capabilities with multiple scan types and advanced features.",
+            version="1.0.0",
+            cli_command="-ps",
             parameters=[
                 Parameter(
                     name="target",
-                    description="Target hostname or IP address to scan",
-                    param_type=ParameterType.STRING,
+                    short_name="t",
+                    description="Target host or IP address to scan",
                     required=True,
                     examples=["example.com", "192.168.1.1"]
-                ),
-                Parameter(
-                    name="port",
-                    short_name="p",
-                    description="Port number to scan",
-                    param_type=ParameterType.PORT,
-                    default_value=80,
-                    examples=["80", "443", "22"]
                 )
             ],
             examples=[
                 Example(
-                    title="Basic Scan",
-                    description="Perform a basic scan on a target",
-                    command="spectra --valid-scanner example.com",
-                    level="basic"
-                ),
-                Example(
-                    title="Port-Specific Scan",
-                    description="Scan a specific port on a target",
-                    command="spectra --valid-scanner example.com -p 443",
-                    level="intermediate"
+                    title="Basic Port Scan",
+                    description="Perform a basic port scan on target host",
+                    command="spectra -ps example.com",
+                    level=ExampleLevel.BASIC
                 )
             ]
         )
-    
-    def test_validate_valid_metadata(self):
-        """Test validation of valid metadata"""
-        validator = MetadataValidator()
-        metadata = self.create_valid_metadata()
         
-        result = validator.validate_module(metadata)
-        
-        assert result.is_valid is True
+        result = validator.validate_metadata(metadata)
+        assert result.is_valid
         assert len(result.errors) == 0
-        assert result.module_name == "valid_scanner"
     
-    def test_validate_missing_required_fields(self):
+    def test_invalid_module_name(self):
+        """Test validation of invalid module name"""
+        validator = MetadataValidator()
+        
+        metadata = ModuleMetadata(
+            name="Port-Scanner",  # Invalid: should be snake_case
+            display_name="Port Scanner",
+            category=ModuleCategory.RECONNAISSANCE,
+            description="Port scanning tool"
+        )
+        
+        result = validator.validate_metadata(metadata)
+        assert not result.is_valid
+        assert any("snake_case" in error for error in result.errors)
+    
+    def test_missing_required_fields(self):
         """Test validation with missing required fields"""
         validator = MetadataValidator()
         
-        # Create metadata with missing fields
         metadata = ModuleMetadata(
-            name="",  # Empty name
-            display_name="Test",
+            name="test_module",
+            display_name="Test Module",
             category=ModuleCategory.RECONNAISSANCE,
-            description="",  # Empty description
-            detailed_description="Test",
-            parameters=[],  # No parameters
-            examples=[]  # No examples
+            description=""  # Empty description
         )
         
-        result = validator.validate_module(metadata)
-        
-        assert result.is_valid is False
-        assert len(result.errors) >= 4  # name, description, parameters, examples
+        result = validator.validate_metadata(metadata)
+        assert not result.is_valid
+        assert any("Description is required" in error for error in result.errors)
     
-    def test_validate_naming_conventions(self):
-        """Test naming convention validation"""
+    def test_parameter_validation(self):
+        """Test parameter validation"""
         validator = MetadataValidator()
-        metadata = self.create_valid_metadata()
         
-        # Invalid module name
-        metadata.name = "Invalid-Name"
-        
-        result = validator.validate_module(metadata)
-        
-        assert result.is_valid is False
-        assert any("naming convention" in error for error in result.errors)
-    
-    def test_validate_parameter_duplicates(self):
-        """Test duplicate parameter validation"""
-        validator = MetadataValidator()
-        metadata = self.create_valid_metadata()
-        
-        # Add duplicate parameter
-        metadata.parameters.append(
-            Parameter(
-                name="target",  # Duplicate name
-                description="Another target parameter"
-            )
+        # Duplicate parameter names
+        metadata = ModuleMetadata(
+            name="test_module",
+            display_name="Test Module",
+            category=ModuleCategory.RECONNAISSANCE,
+            description="Test module with duplicate parameters",
+            parameters=[
+                Parameter(name="target", description="Target host"),
+                Parameter(name="target", description="Another target")  # Duplicate
+            ]
         )
         
-        result = validator.validate_module(metadata)
-        
-        assert result.is_valid is False
+        result = validator.validate_metadata(metadata)
+        assert not result.is_valid
         assert any("Duplicate parameter name" in error for error in result.errors)
     
-    def test_validate_choice_parameter(self):
-        """Test choice parameter validation"""
-        validator = MetadataValidator()
-        metadata = self.create_valid_metadata()
-        
-        # Add choice parameter without choices
-        metadata.parameters.append(
-            Parameter(
-                name="scan-type",
-                description="Type of scan",
-                param_type=ParameterType.CHOICE
-                # Missing choices
-            )
-        )
-        
-        result = validator.validate_module(metadata)
-        
-        assert result.is_valid is False
-        assert any("choice type but has no choices" in error for error in result.errors)
-    
-    def test_validate_examples(self):
+    def test_example_validation(self):
         """Test example validation"""
         validator = MetadataValidator()
-        metadata = self.create_valid_metadata()
         
-        # Add invalid example
-        metadata.examples.append(
-            Example(
-                title="",  # Empty title
-                description="",  # Empty description
-                command="",  # Empty command
-                level="invalid"  # Invalid level
-            )
-        )
-        
-        result = validator.validate_module(metadata)
-        
-        assert result.is_valid is False
-        assert len([e for e in result.errors if "Example" in e]) >= 3
-    
-    def test_validate_multiple_modules(self):
-        """Test validation of multiple modules"""
-        validator = MetadataValidator()
-        
-        valid_metadata = self.create_valid_metadata()
-        invalid_metadata = ModuleMetadata(
-            name="invalid",
-            display_name="Invalid",
+        # No examples
+        metadata = ModuleMetadata(
+            name="test_module",
+            display_name="Test Module",
             category=ModuleCategory.RECONNAISSANCE,
-            description="",  # Invalid
-            detailed_description="Test",
-            parameters=[],  # Invalid
-            examples=[]  # Invalid
+            description="Test module without examples",
+            examples=[]
         )
         
-        report = validator.validate_modules([valid_metadata, invalid_metadata])
-        
-        assert report.total_modules == 2
-        assert report.valid_modules == 1
-        assert report.invalid_modules == 1
-        assert report.success_rate == 50.0
+        result = validator.validate_metadata(metadata)
+        assert not result.is_valid
+        assert any("at least one usage example" in error for error in result.errors)
     
-    def test_cross_module_consistency(self):
-        """Test cross-module consistency validation"""
+    def test_validation_warnings(self):
+        """Test validation warnings"""
         validator = MetadataValidator()
         
-        # Create two modules with same parameter name but different descriptions
-        metadata1 = self.create_valid_metadata()
-        metadata2 = self.create_valid_metadata()
-        metadata2.name = "another_scanner"
-        metadata2.parameters[0].description = "Different description for target"
+        metadata = ModuleMetadata(
+            name="test_module",
+            display_name="Test Module",
+            category=ModuleCategory.RECONNAISSANCE,
+            description="Test module",
+            examples=[
+                Example(
+                    title="Test",
+                    description="Test example",
+                    command="spectra -test example.com",  # Valid command
+                    level=ExampleLevel.BASIC
+                )
+            ]
+        )
         
-        warnings = validator.validate_cross_module_consistency([metadata1, metadata2])
-        
-        assert len(warnings) > 0
-        assert any("different descriptions" in warning for warning in warnings)
+        result = validator.validate_metadata(metadata)
+        assert result.is_valid  # Should be valid but have warnings
+        assert len(result.warnings) > 0  # Should have warnings about missing fields
 
 
 if __name__ == "__main__":

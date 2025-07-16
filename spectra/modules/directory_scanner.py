@@ -1078,6 +1078,20 @@ class AdvancedDirectoryScanner:
 
 
 # Funções para compatibilidade com versão anterior
+# Import metadata for help system
+try:
+    from .directory_scanner_metadata import METADATA
+except ImportError:
+    METADATA = None
+
+# Register module with help system
+if METADATA:
+    try:
+        from ..core.help_system import register_module
+        register_module(METADATA)
+    except ImportError:
+        pass
+
 def advanced_directory_scan(base_url, wordlist_path, workers=30, timeout=10, 
                           recursive=False, max_depth=3, stealth=False, 
                           extension_fuzzing=True, output_format='table'):
@@ -1131,3 +1145,9 @@ def check_directory(url, session):
         logger.error(f"Erro ao verificar diretório {url}: {e}")
     
     return None
+
+# Import metadata for help system
+try:
+    from .directory_scanner_metadata import METADATA
+except ImportError:
+    METADATA = None

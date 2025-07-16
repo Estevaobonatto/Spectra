@@ -663,3 +663,17 @@ def scan_ports_threaded(host, port_spec, verbose=False, grab_banner_flag=False,
         workers=workers,
         verbose=verbose
     )
+
+# Import metadata for help system
+try:
+    from .port_scanner_metadata import METADATA
+except ImportError:
+    METADATA = None
+
+# Register module with help system
+if METADATA:
+    try:
+        from ..core.help_system import register_module
+        register_module(METADATA)
+    except ImportError:
+        pass

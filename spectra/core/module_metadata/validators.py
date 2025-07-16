@@ -4,24 +4,31 @@ Validation system for module metadata
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
-from .base_metadata import ModuleMetadata, Parameter, Example, ParameterType
+from .base_metadata import ModuleMetadata, Parameter, Example, UseCase, ParameterType, ExampleLevel
 
 
 @dataclass
 class ValidationResult:
-    """Result of validating a single module's metadata"""
+    """Result of metadata validation for a single module"""
     module_name: str
     is_valid: bool
-    errors: List[str]
-    warnings: List[str]
+    errors: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
     
-    def __post_init__(self):
-        if self.errors is None:
-            self.errors = []
-        if self.warnings is None:
-            self.warnings = []
+    def add_error(self, message: str):
+        """Add an error message"""
+        self.errors.append(message)
+        self.is_valid = False
+    
+    def add_warning(self, message: str):
+        """Add a warning message"""
+        self.warnings.append(message)
+    
+    def has_issues(self) -> bool:
+        """Check if there are any errors or warnings"""
+        return len(self.errors) > 0 or len(self.warnings) > 0
 
 
 @dataclass
@@ -30,277 +37,290 @@ class ValidationReport:
     total_modules: int
     valid_modules: int
     invalid_modules: int
-    results: List[ValidationResult]
+    results: List[ValidationResult] = field(default_factory=list)
     
-    @property
-    def success_rate(self) -> float:
-        """Calculate success rate as percentage"""
-        if self.total_modules == 0:
-            return 0.0
-        return (self.valid_modules / self.total_modules) * 100
+    def add_result(self, result: ValidationResult):
+        """Add a validation result"""
+        self.results.append(result)
+        if result.is_valid:
+            self.valid_modules += 1
+        else:
+            self.invalid_modules += 1
     
-    def get_all_errors(self) -> List[str]:
-        """Get all errors from all modules"""
-        all_errors = []
-        for result in self.results:
-            for error in result.errors:
-                all_errors.append(f"{result.module_name}: {error}")
-        return all_errors
+    def get_summary(self) -> str:
+        """Get validation summary"""
+        return f"Validation Summary: {self.valid_modules}/{self.total_modules} modules valid"
     
-    def get_all_warnings(self) -> List[str]:
-        """Get all warnings from all modules"""
-        all_warnings = []
-        for result in self.results:
-            for warning in result.warnings:
-                all_warnings.append(f"{result.module_name}: {warning}")
-        return all_warnings
+    def get_failed_modules(self) -> List[ValidationResult]:
+        """Get modules that failed validation"""
+        return [r for r in self.results if not r.is_valid]
+    
+    def get_modules_with_warnings(self) -> List[ValidationResult]:
+        """Get modules with warnings"""
+        return [r for r in self.results if len(r.warnings) > 0]
 
 
 class MetadataValidator:
-    """Validates module metadata for consistency and completeness"""
+    """Validator for module metadata consistency and quality"""
     
     def __init__(self):
         self.naming_patterns = {
             'module_name': re.compile(r'^[a-z][a-z0-9_]*[a-z0-9]$'),
             'parameter_name': re.compile(r'^[a-z][a-z0-9-]*[a-z0-9]$'),
-            'short_name': re.compile(r'^[a-z][a-z0-9]*$')
+            'short_name': re.compile(r'^[a-z]{1,3}$'),
+            'cli_command': re.compile(r'^-[a-z]{1,4}$')
         }
         
-        self.required_fields = [
-            'name', 'display_name', 'category', 'description', 
-            'detailed_description', 'parameters', 'examples'
-        ]
-        
-        self.min_examples_by_level = {
-            'basic': 1,
-            'intermediate': 1,
-            'advanced': 1
+        self.required_examples_per_level = {
+            ExampleLevel.BASIC: 1,
+            ExampleLevel.INTERMEDIATE: 1,
+            ExampleLevel.ADVANCED: 1
         }
+        
+        self.min_description_length = 10
+        self.max_description_length = 200
+        self.min_detailed_description_length = 50
     
-    def validate_module(self, metadata: ModuleMetadata) -> ValidationResult:
-        """Validate a single module's metadata"""
-        errors = []
-        warnings = []
+    def validate_metadata(self, metadata: ModuleMetadata) -> ValidationResult:
+        """Validate complete module metadata"""
+        result = ValidationResult(module_name=metadata.name, is_valid=True)
         
-        # Basic field validation
-        errors.extend(self._validate_basic_fields(metadata))
+        # Validate basic fields
+        self._validate_basic_fields(metadata, result)
         
-        # Naming convention validation
-        errors.extend(self._validate_naming_conventions(metadata))
+        # Validate naming conventions
+        self._validate_naming_conventions(metadata, result)
         
-        # Parameter validation
-        param_errors, param_warnings = self._validate_parameters(metadata)
-        errors.extend(param_errors)
-        warnings.extend(param_warnings)
+        # Validate parameters
+        self._validate_parameters(metadata, result)
         
-        # Example validation
-        example_errors, example_warnings = self._validate_examples(metadata)
-        errors.extend(example_errors)
-        warnings.extend(example_warnings)
+        # Validate examples
+        self._validate_examples(metadata, result)
         
-        # Content quality validation
-        warnings.extend(self._validate_content_quality(metadata))
+        # Validate use cases
+        self._validate_use_cases(metadata, result)
         
-        # Dependency validation
-        errors.extend(metadata.validate_parameter_dependencies())
+        # Validate relationships
+        self._validate_relationships(metadata, result)
         
-        return ValidationResult(
-            module_name=metadata.name,
-            is_valid=len(errors) == 0,
-            errors=errors,
-            warnings=warnings
-        )
+        # Quality checks
+        self._validate_quality(metadata, result)
+        
+        return result
     
-    def validate_modules(self, modules: List[ModuleMetadata]) -> ValidationReport:
-        """Validate multiple modules and generate report"""
-        results = []
+    def _validate_basic_fields(self, metadata: ModuleMetadata, result: ValidationResult):
+        """Validate basic required fields"""
+        if not metadata.name:
+            result.add_error("Module name is required")
         
-        for module in modules:
-            result = self.validate_module(module)
-            results.append(result)
+        if not metadata.display_name:
+            result.add_error("Display name is required")
         
-        valid_count = sum(1 for r in results if r.is_valid)
+        if not metadata.description:
+            result.add_error("Description is required")
+        elif len(metadata.description) < self.min_description_length:
+            result.add_error(f"Description too short (minimum {self.min_description_length} characters)")
+        elif len(metadata.description) > self.max_description_length:
+            result.add_warning(f"Description very long (over {self.max_description_length} characters)")
         
-        return ValidationReport(
-            total_modules=len(modules),
-            valid_modules=valid_count,
-            invalid_modules=len(modules) - valid_count,
-            results=results
-        )
+        if metadata.detailed_description and len(metadata.detailed_description) < self.min_detailed_description_length:
+            result.add_warning(f"Detailed description too short (minimum {self.min_detailed_description_length} characters)")
+        
+        if not metadata.version:
+            result.add_warning("Version not specified")
+        elif not re.match(r'^\d+\.\d+\.\d+$', metadata.version):
+            result.add_warning("Version should follow semantic versioning (x.y.z)")
     
-    def _validate_basic_fields(self, metadata: ModuleMetadata) -> List[str]:
-        """Validate required fields are present and non-empty"""
-        errors = []
-        
-        if not metadata.name or not metadata.name.strip():
-            errors.append("Module name is required and cannot be empty")
-        
-        if not metadata.display_name or not metadata.display_name.strip():
-            errors.append("Display name is required and cannot be empty")
-        
-        if not metadata.description or not metadata.description.strip():
-            errors.append("Description is required and cannot be empty")
-        
-        if not metadata.detailed_description or not metadata.detailed_description.strip():
-            errors.append("Detailed description is required and cannot be empty")
-        
-        if not metadata.parameters:
-            errors.append("At least one parameter must be defined")
-        
-        if not metadata.examples:
-            errors.append("At least one example must be provided")
-        
-        return errors
-    
-    def _validate_naming_conventions(self, metadata: ModuleMetadata) -> List[str]:
+    def _validate_naming_conventions(self, metadata: ModuleMetadata, result: ValidationResult):
         """Validate naming conventions"""
-        errors = []
-        
-        # Module name validation
+        # Module name
         if not self.naming_patterns['module_name'].match(metadata.name):
-            errors.append(f"Module name '{metadata.name}' doesn't follow naming convention (lowercase, underscores only)")
+            result.add_error("Module name must be lowercase with underscores (snake_case)")
         
-        return errors
+        # CLI command
+        if metadata.cli_command and not self.naming_patterns['cli_command'].match(metadata.cli_command):
+            result.add_error("CLI command must start with dash and be lowercase (-ps, -ds, etc.)")
+        
+        # Display name should be title case
+        if metadata.display_name and not metadata.display_name.replace(' ', '').replace('-', '').isalnum():
+            result.add_warning("Display name should contain only alphanumeric characters, spaces, and hyphens")
     
-    def _validate_parameters(self, metadata: ModuleMetadata) -> tuple[List[str], List[str]]:
+    def _validate_parameters(self, metadata: ModuleMetadata, result: ValidationResult):
         """Validate parameters"""
-        errors = []
-        warnings = []
+        if not metadata.parameters:
+            result.add_warning("Module has no parameters defined")
+            return
         
-        param_names = set()
+        parameter_names = set()
         short_names = set()
         
         for param in metadata.parameters:
             # Check for duplicate names
-            if param.name in param_names:
-                errors.append(f"Duplicate parameter name: {param.name}")
-            param_names.add(param.name)
+            if param.name in parameter_names:
+                result.add_error(f"Duplicate parameter name: {param.name}")
+            parameter_names.add(param.name)
             
             if param.short_name:
                 if param.short_name in short_names:
-                    errors.append(f"Duplicate short parameter name: {param.short_name}")
+                    result.add_error(f"Duplicate short name: {param.short_name}")
                 short_names.add(param.short_name)
+                
+                # Validate short name format
+                if not self.naming_patterns['short_name'].match(param.short_name):
+                    result.add_error(f"Invalid short name format: {param.short_name}")
             
-            # Validate parameter naming
+            # Validate parameter name format
             if not self.naming_patterns['parameter_name'].match(param.name):
-                errors.append(f"Parameter name '{param.name}' doesn't follow naming convention")
+                result.add_error(f"Invalid parameter name format: {param.name}")
             
-            if param.short_name and not self.naming_patterns['short_name'].match(param.short_name):
-                errors.append(f"Short parameter name '{param.short_name}' doesn't follow naming convention")
+            # Validate description
+            if not param.description:
+                result.add_error(f"Parameter {param.name} missing description")
+            elif len(param.description) < 5:
+                result.add_warning(f"Parameter {param.name} description too short")
             
-            # Validate parameter description
-            if not param.description or not param.description.strip():
-                errors.append(f"Parameter '{param.name}' missing description")
-            
-            # Validate choices for choice type
+            # Validate choices for choice parameters
             if param.param_type == ParameterType.CHOICE and not param.choices:
-                errors.append(f"Parameter '{param.name}' is choice type but has no choices defined")
-            
-            # Validate default value
-            if param.default_value is not None and param.param_type == ParameterType.CHOICE:
-                if param.choices and param.default_value not in param.choices:
-                    errors.append(f"Parameter '{param.name}' default value not in choices")
+                result.add_error(f"Parameter {param.name} is choice type but has no choices defined")
             
             # Validate numeric ranges
             if param.param_type in [ParameterType.INTEGER, ParameterType.FLOAT]:
                 if param.min_value is not None and param.max_value is not None:
                     if param.min_value >= param.max_value:
-                        errors.append(f"Parameter '{param.name}' min_value must be less than max_value")
+                        result.add_error(f"Parameter {param.name} min_value must be less than max_value")
             
-            # Warning for missing examples
+            # Validate examples
             if not param.examples:
-                warnings.append(f"Parameter '{param.name}' has no usage examples")
-        
-        return errors, warnings
+                result.add_warning(f"Parameter {param.name} has no usage examples")
     
-    def _validate_examples(self, metadata: ModuleMetadata) -> tuple[List[str], List[str]]:
+    def _validate_examples(self, metadata: ModuleMetadata, result: ValidationResult):
         """Validate examples"""
-        errors = []
-        warnings = []
-        
         if not metadata.examples:
-            errors.append("Module must have at least one example")
-            return errors, warnings
+            result.add_error("Module must have at least one usage example")
+            return
         
         # Check for examples at different levels
-        levels = {ex.level for ex in metadata.examples}
+        levels_present = set(ex.level for ex in metadata.examples)
         
-        if 'basic' not in levels:
-            warnings.append("Module should have at least one basic example")
+        if ExampleLevel.BASIC not in levels_present:
+            result.add_error("Module must have at least one basic example")
         
-        if len(metadata.examples) >= 3 and 'advanced' not in levels:
-            warnings.append("Module with multiple examples should include advanced examples")
+        if len(metadata.examples) >= 3 and ExampleLevel.ADVANCED not in levels_present:
+            result.add_warning("Module with multiple examples should include advanced examples")
         
-        # Validate individual examples
-        for i, example in enumerate(metadata.examples):
-            if not example.title or not example.title.strip():
-                errors.append(f"Example {i+1} missing title")
+        example_titles = set()
+        for example in metadata.examples:
+            # Check for duplicate titles
+            if example.title in example_titles:
+                result.add_error(f"Duplicate example title: {example.title}")
+            example_titles.add(example.title)
             
-            if not example.description or not example.description.strip():
-                errors.append(f"Example {i+1} missing description")
+            # Validate command format
+            if not example.command.startswith('spectra '):
+                result.add_error(f"Example '{example.title}' command should start with 'spectra '")
             
-            if not example.command or not example.command.strip():
-                errors.append(f"Example {i+1} missing command")
+            # Check for placeholder values
+            if '<' in example.command and '>' in example.command:
+                result.add_warning(f"Example '{example.title}' contains placeholder values")
             
-            if example.level not in ['basic', 'intermediate', 'advanced']:
-                errors.append(f"Example {i+1} has invalid level: {example.level}")
-            
-            # Basic command validation
-            if example.command and not example.command.startswith('spectra'):
-                warnings.append(f"Example {i+1} command should start with 'spectra'")
-        
-        return errors, warnings
+            # Validate description length
+            if len(example.description) < 10:
+                result.add_warning(f"Example '{example.title}' description too short")
     
-    def _validate_content_quality(self, metadata: ModuleMetadata) -> List[str]:
-        """Validate content quality (warnings only)"""
-        warnings = []
+    def _validate_use_cases(self, metadata: ModuleMetadata, result: ValidationResult):
+        """Validate use cases"""
+        if not metadata.use_cases:
+            result.add_warning("Module has no use cases defined")
+            return
         
-        # Description length checks
-        if len(metadata.description) < 20:
-            warnings.append("Description is quite short, consider adding more detail")
-        
-        if len(metadata.detailed_description) < 50:
-            warnings.append("Detailed description is quite short, consider expanding")
-        
-        # Check for common typos or issues
-        if 'TODO' in metadata.description or 'TODO' in metadata.detailed_description:
-            warnings.append("Description contains TODO - should be completed")
-        
-        # Parameter description quality
-        for param in metadata.parameters:
-            if param.description and len(param.description) < 10:
-                warnings.append(f"Parameter '{param.name}' description is very short")
-        
-        return warnings
+        use_case_titles = set()
+        for use_case in metadata.use_cases:
+            # Check for duplicate titles
+            if use_case.title in use_case_titles:
+                result.add_error(f"Duplicate use case title: {use_case.title}")
+            use_case_titles.add(use_case.title)
+            
+            # Validate content
+            if len(use_case.description) < 20:
+                result.add_warning(f"Use case '{use_case.title}' description too short")
+            
+            if not use_case.steps:
+                result.add_warning(f"Use case '{use_case.title}' has no steps defined")
     
-    def validate_cross_module_consistency(self, modules: List[ModuleMetadata]) -> List[str]:
-        """Validate consistency across modules"""
-        warnings = []
+    def _validate_relationships(self, metadata: ModuleMetadata, result: ValidationResult):
+        """Validate module relationships"""
+        # Check for self-references
+        if metadata.name in metadata.related_modules:
+            result.add_error("Module cannot reference itself in related_modules")
         
-        # Check for consistent parameter naming across modules
-        all_params = {}
+        # Validate related module names
+        for related in metadata.related_modules:
+            if not self.naming_patterns['module_name'].match(related):
+                result.add_warning(f"Related module name '{related}' doesn't follow naming convention")
+    
+    def _validate_quality(self, metadata: ModuleMetadata, result: ValidationResult):
+        """Validate overall quality and completeness"""
+        # Check for comprehensive documentation
+        if not metadata.detailed_description:
+            result.add_warning("Module missing detailed description")
+        
+        if not metadata.tags:
+            result.add_warning("Module has no search tags")
+        
+        if not metadata.documentation_url:
+            result.add_warning("Module has no documentation URL")
+        
+        # Check parameter coverage
+        required_params = [p for p in metadata.parameters if p.required]
+        if not required_params and len(metadata.parameters) > 0:
+            result.add_warning("Module has parameters but none are marked as required")
+        
+        # Check example coverage
+        if len(metadata.examples) < 3:
+            result.add_warning("Module should have at least 3 examples (basic, intermediate, advanced)")
+        
+        # Check for common typos in descriptions
+        common_typos = ['teh', 'recieve', 'seperate', 'occured']
+        all_text = f"{metadata.description} {metadata.detailed_description}".lower()
+        for typo in common_typos:
+            if typo in all_text:
+                result.add_warning(f"Possible typo detected: '{typo}'")
+    
+    def validate_multiple_modules(self, modules: List[ModuleMetadata]) -> ValidationReport:
+        """Validate multiple modules and generate report"""
+        report = ValidationReport(
+            total_modules=len(modules),
+            valid_modules=0,
+            invalid_modules=0
+        )
+        
+        # Validate each module
         for module in modules:
-            for param in module.parameters:
-                if param.name not in all_params:
-                    all_params[param.name] = []
-                all_params[param.name].append({
-                    'module': module.name,
-                    'description': param.description,
-                    'type': param.param_type
-                })
+            result = self.validate_metadata(module)
+            report.add_result(result)
         
-        # Find parameters with same name but different descriptions/types
-        for param_name, usages in all_params.items():
-            if len(usages) > 1:
-                descriptions = {usage['description'] for usage in usages}
-                types = {usage['type'] for usage in usages}
-                
-                if len(descriptions) > 1:
-                    modules_list = [usage['module'] for usage in usages]
-                    warnings.append(f"Parameter '{param_name}' has different descriptions across modules: {', '.join(modules_list)}")
-                
-                if len(types) > 1:
-                    modules_list = [usage['module'] for usage in usages]
-                    warnings.append(f"Parameter '{param_name}' has different types across modules: {', '.join(modules_list)}")
+        # Cross-module validation
+        self._validate_cross_module_references(modules, report)
         
-        return warnings
+        return report
+    
+    def _validate_cross_module_references(self, modules: List[ModuleMetadata], report: ValidationReport):
+        """Validate references between modules"""
+        module_names = {m.name for m in modules}
+        
+        for module in modules:
+            result = next((r for r in report.results if r.module_name == module.name), None)
+            if not result:
+                continue
+            
+            # Check if related modules exist
+            for related in module.related_modules:
+                if related not in module_names:
+                    result.add_warning(f"Related module '{related}' not found in module registry")
+            
+            # Check for circular dependencies
+            for related_name in module.related_modules:
+                related_module = next((m for m in modules if m.name == related_name), None)
+                if related_module and module.name in related_module.related_modules:
+                    # This is okay - bidirectional relationship
+                    pass

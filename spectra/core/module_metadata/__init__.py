@@ -1,28 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-Module Metadata System - Structured metadata for Spectra modules
+Module Metadata System for Spectra - Structured module information
 """
 
-from .base_metadata import (
-    ModuleMetadata,
-    Parameter,
-    Example,
-    UseCase,
-    ModuleCategory,
-    OutputFormat,
-    ParameterType
-)
+from .base_metadata import ModuleMetadata, Parameter, Example, UseCase, ModuleCategory
 from .validators import MetadataValidator, ValidationResult, ValidationReport
 
 __all__ = [
-    'ModuleMetadata',
-    'Parameter',
-    'Example', 
-    'UseCase',
-    'ModuleCategory',
-    'OutputFormat',
-    'ParameterType',
-    'MetadataValidator',
-    'ValidationResult',
-    'ValidationReport'
+    'ModuleMetadata', 'Parameter', 'Example', 'UseCase', 'ModuleCategory',
+    'MetadataValidator', 'ValidationResult', 'ValidationReport'
 ]

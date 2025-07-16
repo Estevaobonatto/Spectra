@@ -85,6 +85,20 @@ import binascii
 
 logger = get_logger(__name__)
 
+# Import metadata for help system
+try:
+    from .hash_cracker_metadata import METADATA
+except ImportError:
+    METADATA = None
+
+# Register module with help system
+if METADATA:
+    try:
+        from ..core.help_system import register_module
+        register_module(METADATA)
+    except ImportError:
+        pass
+
 
 class MemoryManager:
     """Gerenciador de mem\u00f3ria para otimizar uso de recursos."""
