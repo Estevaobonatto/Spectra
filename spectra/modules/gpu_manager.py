@@ -1127,8 +1127,9 @@ class GPUManagerIntegration:
             'estimated_speedup': estimated_speedup,
             'message': f'GPU acceleration available: {estimated_speedup:.0f}x speedup expected'
         }
-import thre
-ading
+
+
+import threading
 from contextlib import contextmanager
 
 

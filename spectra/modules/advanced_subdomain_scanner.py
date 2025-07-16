@@ -627,14 +627,15 @@ class AdvancedSubdomainScanner:
         Inicializa o scanner avançado.
         
         Args:
-            domain: Domínio alvo
+            domain: Domínio alvo (pode ser URL completa ou apenas domínio)
             wordlist_path: Caminho para wordlist (opcional)
             max_concurrent: Máximo de queries concorrentes
             enable_passive: Habilita descoberta passiva
             enable_permutations: Habilita engine de permutações
             verify_takeover: Habilita verificação real de takeover
         """
-        self.domain = domain.lower().strip()
+        # Extrai domínio de URL se necessário
+        self.domain = self._extract_domain(domain)
         self.wordlist_path = wordlist_path
         self.max_concurrent = max_concurrent
         self.enable_passive = enable_passive
@@ -665,6 +666,28 @@ class AdvancedSubdomainScanner:
         self.ct_scanner: Optional[CertificateTransparency] = None
         self.passive_engine: Optional[PassiveSourcesEngine] = None
         self.takeover_verifier: Optional[TakeoverVerifier] = None
+    
+    def _extract_domain(self, domain_or_url: str) -> str:
+        """Extrai domínio de uma URL ou retorna o domínio se já for apenas domínio."""
+        domain_or_url = domain_or_url.lower().strip()
+        
+        # Remove protocolo se presente
+        if domain_or_url.startswith(('http://', 'https://')):
+            domain_or_url = domain_or_url.split('://', 1)[1]
+        
+        # Remove path se presente
+        if '/' in domain_or_url:
+            domain_or_url = domain_or_url.split('/', 1)[0]
+        
+        # Remove porta se presente
+        if ':' in domain_or_url:
+            domain_or_url = domain_or_url.split(':', 1)[0]
+        
+        # Remove www. se presente
+        if domain_or_url.startswith('www.'):
+            domain_or_url = domain_or_url[4:]
+        
+        return domain_or_url
     
     async def scan(self) -> Dict[str, SubdomainResult]:
         """Executa scan completo de subdomínios."""
@@ -948,6 +971,108 @@ class AdvancedSubdomainScanner:
                     print_error(f"TAKEOVER VERIFICADO: {result.domain} -> {service}")
                 
                 progress.update(task, advance=1)
+    
+    async def _detect_technologies(self):
+        """Detecta tecnologias web nos subdomínios encontrados."""
+        if not self.found_subdomains:
+            return
+        
+        try:
+            # Limita a detecção para evitar muitas requisições
+            subdomains_to_check = list(self.found_subdomains.values())[:20]
+            
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                console=console
+            ) as progress:
+                
+                task = progress.add_task("[blue]Detectando tecnologias...", total=len(subdomains_to_check))
+                
+                for result in subdomains_to_check:
+                    try:
+                        # Tenta HTTP e HTTPS
+                        for protocol in ['https', 'http']:
+                            try:
+                                url = f"{protocol}://{result.domain}"
+                                
+                                async with self.session.get(
+                                    url, 
+                                    timeout=5,
+                                    allow_redirects=True,
+                                    ssl=False if protocol == 'http' else None
+                                ) as response:
+                                    
+                                    if response.status == 200:
+                                        # Análise básica de tecnologias
+                                        headers = dict(response.headers)
+                                        content = await response.text()
+                                        
+                                        technologies = self._analyze_technologies(headers, content)
+                                        if technologies:
+                                            result.technologies = technologies
+                                        
+                                        break  # Se conseguiu conectar, para aqui
+                                        
+                            except Exception:
+                                continue  # Tenta próximo protocolo
+                                
+                    except Exception as e:
+                        self.logger.debug(f"Erro detectando tecnologias para {result.domain}: {e}")
+                    
+                    progress.update(task, advance=1)
+                    
+        except Exception as e:
+            self.logger.error(f"Erro na detecção de tecnologias: {e}")
+    
+    def _analyze_technologies(self, headers: Dict[str, str], content: str) -> List[str]:
+        """Análise básica de tecnologias baseada em headers e conteúdo."""
+        technologies = []
+        
+        # Análise de headers
+        server = headers.get('server', '').lower()
+        if 'nginx' in server:
+            technologies.append('Nginx')
+        elif 'apache' in server:
+            technologies.append('Apache')
+        elif 'iis' in server:
+            technologies.append('IIS')
+        elif 'cloudflare' in server:
+            technologies.append('Cloudflare')
+        
+        # X-Powered-By
+        powered_by = headers.get('x-powered-by', '').lower()
+        if 'php' in powered_by:
+            technologies.append('PHP')
+        elif 'asp.net' in powered_by:
+            technologies.append('ASP.NET')
+        elif 'express' in powered_by:
+            technologies.append('Express.js')
+        
+        # Análise básica de conteúdo (primeiros 2KB para performance)
+        content_sample = content[:2048].lower()
+        
+        # Frameworks JavaScript
+        if 'react' in content_sample:
+            technologies.append('React')
+        if 'vue' in content_sample:
+            technologies.append('Vue.js')
+        if 'angular' in content_sample:
+            technologies.append('Angular')
+        if 'jquery' in content_sample:
+            technologies.append('jQuery')
+        
+        # CMS
+        if 'wp-content' in content_sample or 'wordpress' in content_sample:
+            technologies.append('WordPress')
+        if 'drupal' in content_sample:
+            technologies.append('Drupal')
+        if 'joomla' in content_sample:
+            technologies.append('Joomla')
+        
+        return technologies
     
     def _display_results(self):
         """Display final results."""

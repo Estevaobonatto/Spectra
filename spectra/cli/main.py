@@ -1409,22 +1409,33 @@ def main():
                 
                 if args.gpu_info:
                     console.print("\n[bold cyan]=== Informações GPU ===[/bold cyan]")
-                    if gpu_manager.gpu_available:
-                        console.print(f"[bold green][+] GPU Disponível: {gpu_manager.gpu_type}[/bold green]")
+                    if gpu_manager.is_gpu_available():
+                        best_device = gpu_manager.get_best_device()
+                        console.print(f"[bold green][+] GPU Disponível: {best_device.framework.value.upper()}[/bold green]")
                         for gpu in gpu_manager.gpu_devices:
-                            console.print(f"    Nome: {gpu.get('name', 'Unknown')}")
-                            console.print(f"    Memória: {gpu.get('memory', 0) / (1024**3):.1f} GB")
-                            if gpu_manager.gpu_type == 'CUDA':
-                                console.print(f"    CUDA Cores: ~{gpu.get('cuda_cores', 0)}")
+                            console.print(f"  GPU {gpu.device_id}:")
+                            console.print(f"    Nome: {gpu.name}")
+                            console.print(f"    Vendor: {gpu.vendor.value.upper()}")
+                            console.print(f"    Framework: {gpu.framework.value.upper()}")
+                            console.print(f"    Memória: {gpu.memory_total / (1024**3):.1f} GB")
+                            console.print(f"    Compute Units: {gpu.compute_units}")
+                            console.print(f"    Performance Score: {gpu.performance_score:.1f}")
+                            if gpu.compute_capability:
+                                console.print(f"    Compute Capability: {gpu.compute_capability[0]}.{gpu.compute_capability[1]}")
                     else:
                         console.print("[yellow][-] Nenhuma GPU compatível detectada[/yellow]")
                 
                 if args.show_performance_estimate:
-                    estimate = gpu_manager.estimate_performance_gain()
-                    console.print(f"\n[bold cyan]Estimativa de Performance:[/bold cyan]")
-                    console.print(f"GPU vs CPU: [bold green]{estimate:.0f}x mais rápido[/bold green]")
-                    if estimate > 100:
-                        console.print("[bold yellow]RECOMENDAÇÃO: Use GPU para máxima performance![/bold yellow]")
+                    if gpu_manager.is_gpu_available():
+                        best_device = gpu_manager.get_best_device()
+                        estimate = gpu_manager._estimate_performance_gain(best_device)
+                        console.print(f"\n[bold cyan]Estimativa de Performance:[/bold cyan]")
+                        console.print(f"GPU vs CPU: [bold green]{estimate:.0f}x mais rápido[/bold green]")
+                        if estimate > 100:
+                            console.print("[bold yellow]RECOMENDAÇÃO: Use GPU para máxima performance![/bold yellow]")
+                    else:
+                        console.print(f"\n[bold cyan]Estimativa de Performance:[/bold cyan]")
+                        console.print("GPU vs CPU: [red]Nenhuma GPU disponível[/red]")
                     console.print()
             
             # Cria cracker com configurações GPU
@@ -1442,9 +1453,12 @@ def main():
                 console.print(f"[*] Tipo de hash: {cracker.hash_type}")
                 console.print(f"[*] GPU: {'Ativada' if cracker.use_gpu else 'Desativada'}")
                 if cracker.use_gpu and cracker.gpu_manager:
-                    console.print(f"[*] GPU Type: {cracker.gpu_manager.gpu_type}")
-                    gain = cracker.gpu_manager.estimate_performance_gain()
-                    console.print(f"[*] Estimativa de ganho: {gain:.0f}x")
+                    best_device = cracker.gpu_manager.get_best_device()
+                    if best_device:
+                        console.print(f"[*] GPU Type: {best_device.framework.value.upper()}")
+                        console.print(f"[*] GPU Device: {best_device.name}")
+                        gain = cracker.gpu_manager._estimate_performance_gain(best_device)
+                        console.print(f"[*] Estimativa de ganho: {gain:.0f}x")
             
             # Determina wordlist padrão se não especificada
             wordlist_path = args.hash_wordlist
