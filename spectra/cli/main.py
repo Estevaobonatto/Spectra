@@ -291,7 +291,20 @@ Exemplos de uso:
     
     parser.add_argument('--verify-takeover',
                        action='store_true',
-                       help='Verificar subdomain takeover vulnerabilities')
+                       help='Verificar subdomain takeover vulnerabilities (verificação real via HTTP)')
+    
+    parser.add_argument('--use-ct-logs',
+                       action='store_true',
+                       help='Usar Certificate Transparency logs para descoberta passiva')
+    
+    parser.add_argument('--use-permutations',
+                       action='store_true',
+                       help='Gerar permutações inteligentes baseadas em subdomínios encontrados')
+    
+    parser.add_argument('--max-permutations',
+                       type=int,
+                       default=500,
+                       help='Máximo de permutações a gerar (padrão: 500)')
     
     parser.add_argument('--max-concurrent',
                        type=int,
