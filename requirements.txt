@@ -9,3 +9,7 @@ pyOpenSSL
 selenium
 pyopencl
 scapy
+aiohttp
+aiodns
+websockets
+psutil
