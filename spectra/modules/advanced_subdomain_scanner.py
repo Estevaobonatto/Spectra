@@ -15,6 +15,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 
 from ..core.console import console, print_info, print_success, print_warning, print_error, print_separator, create_table, create_progress
 from ..core.logger import get_logger
+from .technology_detector import AdvancedTechnologyDetector
 
 
 @dataclass
@@ -744,7 +745,12 @@ class AdvancedSubdomainScanner:
             if self.verify_takeover:
                 print_info("Verificando vulnerabilidades de subdomain takeover...")
                 await self._verify_takeover_risks()
-        
+            
+            # 7. Detecção de tecnologias (opcional)
+            if len(self.found_subdomains) <= 50:  # Limita para evitar muitas requisições
+                print_info("Detectando tecnologias web...")
+                await self._detect_technologies()
+                
         self.stats['total_discovered'] = len(self.found_subdomains)
         self.stats['scan_time'] = time.time() - start_time
         
