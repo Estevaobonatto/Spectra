@@ -19,7 +19,8 @@ def test_idor_scanner():
         test_uuid=False,
         test_hash=False,
         max_workers=3,
-        delay=0.1
+        delay=0.1,
+        verbose=True  # Ativa modo verbose para teste
     )
     
     # Desabilita testes avançados para foco no básico

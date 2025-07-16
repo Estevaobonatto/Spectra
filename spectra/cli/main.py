@@ -137,6 +137,7 @@ Exemplos de uso:
   %(prog)s -idor http://app.com/document/789 --test-hash --idor-wordlist custom_ids.txt
   %(prog)s -idor http://admin.com/order?order_id=100 --idor-range 1-10000 --idor-delay 0.05
   %(prog)s -idor http://secure.com/file/abc123 --test-uuid --test-hash --workers 20
+  %(prog)s -idor http://target.com/api/user/123 --deep-scan --verbose
 
 [ Hash Cracker Avançado - 27+ Algoritmos + 11 Modos de Ataque ]
   %(prog)s -hc 5d41402abc4b2a76b9719d911017c592 --attack-mode dictionary
@@ -505,6 +506,10 @@ Exemplos de uso:
                        type=float,
                        default=0.1,
                        help='Delay entre requisições IDOR em segundos (padrão: 0.1)')
+    
+    parser.add_argument('--deep-scan',
+                       action='store_true',
+                       help='Ativa deep scan com testes avançados (headers, cookies, bypass)')
     
     # === HASH CRACKER AVANÇADO ===
     parser.add_argument('-hc', '--hash-crack',
@@ -1244,7 +1249,9 @@ def main():
                 test_hash=args.test_hash,
                 custom_wordlist=args.idor_wordlist,
                 max_workers=args.workers,
-                delay=args.idor_delay
+                delay=args.idor_delay,
+                verbose=args.verbose,
+                deep_scan=args.deep_scan
             )
             
             if vulnerabilities:
