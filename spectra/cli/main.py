@@ -7,6 +7,7 @@ import sys
 import argparse
 from ..core import display_banner, display_legal_warning, console, print_error, print_info, print_success
 from ..core.report_generator import ReportGenerator
+from .help_cli import get_help_cli, handle_help_request, show_quick_help
 from ..modules.port_scanner import scan_ports
 from ..modules.banner_grabber import BannerGrabber
 from ..modules.directory_scanner import advanced_directory_scan

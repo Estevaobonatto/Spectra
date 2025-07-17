@@ -4,7 +4,7 @@ JSON Schema definitions for Spectra help system
 """
 
 import json
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 # JSON Schema for module metadata
 MODULE_METADATA_SCHEMA = {
