@@ -61,53 +61,6 @@ Exemplos de uso:
   %(prog)s -ds https://balanced.com -w wordlist.txt --connection-pool-size 150 --verbose
   %(prog)s -ds https://custom.com -w files.txt --workers 200 --adaptive-delay --show-performance-stats
 
-[ Funcionalidades Únicas do Directory Scanner ]
-  • Múltiplos métodos HTTP simultâneos (GET,POST,PUT,HEAD,OPTIONS,DELETE,PATCH)
-  • Filtragem avançada por status codes, tamanho de conteúdo e tempo de resposta
-  • Descoberta automática de arquivos de backup (.bak, .old, ~, _backup, etc)
-  • Content-based discovery (extrai paths de HTML/JS/CSS automaticamente)
-  • Rate limiting adaptativo inteligente (ajusta velocidade baseado em responses 429/503)
-  • Detecção de WAF integrada com modo de evasão
-  • Análise de tecnologias web durante o scan (WordPress, Drupal, etc)
-  • False positive filtering avançado com baseline 404 detection
-  • Scan recursivo com controle de profundidade
-  • Threading otimizado com progress bars em tempo real
-
-[ Performance & Otimizações Avançadas ]
-  • Auto-ajuste inteligente de workers baseado em CPUs disponíveis (até 500 threads)
-  • Connection pooling HTTP otimizado com retry strategy integrada
-  • 3 modos de performance: balanced, fast (8x CPUs), aggressive (10x CPUs)
-  • Estatísticas detalhadas de performance com score calculado automaticamente
-  • Detecção de GPU disponível (informacional - HTTP é I/O bound, não CPU bound)
-  • Pool de conexões configurável para máxima eficiência de rede
-  • Controle granular de workers via CLI (--workers 1-500)
-  • Taxa de sucesso e métricas de rate limiting em tempo real
-
-[ Hash Cracker ]
-  • Detecção automática de 27+ tipos de hash (MD5, SHA1/256/512, NTLM, bcrypt, LM, CRC32, xxHash)
-  • 11 modos de ataque: Dictionary, Brute Force, Mask, Rainbow, Hybrid, Combinator, PRINCE, Toggle Case, Increment, Online
-  • Algoritmos seguros: SHA-256/512, SHA-3, BLAKE2B/S, Argon2, scrypt, bcrypt
-  • Algoritmos legados: MD5, SHA1, LM Hash, MD4, RIPEMD160, Whirlpool  
-  • Checksums rápidos: CRC32, Adler32, xxHash32/64 (>10M hashes/s)
-  • Unix Crypt variants: MD5/SHA-256/SHA-512 crypt ($1$, $5$, $6$)
-  • Rule-based transformations (uppercase, digits, leet speak, years, reverse)
-  • Mask attacks com padrões HashCat (?l ?u ?d ?s ?a)
-  • Performance threading otimizado (até 500 workers em modo aggressive)
-  • Cache inteligente para evitar re-computação de hashes
-  • Estatísticas em tempo real (tentativas/s, progresso, ETA, performance score)
-  • Wordlists integradas + suporte a wordlists customizadas
-  • Online hash lookup em múltiplos serviços
-  • Rainbow tables com geração automática e lookup O(1)
-  • Sistema de help avançado com exemplos e benchmarks
-  
-[ GPU Acceleration - 50-1000x Performance Boost ]
-  • Auto-detecção de NVIDIA CUDA, CuPy e OpenCL
-  • Processamento paralelo massivo (milhares de threads simultâneas)
-  • Memory management otimizado para grandes datasets
-  • Fallback automático para CPU se GPU indisponível
-  • Support para multi-GPU systems
-  • Performance estimation e estatísticas detalhadas
-
 [ Network Monitor - Wireshark-like Interface ]
   • Captura de pacotes em tempo real com interface TUI avançada
   • Análise detalhada de protocolos (TCP, UDP, ICMP, ARP, DNS)
