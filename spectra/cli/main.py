@@ -86,6 +86,13 @@ Exemplos de uso:
   %(prog)s -lfi http://example.com/file?name=test
   %(prog)s -xxe http://example.com/api --xxe-collaborator http://your-server.com
   %(prog)s -idor http://example.com/user/123 --idor-range 1-1000 --test-uuid --test-hash
+  %(prog)s -bvs https://example.com --bvs-timeout 15 --bvs-workers 15
+
+[ Basic Vulnerability Scanner - Vulnerabilidades Básicas ]
+  %(prog)s -bvs https://example.com
+  %(prog)s -bvs https://target.com --bvs-timeout 20 --verbose
+  %(prog)s -bvs https://app.com --bvs-workers 20 --generate-report json
+  %(prog)s -bvs https://site.com --bvs-timeout 15 --report-file basic_vulns
 
 [ XXE Scanner Avançado - XML External Entity ]
   %(prog)s -xxe http://api.example.com/xml
@@ -472,6 +479,20 @@ Exemplos de uso:
                        default=15,
                        help='Timeout para requests XXE em segundos (padrão: 15)')
     
+    # === BASIC VULNERABILITY SCANNER ===
+    parser.add_argument('-bvs', '--basic-vuln-scan',
+                       metavar='URL',
+                       help='Executa scan de vulnerabilidades básicas (open redirect, input validation, etc.)')
+    
+    parser.add_argument('--bvs-timeout',
+                       type=int,
+                       default=10,
+                       help='Timeout para requests do Basic Vuln Scanner em segundos (padrão: 10)')
+    
+    parser.add_argument('--bvs-workers',
+                       type=int,
+                       default=10,
+                       help='Número de workers para Basic Vuln Scanner (padrão: 10)')
 
     
     # === IDOR SCANNER ===
@@ -1211,6 +1232,50 @@ def main():
                 stop_on_first=args.lfi_stop_first
             )
         
+        # === BASIC VULNERABILITY SCANNER ===
+        elif args.basic_vuln_scan:
+            print_info(f"Executando Basic Vulnerability Scanner em: {args.basic_vuln_scan}")
+            
+            from ..modules.basic_vulnerability_scanner import scan_basic_vulnerabilities
+            
+            vulnerabilities = scan_basic_vulnerabilities(
+                url=args.basic_vuln_scan,
+                timeout=args.bvs_timeout,
+                workers=args.bvs_workers
+            )
+            
+            # Converte resultados para formato padrão do Spectra
+            if vulnerabilities:
+                formatted_results = []
+                for vuln in vulnerabilities:
+                    formatted_results.append({
+                        'Risco': vuln.severity.value,
+                        'Tipo': vuln.type.value.replace('_', ' ').title(),
+                        'Detalhe': vuln.description,
+                        'URL': vuln.url,
+                        'Parâmetro': vuln.parameter or 'N/A',
+                        'Payload': vuln.payload or 'N/A',
+                        'Evidência': vuln.evidence or 'N/A',
+                        'Recomendação': vuln.recommendation,
+                        'Confiança': f"{vuln.confidence:.1%}"
+                    })
+                
+                # Salva resultados para relatório
+                results_data = {
+                    'vulnerabilities': formatted_results,
+                    'total': len(vulnerabilities),
+                    'by_severity': {
+                        'Critical': len([v for v in vulnerabilities if v.severity.value == 'Critical']),
+                        'High': len([v for v in vulnerabilities if v.severity.value == 'High']),
+                        'Medium': len([v for v in vulnerabilities if v.severity.value == 'Medium']),
+                        'Low': len([v for v in vulnerabilities if v.severity.value == 'Low']),
+                    }
+                }
+                
+                # Adiciona ao contexto global para relatórios
+                globals()['scan_results'] = formatted_results
+                globals()['scan_data'] = results_data
+        
         # === XXE SCANNER ===
         elif args.xxe_scan:
             print_info(f"Executando scan de XXE em: {args.xxe_scan}")
@@ -1358,8 +1423,8 @@ def main():
             
             # Mostra info de GPU se solicitado
             if args.gpu_info or args.show_performance_estimate:
-                from ..modules.hash_cracker import GPUManager
-                gpu_manager = GPUManager()
+                from ..modules.gpu_manager import EnhancedGPUManager
+                gpu_manager = EnhancedGPUManager()
                 
                 if args.gpu_info:
                     console.print("\n[bold cyan]=== Informações GPU ===[/bold cyan]")
@@ -1377,7 +1442,7 @@ def main():
                             if gpu.compute_capability:
                                 console.print(f"    Compute Capability: {gpu.compute_capability[0]}.{gpu.compute_capability[1]}")
                     else:
-                        console.print("[yellow][-] Nenhuma GPU compatível detectada[/yellow]")
+                        console.print("[yellow][!] Nenhuma GPU compatível detectada[/yellow]")
                 
                 if args.show_performance_estimate:
                     if gpu_manager.is_gpu_available():
@@ -1743,6 +1808,9 @@ def main():
                 elif args.lfi_scan:
                     scan_type = "LFI/RFI"
                     target_url = args.lfi_scan
+                elif args.basic_vuln_scan:
+                    scan_type = "Basic Vulnerabilities"
+                    target_url = args.basic_vuln_scan
                 elif args.xxe_scan:
                     scan_type = "XXE"
                     target_url = args.xxe_scan

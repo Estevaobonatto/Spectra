@@ -928,12 +928,18 @@ class AdvancedIDORScanner:
                                 break
                     
                     # Para httpbin.org/get, verifica se o parâmetro id foi refletido
+                    # REDUÇÃO DE FALSOS POSITIVOS: Sites que apenas ecoam dados não são vulneráveis
                     if 'args' in resp_json and isinstance(resp_json['args'], dict):
                         if 'id' in resp_json['args']:
                             reflected_id = resp_json['args']['id']
-                            if str(reflected_id) == str(test_id):
+                            # Verifica se é um site de teste que apenas ecoa dados
+                            if 'httpbin' in response.url.lower() or 'echo' in response.url.lower():
+                                # Sites de teste que ecoam dados não são vulnerabilidades reais
+                                vulnerability_indicators.append(f"Site de teste detectado - ID ecoado: {reflected_id} (não é vulnerabilidade)")
+                                confidence = max(0.0, confidence - 0.5)  # Reduz confiança significativamente
+                            elif str(reflected_id) == str(test_id):
                                 vulnerability_indicators.append(f"Parâmetro ID refletido corretamente: {reflected_id}")
-                                confidence += 0.3
+                                confidence += 0.1  # Reduzido de 0.3 para 0.1
             except:
                 pass
         
@@ -956,18 +962,23 @@ class AdvancedIDORScanner:
         except:
             pass
         
-        # Status codes que indicam acesso
+        # Status codes que indicam acesso - MELHORADO para reduzir falsos positivos
         if response.status_code == 200:
-            vulnerability_indicators.append("Acesso bem-sucedido (200 OK)")
-            confidence += 0.2
+            # Verifica se é realmente uma vulnerabilidade ou apenas um echo/teste
+            if 'httpbin' in response.url.lower() or 'echo' in response.url.lower():
+                vulnerability_indicators.append("Site de teste - Status 200 (não é vulnerabilidade)")
+                confidence = max(0.0, confidence - 0.3)  # Reduz confiança
+            else:
+                vulnerability_indicators.append("Acesso bem-sucedido (200 OK)")
+                confidence += 0.1  # Reduzido de 0.2 para 0.1
         elif response.status_code in [401, 403]:
             vulnerability_indicators.append(f"Objeto existe mas acesso negado ({response.status_code})")
-            confidence += 0.1
+            confidence += 0.05  # Reduzido de 0.1 para 0.05
         elif response.status_code == 302:
             location = response.headers.get('location', '')
             if location and 'login' not in location.lower():
                 vulnerability_indicators.append(f"Redirecionamento para: {location}")
-                confidence += 0.1
+                confidence += 0.05  # Reduzido de 0.1 para 0.05
         
         # Análise de headers
         suspicious_headers = ['x-user-id', 'x-account-id', 'x-profile-id', 'x-customer-id']
@@ -1002,6 +1013,13 @@ class AdvancedIDORScanner:
         
         confidence *= technique_confidence.get(technique, 0.5)
         confidence = min(confidence, 1.0)
+        
+        # LIMIAR MÍNIMO DE CONFIANÇA para reduzir falsos positivos
+        MIN_CONFIDENCE_THRESHOLD = 0.3
+        
+        # Se a confiança é muito baixa, não considera como vulnerabilidade
+        if confidence < MIN_CONFIDENCE_THRESHOLD:
+            return False, ["Confiança muito baixa - possível falso positivo"], 0.0
         
         return len(vulnerability_indicators) > 0, vulnerability_indicators, confidence
 

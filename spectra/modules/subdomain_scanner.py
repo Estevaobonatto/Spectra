@@ -600,7 +600,20 @@ class SubdomainScanner:
         if not subdomain:
             return None
         
+        # Validar subdomain antes de usar
+        if not subdomain.strip() or len(subdomain) > 63 or len(subdomain) == 0:
+            return None
+            
+        # Remover caracteres inválidos
+        subdomain = subdomain.strip().lower()
+        if not subdomain or not subdomain.replace('-', '').replace('_', '').isalnum():
+            return None
+        
         full_domain = f"{subdomain}.{self.domain}"
+        
+        # Validar comprimento total do domínio
+        if len(full_domain) > 253:
+            return None
         
         try:
             # Resolução básica
