@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-Module Registry for Spectra - Centralized module management and discovery
+Module Registry for Spectra - Central registry for all module metadata
 """
 
 import os
-import importlib
-import inspect
+import json
 from typing import Dict, List, Optional, Set
 from collections import defaultdict
+import difflib
 
 from ..module_metadata import ModuleMetadata, ModuleCategory
 from ..logger import get_logger
@@ -16,21 +16,21 @@ logger = get_logger(__name__)
 
 
 class ModuleRegistry:
-    """Central registry for all Spectra modules and their metadata"""
+    """Central registry for managing module metadata"""
     
     def __init__(self):
         self.modules: Dict[str, ModuleMetadata] = {}
         self.categories: Dict[ModuleCategory, List[str]] = defaultdict(list)
         self.cli_commands: Dict[str, str] = {}  # CLI command -> module name mapping
-        self.tags: Dict[str, Set[str]] = defaultdict(set)  # tag -> set of module names
+        self.tags_index: Dict[str, Set[str]] = defaultdict(set)  # tag -> module names
         self._initialized = False
-        
+    
     def register_module(self, metadata: ModuleMetadata) -> bool:
         """
-        Register a module with its metadata
+        Register a module in the registry
         
         Args:
-            metadata: ModuleMetadata instance
+            metadata: Module metadata to register
             
         Returns:
             bool: True if registration successful, False otherwise
@@ -41,35 +41,30 @@ class ModuleRegistry:
                 logger.error(f"Cannot register module with empty name")
                 return False
             
+            # Check for duplicate module names
             if metadata.name in self.modules:
                 logger.warning(f"Module '{metadata.name}' already registered, updating...")
+            
+            # Check for duplicate CLI commands
+            if metadata.cli_command:
+                existing_module = self.cli_commands.get(metadata.cli_command)
+                if existing_module and existing_module != metadata.name:
+                    logger.error(f"CLI command '{metadata.cli_command}' already used by module '{existing_module}'")
+                    return False
+                self.cli_commands[metadata.cli_command] = metadata.name
             
             # Register the module
             self.modules[metadata.name] = metadata
             
-            # Update category mapping
+            # Update category index
             if metadata.name not in self.categories[metadata.category]:
                 self.categories[metadata.category].append(metadata.name)
             
-            # Update CLI command mapping
-            if metadata.cli_command:
-                if metadata.cli_command in self.cli_commands:
-                    existing_module = self.cli_commands[metadata.cli_command]
-                    logger.warning(f"CLI command '{metadata.cli_command}' already mapped to '{existing_module}', overriding with '{metadata.name}'")
-                self.cli_commands[metadata.cli_command] = metadata.name
-            
-            # Update CLI aliases
-            for alias in metadata.cli_aliases:
-                if alias in self.cli_commands:
-                    existing_module = self.cli_commands[alias]
-                    logger.warning(f"CLI alias '{alias}' already mapped to '{existing_module}', overriding with '{metadata.name}'")
-                self.cli_commands[alias] = metadata.name
-            
-            # Update tag mapping
+            # Update tags index
             for tag in metadata.tags:
-                self.tags[tag.lower()].add(metadata.name)
+                self.tags_index[tag.lower()].add(metadata.name)
             
-            logger.debug(f"Successfully registered module: {metadata.name}")
+            logger.info(f"Successfully registered module: {metadata.name}")
             return True
             
         except Exception as e:
@@ -78,7 +73,7 @@ class ModuleRegistry:
     
     def unregister_module(self, module_name: str) -> bool:
         """
-        Unregister a module
+        Unregister a module from the registry
         
         Args:
             module_name: Name of module to unregister
@@ -96,24 +91,19 @@ class ModuleRegistry:
             # Remove from modules
             del self.modules[module_name]
             
-            # Remove from category mapping
+            # Remove from category index
             if module_name in self.categories[metadata.category]:
                 self.categories[metadata.category].remove(module_name)
             
-            # Remove from CLI command mapping
-            cli_commands_to_remove = []
-            for cmd, mod_name in self.cli_commands.items():
-                if mod_name == module_name:
-                    cli_commands_to_remove.append(cmd)
+            # Remove from CLI commands
+            if metadata.cli_command in self.cli_commands:
+                del self.cli_commands[metadata.cli_command]
             
-            for cmd in cli_commands_to_remove:
-                del self.cli_commands[cmd]
+            # Remove from tags index
+            for tag in metadata.tags:
+                self.tags_index[tag.lower()].discard(module_name)
             
-            # Remove from tag mapping
-            for tag, module_set in self.tags.items():
-                module_set.discard(module_name)
-            
-            logger.debug(f"Successfully unregistered module: {module_name}")
+            logger.info(f"Successfully unregistered module: {module_name}")
             return True
             
         except Exception as e:
@@ -146,20 +136,20 @@ class ModuleRegistry:
         Get all modules in a specific category
         
         Args:
-            category: ModuleCategory enum value
+            category: Module category
             
         Returns:
-            List of ModuleMetadata objects
+            List of module metadata
         """
         module_names = self.categories.get(category, [])
         return [self.modules[name] for name in module_names if name in self.modules]
     
     def get_all_categories(self) -> Dict[ModuleCategory, List[str]]:
         """
-        Get all categories with their module names
+        Get all categories and their modules
         
         Returns:
-            Dictionary mapping categories to module name lists
+            Dictionary mapping categories to module names
         """
         return dict(self.categories)
     
@@ -168,318 +158,331 @@ class ModuleRegistry:
         Get all registered modules
         
         Returns:
-            List of all ModuleMetadata objects
+            List of all module metadata
         """
         return list(self.modules.values())
     
-    def search_modules(self, query: str, fuzzy: bool = True) -> List[ModuleMetadata]:
+    def search_modules(self, query: str, limit: int = 10) -> List[ModuleMetadata]:
         """
         Search modules by name, description, or tags
         
         Args:
-            query: Search query string
-            fuzzy: Enable fuzzy matching
+            query: Search query
+            limit: Maximum number of results
             
         Returns:
-            List of matching ModuleMetadata objects
+            List of matching modules, sorted by relevance
         """
-        query_lower = query.lower()
-        matches = []
+        if not query:
+            return []
         
-        for metadata in self.modules.values():
+        query_lower = query.lower()
+        results = []
+        
+        for module in self.modules.values():
             score = 0
             
-            # Exact name match (highest priority)
-            if query_lower == metadata.name.lower():
+            # Exact name match gets highest score
+            if query_lower == module.name.lower():
                 score += 100
-            elif query_lower in metadata.name.lower():
+            elif query_lower in module.name.lower():
                 score += 50
             
             # Display name match
-            if query_lower in metadata.display_name.lower():
-                score += 40
+            if query_lower in module.display_name.lower():
+                score += 30
             
             # Description match
-            if query_lower in metadata.description.lower():
+            if query_lower in module.description.lower():
                 score += 20
             
             # Detailed description match
-            if metadata.detailed_description and query_lower in metadata.detailed_description.lower():
+            if module.detailed_description and query_lower in module.detailed_description.lower():
                 score += 10
             
             # Tag match
-            for tag in metadata.tags:
+            for tag in module.tags:
                 if query_lower in tag.lower():
-                    score += 30
-                    break
+                    score += 25
             
             # CLI command match
-            if metadata.cli_command and query_lower in metadata.cli_command.lower():
-                score += 35
+            if module.cli_command and query_lower in module.cli_command.lower():
+                score += 40
             
-            # Fuzzy matching for typos
-            if fuzzy and score == 0:
-                if self._fuzzy_match(query_lower, metadata.name.lower()):
-                    score += 15
-                elif self._fuzzy_match(query_lower, metadata.display_name.lower()):
-                    score += 10
+            # Category match
+            if query_lower in module.category.value.lower():
+                score += 15
             
             if score > 0:
-                matches.append((score, metadata))
+                results.append((score, module))
         
-        # Sort by score (descending) and return metadata objects
-        matches.sort(key=lambda x: x[0], reverse=True)
-        return [metadata for score, metadata in matches]
+        # Sort by score (descending) and return modules
+        results.sort(key=lambda x: x[0], reverse=True)
+        return [module for score, module in results[:limit]]
     
-    def search_by_tag(self, tag: str) -> List[ModuleMetadata]:
+    def suggest_similar_modules(self, query: str, limit: int = 5) -> List[str]:
         """
-        Search modules by tag
+        Suggest similar module names using fuzzy matching
+        
+        Args:
+            query: Query that didn't match any modules
+            limit: Maximum number of suggestions
+            
+        Returns:
+            List of similar module names
+        """
+        all_names = list(self.modules.keys()) + list(self.cli_commands.keys())
+        suggestions = difflib.get_close_matches(query, all_names, n=limit, cutoff=0.6)
+        return suggestions
+    
+    def get_modules_by_tag(self, tag: str) -> List[ModuleMetadata]:
+        """
+        Get modules that have a specific tag
         
         Args:
             tag: Tag to search for
             
         Returns:
-            List of ModuleMetadata objects with the tag
+            List of modules with the tag
         """
-        tag_lower = tag.lower()
-        if tag_lower in self.tags:
-            module_names = self.tags[tag_lower]
-            return [self.modules[name] for name in module_names if name in self.modules]
-        return []
+        module_names = self.tags_index.get(tag.lower(), set())
+        return [self.modules[name] for name in module_names if name in self.modules]
     
-    def get_module_suggestions(self, invalid_name: str, max_suggestions: int = 5) -> List[str]:
+    def get_related_modules(self, module_name: str) -> List[ModuleMetadata]:
         """
-        Get suggestions for invalid module names
+        Get modules related to a specific module
         
         Args:
-            invalid_name: The invalid module name
-            max_suggestions: Maximum number of suggestions
+            module_name: Name of the module
             
         Returns:
-            List of suggested module names
+            List of related modules
         """
-        suggestions = []
-        invalid_lower = invalid_name.lower()
+        if module_name not in self.modules:
+            return []
         
-        # Calculate similarity scores
-        for module_name in self.modules.keys():
-            similarity = self._calculate_similarity(invalid_lower, module_name.lower())
-            if similarity > 0.3:  # Threshold for suggestions
-                suggestions.append((similarity, module_name))
+        module = self.modules[module_name]
+        related = []
         
-        # Sort by similarity and return top suggestions
-        suggestions.sort(key=lambda x: x[0], reverse=True)
-        return [name for score, name in suggestions[:max_suggestions]]
-    
-    def get_cli_command_mapping(self) -> Dict[str, str]:
-        """
-        Get mapping of CLI commands to module names
+        # Get explicitly related modules
+        for related_name in module.related_modules:
+            if related_name in self.modules:
+                related.append(self.modules[related_name])
         
-        Returns:
-            Dictionary mapping CLI commands to module names
-        """
-        return self.cli_commands.copy()
-    
-    def get_statistics(self) -> Dict[str, int]:
-        """
-        Get registry statistics
+        # Get modules in same category (if not too many)
+        category_modules = self.get_modules_by_category(module.category)
+        if len(category_modules) <= 10:  # Only if category isn't too large
+            for cat_module in category_modules:
+                if cat_module.name != module_name and cat_module not in related:
+                    related.append(cat_module)
         
-        Returns:
-            Dictionary with registry statistics
-        """
-        stats = {
-            'total_modules': len(self.modules),
-            'total_categories': len([cat for cat in self.categories if self.categories[cat]]),
-            'total_cli_commands': len(self.cli_commands),
-            'total_tags': len([tag for tag in self.tags if self.tags[tag]])
-        }
-        
-        # Add per-category counts
-        for category in ModuleCategory:
-            count = len(self.categories.get(category, []))
-            stats[f'{category.value}_modules'] = count
-        
-        return stats
+        return related
     
     def validate_registry(self) -> Dict[str, List[str]]:
         """
-        Validate registry for consistency issues
+        Validate the entire registry for consistency
         
         Returns:
             Dictionary with validation issues
         """
         issues = {
             'errors': [],
-            'warnings': []
+            'warnings': [],
+            'missing_references': []
         }
         
-        # Check for orphaned CLI commands
-        for cli_cmd, module_name in self.cli_commands.items():
-            if module_name not in self.modules:
-                issues['errors'].append(f"CLI command '{cli_cmd}' points to non-existent module '{module_name}'")
+        # Check for missing related modules
+        for module in self.modules.values():
+            for related_name in module.related_modules:
+                if related_name not in self.modules:
+                    issues['missing_references'].append(
+                        f"Module '{module.name}' references non-existent module '{related_name}'"
+                    )
         
-        # Check for modules without CLI commands
-        modules_without_cli = []
-        for module_name, metadata in self.modules.items():
-            if not metadata.cli_command:
-                modules_without_cli.append(module_name)
+        # Check for duplicate CLI commands
+        cli_usage = defaultdict(list)
+        for module in self.modules.values():
+            if module.cli_command:
+                cli_usage[module.cli_command].append(module.name)
         
-        if modules_without_cli:
-            issues['warnings'].append(f"Modules without CLI commands: {', '.join(modules_without_cli)}")
+        for cli_cmd, modules in cli_usage.items():
+            if len(modules) > 1:
+                issues['errors'].append(
+                    f"CLI command '{cli_cmd}' used by multiple modules: {', '.join(modules)}"
+                )
         
-        # Check for empty categories
-        empty_categories = []
-        for category in ModuleCategory:
-            if not self.categories.get(category):
-                empty_categories.append(category.value)
-        
-        if empty_categories:
-            issues['warnings'].append(f"Empty categories: {', '.join(empty_categories)}")
+        # Check category distribution
+        for category, modules in self.categories.items():
+            if len(modules) == 0:
+                issues['warnings'].append(f"Category '{category.value}' has no modules")
+            elif len(modules) > 15:
+                issues['warnings'].append(f"Category '{category.value}' has many modules ({len(modules)})")
         
         return issues
     
-    def auto_discover_modules(self, modules_path: str = None) -> int:
+    def export_registry(self, file_path: str) -> bool:
         """
-        Automatically discover and register modules from the modules directory
+        Export registry to JSON file
         
         Args:
-            modules_path: Path to modules directory (defaults to spectra/modules)
+            file_path: Path to export file
             
         Returns:
-            Number of modules discovered and registered
+            bool: True if export successful
         """
-        if modules_path is None:
-            # Default to spectra/modules relative to this file
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            modules_path = os.path.join(current_dir, '..', '..', 'modules')
-        
-        if not os.path.exists(modules_path):
-            logger.error(f"Modules path does not exist: {modules_path}")
-            return 0
-        
-        discovered_count = 0
-        
-        # Scan for Python files in modules directory
-        for filename in os.listdir(modules_path):
-            if filename.endswith('.py') and not filename.startswith('__'):
-                module_name = filename[:-3]  # Remove .py extension
-                
-                try:
-                    # Try to import the module
-                    module_path = f"spectra.modules.{module_name}"
-                    module = importlib.import_module(module_path)
-                    
-                    # Look for METADATA attribute
-                    if hasattr(module, 'METADATA'):
-                        metadata = module.METADATA
-                        if isinstance(metadata, ModuleMetadata):
-                            if self.register_module(metadata):
-                                discovered_count += 1
-                                logger.debug(f"Auto-discovered module: {module_name}")
-                        else:
-                            logger.warning(f"Module {module_name} has invalid METADATA attribute")
-                    else:
-                        logger.debug(f"Module {module_name} has no METADATA attribute")
-                        
-                except ImportError as e:
-                    logger.debug(f"Could not import module {module_name}: {e}")
-                except Exception as e:
-                    logger.error(f"Error processing module {module_name}: {e}")
-        
-        logger.info(f"Auto-discovered {discovered_count} modules")
-        return discovered_count
-    
-    def _fuzzy_match(self, query: str, target: str, threshold: float = 0.6) -> bool:
-        """
-        Simple fuzzy matching using character overlap
-        
-        Args:
-            query: Query string
-            target: Target string
-            threshold: Minimum similarity threshold
-            
-        Returns:
-            True if strings are similar enough
-        """
-        if len(query) == 0 or len(target) == 0:
-            return False
-        
-        # Simple character-based similarity
-        query_chars = set(query)
-        target_chars = set(target)
-        
-        intersection = len(query_chars.intersection(target_chars))
-        union = len(query_chars.union(target_chars))
-        
-        similarity = intersection / union if union > 0 else 0
-        return similarity >= threshold
-    
-    def _calculate_similarity(self, str1: str, str2: str) -> float:
-        """
-        Calculate similarity between two strings using Levenshtein-like algorithm
-        
-        Args:
-            str1: First string
-            str2: Second string
-            
-        Returns:
-            Similarity score between 0 and 1
-        """
-        if str1 == str2:
-            return 1.0
-        
-        if len(str1) == 0 or len(str2) == 0:
-            return 0.0
-        
-        # Simple character overlap similarity
-        chars1 = set(str1)
-        chars2 = set(str2)
-        
-        intersection = len(chars1.intersection(chars2))
-        union = len(chars1.union(chars2))
-        
-        char_similarity = intersection / union if union > 0 else 0
-        
-        # Length similarity
-        max_len = max(len(str1), len(str2))
-        min_len = min(len(str1), len(str2))
-        length_similarity = min_len / max_len if max_len > 0 else 0
-        
-        # Combined similarity
-        return (char_similarity + length_similarity) / 2
-    
-    def initialize(self) -> bool:
-        """
-        Initialize the registry by auto-discovering modules
-        
-        Returns:
-            True if initialization successful
-        """
-        if self._initialized:
-            logger.debug("Registry already initialized")
-            return True
-        
         try:
-            discovered = self.auto_discover_modules()
-            self._initialized = True
-            logger.info(f"Registry initialized with {discovered} modules")
+            export_data = {
+                'modules': {name: module.to_dict() for name, module in self.modules.items()},
+                'metadata': {
+                    'total_modules': len(self.modules),
+                    'categories': {cat.value: len(modules) for cat, modules in self.categories.items()},
+                    'export_timestamp': __import__('datetime').datetime.now().isoformat()
+                }
+            }
+            
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(export_data, f, indent=2, ensure_ascii=False)
+            
+            logger.info(f"Registry exported to {file_path}")
             return True
+            
         except Exception as e:
-            logger.error(f"Failed to initialize registry: {e}")
+            logger.error(f"Failed to export registry: {e}")
             return False
+    
+    def import_registry(self, file_path: str) -> bool:
+        """
+        Import registry from JSON file
+        
+        Args:
+            file_path: Path to import file
+            
+        Returns:
+            bool: True if import successful
+        """
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                import_data = json.load(f)
+            
+            # Clear current registry
+            self.modules.clear()
+            self.categories.clear()
+            self.cli_commands.clear()
+            self.tags_index.clear()
+            
+            # Import modules
+            modules_data = import_data.get('modules', {})
+            for module_name, module_data in modules_data.items():
+                try:
+                    metadata = ModuleMetadata.from_dict(module_data)
+                    self.register_module(metadata)
+                except Exception as e:
+                    logger.error(f"Failed to import module '{module_name}': {e}")
+            
+            logger.info(f"Registry imported from {file_path} ({len(self.modules)} modules)")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to import registry: {e}")
+            return False
+    
+    def get_statistics(self) -> Dict[str, any]:
+        """
+        Get registry statistics
+        
+        Returns:
+            Dictionary with statistics
+        """
+        stats = {
+            'total_modules': len(self.modules),
+            'categories': {},
+            'cli_commands': len(self.cli_commands),
+            'total_parameters': 0,
+            'total_examples': 0,
+            'modules_with_use_cases': 0,
+            'modules_with_tags': 0
+        }
+        
+        # Category statistics
+        for category, modules in self.categories.items():
+            stats['categories'][category.value] = len(modules)
+        
+        # Module content statistics
+        for module in self.modules.values():
+            stats['total_parameters'] += len(module.parameters)
+            stats['total_examples'] += len(module.examples)
+            
+            if module.use_cases:
+                stats['modules_with_use_cases'] += 1
+            
+            if module.tags:
+                stats['modules_with_tags'] += 1
+        
+        return stats
+    
+    def __len__(self) -> int:
+        """Return number of registered modules"""
+        return len(self.modules)
+    
+    def __contains__(self, module_name: str) -> bool:
+        """Check if module is registered"""
+        return module_name in self.modules
+    
+    def __iter__(self):
+        """Iterate over module names"""
+        return iter(self.modules.keys())
     
     def is_initialized(self) -> bool:
-        """Check if registry is initialized"""
-        return self._initialized
+        """Check if registry has been initialized with modules"""
+        return len(self.modules) > 0
     
     def clear(self):
         """Clear all registered modules"""
         self.modules.clear()
         self.categories.clear()
         self.cli_commands.clear()
-        self.tags.clear()
+        self.tags_index.clear()
         self._initialized = False
-        logger.debug("Registry cleared")
+        logger.info("Module registry cleared")
+    
+    def get_cli_command_mapping(self) -> Dict[str, str]:
+        """Get mapping of CLI commands to module names"""
+        return dict(self.cli_commands)
+    
+    def get_module_suggestions(self, query: str, limit: int = 5) -> List[str]:
+        """Get module name suggestions for a query"""
+        return self.suggest_similar_modules(query, limit)
+    
+    def search_modules_fuzzy(self, query: str, fuzzy: bool = True, limit: int = 10) -> List[ModuleMetadata]:
+        """Search modules with optional fuzzy matching"""
+        if fuzzy:
+            # Use existing search_modules method
+            return self.search_modules(query, limit)
+        else:
+            # Exact matching only
+            results = []
+            query_lower = query.lower()
+            
+            for module in self.modules.values():
+                if (query_lower in module.name.lower() or 
+                    query_lower in module.display_name.lower() or
+                    query_lower in module.description.lower()):
+                    results.append(module)
+                    if len(results) >= limit:
+                        break
+            
+            return results
+    
+    def auto_discover_modules(self) -> int:
+        """Auto-discover modules using the discovery system"""
+        try:
+            from .module_discovery import get_module_discovery
+            discovery = get_module_discovery()
+            return discovery.discover_all_modules()
+        except ImportError:
+            logger.warning("Module discovery not available")
+            return 0
 
 
 # Global registry instance
@@ -487,27 +490,21 @@ _global_registry = None
 
 
 def get_registry() -> ModuleRegistry:
-    """
-    Get the global module registry instance
-    
-    Returns:
-        ModuleRegistry instance
-    """
+    """Get the global module registry instance"""
     global _global_registry
     if _global_registry is None:
         _global_registry = ModuleRegistry()
-        _global_registry.initialize()
     return _global_registry
 
 
 def register_module(metadata: ModuleMetadata) -> bool:
     """
-    Convenience function to register a module with the global registry
+    Convenience function to register a module in the global registry
     
     Args:
-        metadata: ModuleMetadata instance
+        metadata: Module metadata to register
         
     Returns:
-        True if registration successful
+        bool: True if registration successful
     """
     return get_registry().register_module(metadata)

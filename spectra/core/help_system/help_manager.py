@@ -50,7 +50,7 @@ class HelpManager:
         try:
             # Ensure registry is initialized
             if not self.registry.is_initialized():
-                self.registry.initialize()
+                self.registry.auto_discover_modules()
             
             # Get modules organized by category
             modules_by_category = {}
@@ -179,7 +179,7 @@ class HelpManager:
                 return "Please provide a search query."
             
             # Search modules
-            results = self.registry.search_modules(query, fuzzy=True)
+            results = self.registry.search_modules_fuzzy(query, fuzzy=True)
             
             # Limit results
             if len(results) > max_results:

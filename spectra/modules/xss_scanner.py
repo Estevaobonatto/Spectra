@@ -37,6 +37,20 @@ from ..core.console import create_progress
 from ..core.logger import get_logger
 from ..utils.network import create_session
 
+# Import metadata for help system
+try:
+    from .xss_scanner_metadata import METADATA
+except ImportError:
+    METADATA = None
+
+# Register module with help system
+if METADATA:
+    try:
+        from ..core.help_system import register_module
+        register_module(METADATA)
+    except ImportError:
+        pass
+
 
 class XSSScanner:
     """Scanner avançado para detecção de vulnerabilidades XSS."""
