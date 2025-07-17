@@ -10,12 +10,12 @@ def display_banner():
     """Exibe o banner da ferramenta e as informações iniciais."""
     banner = """
     
-                                   d8P                     
-                                d888888P                   
- .d888b,?88,.d88b, d8888b d8888b  ?88'    88bd88b d888b8b  
- ?8b,   `?88'  ?88d8b_,dPd8P' `P  88P     88P'  `d8P' ?88  
-   `?8b   88b  d8P88b    88b      88b    d88     88b  ,88b 
-`?888P'   888888P'`?888P'`?888P'  `?8b  d88'     `?88P'`88b
+                                    d8P                     
+                                  d888888P                   
+ .d888b,?88,.d88b,  d8888b  d8888b  ?88'    88bd88b d888b8b  
+ ?8b,   `?88'  ?88 d8b_,dP d8P' `P  88P     88P'  `d8P' ?88  
+   `?8b   88b  d8P 88b     88b      88b    d88     88b  ,88b 
+`?888P'   888888P' `?888P' `?888P'  `?8b  d88'     `?88P'`88b
           88P'                                             
          d88                                               
          ?8P                                               

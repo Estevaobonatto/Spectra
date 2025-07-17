@@ -1241,7 +1241,8 @@ def main():
             vulnerabilities = scan_basic_vulnerabilities(
                 url=args.basic_vuln_scan,
                 timeout=args.bvs_timeout,
-                workers=args.bvs_workers
+                workers=args.bvs_workers,
+                verbose=args.verbose
             )
             
             # Converte resultados para formato padrão do Spectra
