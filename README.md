@@ -65,6 +65,9 @@ git clone https://github.com/spectra-team/spectra.git
 cd spectra
 pip install -r requirements.txt
 python setup.py install
+
+# Via APT
+
 ```
 
 ### **Verificar instalação:**
