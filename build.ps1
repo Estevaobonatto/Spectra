@@ -57,8 +57,12 @@ function Run-Security {
 
 function Build-Package {
     Write-Host "📦 Construindo pacote..." -ForegroundColor Yellow
-    if (Test-Path "dist") { Remove-Item -Recurse -Force "dist" }
-    if (Test-Path "build") { Remove-Item -Recurse -Force "build" }
+    if (Test-Path "dist") { 
+        Remove-Item -Recurse -Force "dist" 
+    }
+    if (Test-Path "build") { 
+        Remove-Item -Recurse -Force "build" 
+    }
     python -m build
     Write-Host "✅ Pacote construído em dist/" -ForegroundColor Green
 }
@@ -67,37 +71,65 @@ function Clean-Files {
     Write-Host "🧹 Limpando arquivos temporários..." -ForegroundColor Yellow
     
     # Remove __pycache__
-    Get-ChildItem -Recurse -Name "__pycache__" | Remove-Item -Recurse -Force
+    Get-ChildItem -Recurse -Name "__pycache__" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
     
     # Remove .pyc files
-    Get-ChildItem -Recurse -Name "*.pyc" | Remove-Item -Force
+    Get-ChildItem -Recurse -Name "*.pyc" | Remove-Item -Force -ErrorAction SilentlyContinue
     
     # Remove build directories
-    if (Test-Path "build") { Remove-Item -Recurse -Force "build" }
-    if (Test-Path "dist") { Remove-Item -Recurse -Force "dist" }
-    if (Test-Path ".coverage") { Remove-Item -Force ".coverage" }
-    if (Test-Path "htmlcov") { Remove-Item -Recurse -Force "htmlcov" }
-    if (Test-Path ".pytest_cache") { Remove-Item -Recurse -Force ".pytest_cache" }
+    if (Test-Path "build") { 
+        Remove-Item -Recurse -Force "build" 
+    }
+    if (Test-Path "dist") { 
+        Remove-Item -Recurse -Force "dist" 
+    }
+    if (Test-Path ".coverage") { 
+        Remove-Item -Force ".coverage" 
+    }
+    if (Test-Path "htmlcov") { 
+        Remove-Item -Recurse -Force "htmlcov" 
+    }
+    if (Test-Path ".pytest_cache") { 
+        Remove-Item -Recurse -Force ".pytest_cache" 
+    }
     
     Write-Host "✅ Limpeza concluída" -ForegroundColor Green
 }
 
 function Run-ReleaseCheck {
     Write-Host "🚀 Executando verificação completa..." -ForegroundColor Yellow
-    .\release-check.ps1
+    & ".\release-check.ps1"
 }
 
 # Executar ação baseada no parâmetro
 switch ($Action.ToLower()) {
-    "help" { Show-Help }
-    "install" { Install-Dependencies }
-    "test" { Run-Tests }
-    "format" { Format-Code }
-    "lint" { Run-Lint }
-    "security" { Run-Security }
-    "build" { Build-Package }
-    "clean" { Clean-Files }
-    "release-check" { Run-ReleaseCheck }
+    "help" { 
+        Show-Help 
+    }
+    "install" { 
+        Install-Dependencies 
+    }
+    "test" { 
+        Run-Tests 
+    }
+    "format" { 
+        Format-Code 
+    }
+    "lint" { 
+        Run-Lint 
+    }
+    "security" { 
+        Run-Security 
+    }
+    "build" { 
+        Build-Package 
+    }
+    "clean" { 
+        Clean-Files 
+    }
+    "release-check" { 
+        Run-ReleaseCheck 
+    }
     default { 
         Write-Host "❌ Ação desconhecida: $Action" -ForegroundColor Red
         Show-Help 
