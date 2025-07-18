@@ -1,4 +1,14 @@
-# 🔍 Spectra - Web Security Suite
+                                    d8P                     
+                                  d888888P                   
+ .d888b,?88,.d88b,  d8888b  d8888b  ?88'    88bd88b d888b8b  
+ ?8b,   `?88'  ?88 d8b_,dP d8P' `P  88P     88P'  `d8P' ?88  
+   `?8b   88b  d8P 88b     88b      88b    d88     88b  ,88b 
+`?888P'   888888P' `?888P' `?888P'  `?8b  d88'     `?88P'`88b
+          88P'                                             
+         d88                                               
+         ?8P                                               
+
+                     by iuawsyukboasfuilj
 
 [![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/spectra-team/spectra)
 [![Python](https://img.shields.io/badge/python-3.6+-green.svg)](https://python.org)
