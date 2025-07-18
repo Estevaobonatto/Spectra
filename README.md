@@ -1,3 +1,4 @@
+```bash
                                     d8P                     
                                   d888888P                   
  .d888b,?88,.d88b,  d8888b  d8888b  ?88'    88bd88b d888b8b  
@@ -9,6 +10,7 @@
          ?8P                                               
 
                      by iuawsyukboasfuilj
+```
 
 [![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/spectra-team/spectra)
 [![Python](https://img.shields.io/badge/python-3.6+-green.svg)](https://python.org)
