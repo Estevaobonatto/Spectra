@@ -81,7 +81,7 @@ class ReportGenerator:
                 "scan_type": self.scan_type,
                 "timestamp": self.timestamp.isoformat(),
                 "total_vulnerabilities": len(self.scan_results),
-                "scanner_version": "Spectra v3.2.6",
+                "scanner_version": "Spectra v1.0.0",
                 "duration": getattr(self, 'scan_duration', 'N/A')
             },
             "summary": {
@@ -115,7 +115,7 @@ class ReportGenerator:
 
         # Criar elemento raiz
         root = ET.Element("SpectraSecurityReport")
-        root.set("version", "3.2.6")
+        root.set("version", "1.0.0")
         root.set("generated", self.timestamp.isoformat())
 
         # Informações do scan
@@ -124,7 +124,7 @@ class ReportGenerator:
         ET.SubElement(scan_info, "ScanType").text = self.scan_type
         ET.SubElement(scan_info, "Timestamp").text = self.timestamp.isoformat()
         ET.SubElement(scan_info, "TotalVulnerabilities").text = str(len(self.scan_results))
-        ET.SubElement(scan_info, "ScannerVersion").text = "Spectra v3.2.6"
+        ET.SubElement(scan_info, "ScannerVersion").text = "Spectra v1.0.0"
 
         # Resumo
         summary = ET.SubElement(root, "Summary")
@@ -310,7 +310,7 @@ class ReportGenerator:
     <div class="container">
         <div class="header">
             <h1>🛡️ Relatório de Segurança</h1>
-            <p>Gerado por Spectra Security Scanner v3.2.6</p>
+            <p>Gerado por Spectra Security Scanner v1.0.0</p>
             <p>Alvo: {self.target_url} | Tipo: {self.scan_type} | Data: {self.timestamp.strftime('%d/%m/%Y %H:%M:%S')}</p>
         </div>
         

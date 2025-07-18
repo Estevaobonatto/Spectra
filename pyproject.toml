@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spectra-suite"
-version = "3.2.6"
+version = "1.0.0"
 description = "Spectra - Web Security Suite - Uma ferramenta de hacking ético para análise de segurança web"
 readme = "README.md"
 license = {text = "MIT"}

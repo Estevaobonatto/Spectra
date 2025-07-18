@@ -1,6 +1,6 @@
 # 🔍 Spectra - Web Security Suite
 
-[![Version](https://img.shields.io/badge/version-3.2.6-blue.svg)](https://github.com/spectra-team/spectra)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/spectra-team/spectra)
 [![Python](https://img.shields.io/badge/python-3.6+-green.svg)](https://python.org)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Security](https://img.shields.io/badge/security-ethical%20hacking-red.svg)](SECURITY.md)

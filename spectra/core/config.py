@@ -12,7 +12,7 @@ class Config:
     
     def __init__(self):
         self.app_name = "Spectra"
-        self.version = "3.2.6"
+        self.version = "1.0.0"
         self.cache_dir = ".spectra_cache"
         self.cve_cache_file = os.path.join(self.cache_dir, "cve_cache.json")
         self.cache_duration_hours = 24

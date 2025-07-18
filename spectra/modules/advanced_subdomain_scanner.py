@@ -694,7 +694,7 @@ class AdvancedSubdomainScanner:
         start_time = time.time()
         
         print_separator(60)
-        print_info("Scanner Avançado de Subdomínios - Spectra v3.2.6")
+        print_info("Scanner Avançado de Subdomínios - Spectra v1.0.0")
         print_info(f"Alvo: [bold cyan]{self.domain}[/bold cyan]")
         features = []
         if self.enable_passive:

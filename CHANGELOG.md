@@ -5,71 +5,53 @@ Todas as mudanças notáveis neste projeto serão documentadas neste arquivo.
 O formato é baseado em [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 e este projeto adere ao [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.2.6] - 2024-12-XX
+## [1.0.0] - 2024-12-XX - 🎉 PRIMEIRO LANÇAMENTO OFICIAL
 
-### 🚀 Adicionado
-- **Sistema de Help Avançado**: Metadata estruturada para todos os módulos
-- **Modo Verbose**: Logs detalhados para debugging e aprendizado
-- **Instruções de Teste**: Guias práticos para exploração manual
-- **GPU Hash Cracking**: Aceleração CUDA/OpenCL para quebra de hash
-- **Network Monitor**: Interface TUI similar ao Wireshark
-- **Basic Vulnerability Scanner**: Scanner de vulnerabilidades básicas
-- **XXE Scanner**: Detecção de XML External Entity
-- **IDOR Scanner**: Insecure Direct Object Reference
-- **Rainbow Tables**: Lookup instantâneo O(1) para hashes
+### 🚀 Funcionalidades Principais
+- **15+ Módulos de Segurança**: SQL Injection, XSS, IDOR, XXE, Command Injection, LFI/RFI
+- **Scanner de Diretórios Avançado**: Competitivo com Dirsearch/Feroxbuster/Gobuster
+- **Hash Cracker GPU**: 27+ algoritmos, 11 modos de ataque, aceleração CUDA/OpenCL
+- **Network Monitor**: Interface TUI similar ao Wireshark para análise de tráfego
+- **Detector de Tecnologias**: 500+ tecnologias web suportadas
+- **Basic Vulnerability Scanner**: Scanner de vulnerabilidades básicas web
 
-### 🔧 Melhorado
-- **Performance**: Connection pooling e rate limiting adaptativo
-- **Directory Scanner**: Competitivo com Dirsearch/Feroxbuster
-- **Hash Cracker**: 27+ algoritmos, 11 modos de ataque
-- **Technology Detector**: 500+ tecnologias suportadas
-- **SQL Injection**: Detecção avançada com bypass de WAF
+### 🔍 Módulos de Scanning
+- **Port Scanner**: TCP, SYN e UDP com detecção de serviços
+- **Directory Scanner**: Descoberta de diretórios e arquivos com performance otimizada
+- **Subdomain Scanner**: Descoberta passiva e ativa com Certificate Transparency
+- **SQL Injection Scanner**: Detecção avançada com bypass de WAF
 - **XSS Scanner**: Stored, Reflected e DOM XSS
+- **Command Injection Scanner**: Detecção de injeção de comandos OS
+- **LFI/RFI Scanner**: Local e Remote File Inclusion
+- **XXE Scanner**: XML External Entity com OAST
+- **IDOR Scanner**: Insecure Direct Object Reference
 
-### 🐛 Corrigido
-- Falsos positivos em detecção de vulnerabilidades
-- Memory leaks em operações de rede intensivas
-- Timeout issues em scans de larga escala
-- Encoding problems com caracteres especiais
-
-### 🔒 Segurança
-- Implementação de rate limiting para evitar DoS
-- Validação de entrada aprimorada
-- Sanitização de logs para evitar log injection
-- Verificação de integridade de wordlists
-
-## [3.1.0] - 2024-11-XX
-
-### 🚀 Adicionado
-- **Advanced Subdomain Scanner**: Certificate Transparency, permutations
-- **Command Injection Scanner**: Detecção de injeção de comandos
-- **LFI/RFI Scanner**: Local/Remote File Inclusion
+### 🛡️ Análise de Segurança
 - **WAF Detector**: Detecção e bypass de Web Application Firewall
-- **SSL/TLS Analyzer**: Análise completa de certificados
-- **Headers Analyzer**: Verificação de headers de segurança
+- **SSL/TLS Analyzer**: Análise completa de certificados e configurações
+- **Headers Analyzer**: Verificação de headers de segurança HTTP
+- **Banner Grabber**: Identificação de serviços e versões
+- **Metadata Extractor**: Extração de metadados de imagens
 
-### 🔧 Melhorado
-- **Port Scanner**: Suporte a TCP, SYN e UDP
-- **Banner Grabber**: Detecção de serviços aprimorada
-- **Metadata Extractor**: Suporte a mais formatos de imagem
-- **DNS Analyzer**: Consultas avançadas e threat intelligence
+### 🔧 Funcionalidades Avançadas
+- **Sistema de Help**: Metadata estruturada com instruções de teste
+- **Modo Verbose**: Logs detalhados para debugging e aprendizado
+- **Performance Extrema**: Multi-threading, connection pooling, rate limiting adaptativo
+- **Rainbow Tables**: Lookup instantâneo O(1) para quebra de hashes
+- **GPU Acceleration**: Suporte CUDA/OpenCL para hash cracking
 
-## [3.0.0] - 2024-10-XX
+### 🔒 Segurança e Qualidade
+- **Rate Limiting**: Proteção contra DoS acidental
+- **Validação de Entrada**: Sanitização completa de inputs
+- **Logs Seguros**: Prevenção de log injection
+- **Testes Automatizados**: Cobertura de testes abrangente
+- **CI/CD Pipeline**: Verificações automáticas de segurança e qualidade
 
-### 🚀 Adicionado
-- **Arquitetura Modular**: Sistema de módulos independentes
-- **CLI Avançado**: Interface de linha de comando completa
-- **Report Generator**: Relatórios em múltiplos formatos
-- **Core Framework**: Base sólida para extensibilidade
-
-### 💥 Breaking Changes
-- Reestruturação completa do código
-- Nova interface de linha de comando
-- Mudanças na API interna
-
-## [2.x.x] - Legacy
-
-Versões anteriores com funcionalidades básicas de scanning.
+### 📚 Documentação
+- **README Completo**: Guia de instalação e uso
+- **CONTRIBUTING**: Guia para contribuidores
+- **SECURITY**: Política de segurança e uso ético
+- **LICENSE**: Licença MIT com disclaimer ético
 
 ---
 
