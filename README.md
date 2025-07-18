@@ -1,13 +1,13 @@
 ```bash
-                                    d8P                     
-                                  d888888P                   
- .d888b,?88,.d88b,  d8888b  d8888b  ?88'    88bd88b d888b8b  
- ?8b,   `?88'  ?88 d8b_,dP d8P' `P  88P     88P'  `d8P' ?88  
-   `?8b   88b  d8P 88b     88b      88b    d88     88b  ,88b 
+                                    d8P
+                                  d888888P
+ .d888b,?88,.d88b,  d8888b  d8888b  ?88'    88bd88b d888b8b
+ ?8b,   `?88'  ?88 d8b_,dP d8P' `P  88P     88P'  `d8P' ?88
+   `?8b   88b  d8P 88b     88b      88b    d88     88b  ,88b
 `?888P'   888888P' `?888P' `?888P'  `?8b  d88'     `?88P'`88b
-          88P'                                             
-         d88                                               
-         ?8P                                               
+          88P'
+         d88
+         ?8P
 
                      by iuawsyukboasfuilj
 ```
@@ -28,17 +28,50 @@ Uma ferramenta completa de hacking ético para análise de segurança web com ma
 - **Detector de Tecnologias**: 500+ tecnologias web suportadas
 - **Performance Extrema**: Multi-threading, connection pooling, rate limiting adaptativo
 
-## **Instalação Rápida**
+## **Instalação**
+
+### **Método 1: Via pip (Recomendado)**
 
 ```bash
-# Via pip (recomendado)
+# Instalação global
 pip install spectra-suite
 
-# Via código fonte
+# Instalação para usuário atual
+pip install --user spectra-suite
+
+# Instalação em ambiente virtual
+python -m venv spectra-env
+source spectra-env/bin/activate  # Linux/Mac
+# ou spectra-env\Scripts\activate  # Windows
+pip install spectra-suite
+```
+
+### **Método 2: Via APT (Ubuntu/Debian)**
+
+```bash
+# Download e execução do script de instalação
+curl -fsSL https://raw.githubusercontent.com/spectra-team/spectra/main/install-apt.sh | bash
+
+# Ou manualmente:
+wget https://raw.githubusercontent.com/spectra-team/spectra/main/install-apt.sh
+chmod +x install-apt.sh
+./install-apt.sh
+```
+
+### **Método 3: Via código fonte**
+
+```bash
 git clone https://github.com/spectra-team/spectra.git
 cd spectra
 pip install -r requirements.txt
 python setup.py install
+```
+
+### **Verificar instalação:**
+
+```bash
+spectra --version
+spectra --help
 ```
 
 ## **Uso Básico**
@@ -70,6 +103,7 @@ spectra -nm
 ## **Aviso Legal**
 
 Esta ferramenta é destinada EXCLUSIVAMENTE para:
+
 - Testes de penetração autorizados
 - Pesquisa de segurança
 - Educação em cibersegurança

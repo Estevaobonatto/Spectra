@@ -1,0 +1,13 @@
+spectra-suite (1.0.0-1) unstable; urgency=medium
+
+  * Initial release of Spectra Security Suite
+  * 15+ security scanning modules included
+  * Advanced hash cracking with GPU support
+  * Network monitoring capabilities
+  * Directory and subdomain discovery
+  * Technology fingerprinting
+  * Professional reporting system
+  * Cross-platform compatibility
+  * Comprehensive documentation
+
+ -- Spectra Team <team@spectra-security.com>  Fri, 18 Jul 2025 10:00:00 +0000
