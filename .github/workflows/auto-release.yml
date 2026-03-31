@@ -52,6 +52,9 @@ jobs:
   release:
     needs: bump-and-tag
     if: needs.bump-and-tag.result == 'success'
+    permissions:
+      contents: write
+      id-token: write
     uses: ./.github/workflows/release.yml
     with:
       version: ${{ needs.bump-and-tag.outputs.version }}
