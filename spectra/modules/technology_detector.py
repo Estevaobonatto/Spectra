@@ -1323,6 +1323,162 @@ class AdvancedTechnologyDetector:
         
         return detections
     
+    def _detect_from_favicon(self, base_url: str) -> list:
+        """Detecta tecnologias via hash do favicon (MurmurHash3 como Shodan/FOFA).
+
+        Baixa `/favicon.ico`, calcula o MurmurHash3 do conteúdo em base64 e
+        compara com hashes conhecidos de frameworks populares.
+
+        Returns:
+            Lista de detecções com name, category, confidence, favicon_hash.
+        """
+        import struct
+
+        def _mmh3_32(data: bytes) -> int:
+            """MurmurHash3 32-bit — algoritmo usado por Shodan para favicon."""
+            seed = 0
+            c1, c2 = 0xcc9e2d51, 0x1b873593
+            length = len(data)
+            h1 = seed
+            blocks = length // 4
+            for block_start in range(0, blocks * 4, 4):
+                k1 = struct.unpack_from('<I', data, block_start)[0]
+                k1 = (k1 * c1) & 0xFFFFFFFF
+                k1 = (k1 << 15 | k1 >> 17) & 0xFFFFFFFF
+                k1 = (k1 * c2) & 0xFFFFFFFF
+                h1 ^= k1
+                h1 = (h1 << 13 | h1 >> 19) & 0xFFFFFFFF
+                h1 = (h1 * 5 + 0xe6546b64) & 0xFFFFFFFF
+            tail_start = blocks * 4
+            tail = data[tail_start:]
+            k1 = 0
+            tail_size = length & 3
+            if tail_size >= 3:
+                k1 ^= tail[2] << 16
+            if tail_size >= 2:
+                k1 ^= tail[1] << 8
+            if tail_size >= 1:
+                k1 ^= tail[0]
+                k1 = (k1 * c1) & 0xFFFFFFFF
+                k1 = (k1 << 15 | k1 >> 17) & 0xFFFFFFFF
+                k1 = (k1 * c2) & 0xFFFFFFFF
+                h1 ^= k1
+            h1 ^= length
+            h1 ^= h1 >> 16
+            h1 = (h1 * 0x85ebca6b) & 0xFFFFFFFF
+            h1 ^= h1 >> 13
+            h1 = (h1 * 0xc2b2ae35) & 0xFFFFFFFF
+            h1 ^= h1 >> 16
+            # Return as signed 32-bit integer (Shodan convention)
+            return h1 - 0x100000000 if h1 >= 0x80000000 else h1
+
+        # Hashes conhecidos: {mmh3_hash: (name, category, confidence)}
+        FAVICON_HASHES = {
+            -247388890:  ('Jenkins', 'ci_cd', 90),
+            708578229:   ('GitLab', 'version_control', 90),
+            -198605279:  ('Grafana', 'monitoring', 90),
+            1659554838:  ('Kibana', 'analysis', 90),
+            -1429180618: ('Elasticsearch', 'database', 85),
+            -1180433470: ('Jira', 'project_management', 90),
+            -1266444220: ('Confluence', 'wiki', 90),
+            1278323558:  ('SonarQube', 'code_quality', 85),
+            -1425565982: ('Portainer', 'containers', 85),
+            -1616143435: ('Traefik', 'load_balancer', 85),
+            1433191816:  ('Rancher', 'containers', 85),
+            116323821:   ('Netdata', 'monitoring', 85),
+            540343028:   ('phpMyAdmin', 'database_admin', 90),
+            -961916748:  ('Nagios', 'monitoring', 85),
+            1297690045:  ('Zabbix', 'monitoring', 85),
+        }
+
+        detections = []
+        from urllib.parse import urljoin as _urljoin
+        import base64 as _b64
+
+        favicon_urls = [
+            _urljoin(base_url, '/favicon.ico'),
+            _urljoin(base_url, '/favicon.png'),
+        ]
+
+        for fav_url in favicon_urls:
+            try:
+                resp = self.session.get(fav_url, timeout=8, verify=False)
+                if resp.status_code == 200 and resp.content:
+                    # Shodan/FOFA: base64(content) com newlines cada 76 chars, then mmh3
+                    b64_bytes = _b64.encodebytes(resp.content)
+                    fav_hash = _mmh3_32(b64_bytes)
+                    if fav_hash in FAVICON_HASHES:
+                        name, category, confidence = FAVICON_HASHES[fav_hash]
+                        detections.append({
+                            'name': name,
+                            'category': category,
+                            'version': None,
+                            'confidence': confidence,
+                            'source': f'Favicon MurmurHash3: {fav_hash}',
+                            'favicon_hash': fav_hash,
+                        })
+                    else:
+                        # Include hash even if unknown — useful for threat intel
+                        detections.append({
+                            'name': f'Unknown (favicon hash: {fav_hash})',
+                            'category': 'fingerprint',
+                            'version': None,
+                            'confidence': 30,
+                            'source': 'Favicon MurmurHash3',
+                            'favicon_hash': fav_hash,
+                        })
+                    break  # Stop after first successful favicon fetch
+            except Exception:
+                continue
+
+        return detections
+
+    def _detect_from_js_globals(self, html_content: str) -> list:
+        """Detecta frameworks via variáveis globais JS no HTML da página.
+
+        Inspeciona padrões inline como ``__NEXT_DATA__``, ``window.NUXT``,
+        ``angular``, ``window.Ember``, ``Backbone``, etc.
+
+        Returns:
+            Lista de detecções com name, category, confidence.
+        """
+        detections = []
+
+        # Padrões: (regex, name, category, confidence)
+        GLOBAL_PATTERNS = [
+            (r'__NEXT_DATA__', 'Next.js', 'frontend_frameworks', 95),
+            (r'window\.__NUXT__', 'Nuxt.js', 'frontend_frameworks', 95),
+            (r'window\.angular\b|angular\.module\b', 'AngularJS', 'frontend_frameworks', 90),
+            (r'window\.Ember\b|Ember\.VERSION', 'Ember.js', 'frontend_frameworks', 90),
+            (r'window\.Backbone\b|Backbone\.Model', 'Backbone.js', 'frontend_frameworks', 85),
+            (r'window\._rails_env|window\.Rails\b', 'Ruby on Rails', 'web_frameworks', 85),
+            (r'window\.RAILS_ENV', 'Ruby on Rails', 'web_frameworks', 80),
+            (r'__GATSBY\b|___gatsby\b', 'Gatsby', 'static_site_generators', 95),
+            (r'__REDUX_DEVTOOLS_EXTENSION__', 'Redux', 'frontend_frameworks', 80),
+            (r'window\.dataLayer\b', 'Google Tag Manager', 'analytics', 90),
+            (r'window\.ga\s*=|GoogleAnalyticsObject', 'Google Analytics', 'analytics', 90),
+            (r'window\.fbq\b', 'Facebook Pixel', 'marketing', 85),
+            (r'window\.Sentry\b|__SENTRY__', 'Sentry', 'monitoring', 90),
+            (r'window\.mixpanel\b', 'Mixpanel', 'analytics', 85),
+            (r'window\.Intercom\b', 'Intercom', 'customer_support', 90),
+            (r'window\.HubSpotConversations\b', 'HubSpot', 'marketing', 90),
+            (r'window\.LiveChatWidget\b', 'LiveChat', 'customer_support', 85),
+            (r'window\.__APOLLO_CLIENT__', 'Apollo GraphQL', 'api', 90),
+            (r'window\.Turbo\b', 'Hotwire Turbo', 'frontend_frameworks', 85),
+        ]
+
+        for pattern, name, category, confidence in GLOBAL_PATTERNS:
+            if re.search(pattern, html_content, re.IGNORECASE):
+                detections.append({
+                    'name': name,
+                    'category': category,
+                    'version': None,
+                    'confidence': confidence,
+                    'source': f'JS Global: {pattern}',
+                })
+
+        return detections
+
     def _detect_cms_specifics(self, html_content, url):
         """Detecta CMS através de padrões específicos."""
         detections = []
@@ -1384,7 +1540,9 @@ class AdvancedTechnologyDetector:
                     'html': executor.submit(self._detect_from_html, html_content),
                     'cookies': executor.submit(self._detect_from_cookies, response.cookies),
                     'js_libs': executor.submit(self._detect_javascript_libraries, html_content),
+                    'js_globals': executor.submit(self._detect_from_js_globals, html_content),
                     'cms': executor.submit(self._detect_cms_specifics, html_content, self.url),
+                    'favicon': executor.submit(self._detect_from_favicon, self.url),
                     'timing': executor.submit(self._analyze_response_timing, response_time, response.headers),
                     'waf': executor.submit(self._detect_waf_technologies, response.headers, html_content)
                 }

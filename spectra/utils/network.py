@@ -11,18 +11,32 @@ import requests
 from urllib.parse import urlparse, urljoin
 from ..core.console import console
 
+
+class _TimeoutSession(requests.Session):
+    """Sessão HTTP que aplica timeout padrão em todas as requisições."""
+
+    def __init__(self, default_timeout=10):
+        super().__init__()
+        self.default_timeout = default_timeout
+
+    def request(self, method, url, **kwargs):
+        kwargs.setdefault('timeout', self.default_timeout)
+        return super().request(method, url, **kwargs)
+
+
 def create_session(timeout=10, max_retries=3):
     """
-    Cria uma sessão HTTP configurada com headers padrão e retry policy.
+    Cria uma sessão HTTP configurada com headers padrão, retry policy
+    e timeout default aplicado a todas as requisições.
     
     Args:
-        timeout (int): Timeout em segundos.
+        timeout (int): Timeout em segundos (default em cada request).
         max_retries (int): Número máximo de tentativas.
         
     Returns:
-        requests.Session: Sessão HTTP configurada.
+        _TimeoutSession: Sessão HTTP configurada.
     """
-    session = requests.Session()
+    session = _TimeoutSession(default_timeout=timeout)
     
     # Headers padrão
     session.headers.update({

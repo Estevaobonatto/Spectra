@@ -4,6 +4,7 @@ Report Generator Module
 Módulo para geração de relatórios em diferentes formatos (JSON, XML, HTML, PDF).
 """
 
+import html
 import json
 import xml.etree.ElementTree as ET
 import xml.dom.minidom as minidom
@@ -13,6 +14,30 @@ import os
 from typing import List, Dict, Any, Optional
 
 from ..core.logger import get_logger
+from .config import Config
+
+_config = Config()
+_VERSION = f"Spectra v{_config.version}"
+
+# Aliases de severidade normalizados para pt-BR/en — múltiplos módulos usam variantes diferentes
+_CRITICAL_ALIASES = {'crítico', 'crítica', 'critico', 'critica', 'critical'}
+_HIGH_ALIASES = {'alto', 'alta', 'high'}
+_MEDIUM_ALIASES = {'médio', 'média', 'medio', 'media', 'medium'}
+_LOW_ALIASES = {'baixo', 'baixa', 'low'}
+
+
+def _normalize_risk(value: str) -> str:
+    """Normaliza uma string de risco para o padrão pt-BR usado no relatório."""
+    v = value.strip().lower()
+    if v in _CRITICAL_ALIASES:
+        return 'Crítico'
+    if v in _HIGH_ALIASES:
+        return 'Alto'
+    if v in _MEDIUM_ALIASES:
+        return 'Médio'
+    if v in _LOW_ALIASES:
+        return 'Baixo'
+    return value  # mantém original se não reconhecido
 
 
 class ReportGenerator:
@@ -42,10 +67,10 @@ class ReportGenerator:
             }
         
         total = len(self.scan_results)
-        critical = len([v for v in self.scan_results if v.get('Risco', '').lower() == 'crítico'])
-        high = len([v for v in self.scan_results if v.get('Risco', '').lower() == 'alto'])
-        medium = len([v for v in self.scan_results if v.get('Risco', '').lower() == 'médio'])
-        low = len([v for v in self.scan_results if v.get('Risco', '').lower() == 'baixo'])
+        critical = len([v for v in self.scan_results if v.get('Risco', '').strip().lower() in _CRITICAL_ALIASES])
+        high = len([v for v in self.scan_results if v.get('Risco', '').strip().lower() in _HIGH_ALIASES])
+        medium = len([v for v in self.scan_results if v.get('Risco', '').strip().lower() in _MEDIUM_ALIASES])
+        low = len([v for v in self.scan_results if v.get('Risco', '').strip().lower() in _LOW_ALIASES])
         
         # Cálculo de score de risco (0-100)
         risk_score = (critical * 10 + high * 7 + medium * 4 + low * 1) / max(total, 1)
@@ -81,7 +106,7 @@ class ReportGenerator:
                 "scan_type": self.scan_type,
                 "timestamp": self.timestamp.isoformat(),
                 "total_vulnerabilities": len(self.scan_results),
-                "scanner_version": "Spectra v1.0.0",
+                "scanner_version": _VERSION,
                 "duration": getattr(self, 'scan_duration', 'N/A')
             },
             "summary": {
@@ -124,7 +149,7 @@ class ReportGenerator:
         ET.SubElement(scan_info, "ScanType").text = self.scan_type
         ET.SubElement(scan_info, "Timestamp").text = self.timestamp.isoformat()
         ET.SubElement(scan_info, "TotalVulnerabilities").text = str(len(self.scan_results))
-        ET.SubElement(scan_info, "ScannerVersion").text = "Spectra v1.0.0"
+        ET.SubElement(scan_info, "ScannerVersion").text = _VERSION
 
         # Resumo
         summary = ET.SubElement(root, "Summary")
@@ -310,8 +335,8 @@ class ReportGenerator:
     <div class="container">
         <div class="header">
             <h1>🛡️ Relatório de Segurança</h1>
-            <p>Gerado por Spectra Security Scanner v1.0.0</p>
-            <p>Alvo: {self.target_url} | Tipo: {self.scan_type} | Data: {self.timestamp.strftime('%d/%m/%Y %H:%M:%S')}</p>
+            <p>Gerado por {html.escape(_VERSION)}</p>
+            <p>Alvo: {html.escape(self.target_url)} | Tipo: {html.escape(self.scan_type)} | Data: {self.timestamp.strftime('%d/%m/%Y %H:%M:%S')}</p>
         </div>
         
         <div class="content">
@@ -349,13 +374,18 @@ class ReportGenerator:
 
         # Adicionar vulnerabilidades à tabela
         for vuln in self.scan_results:
-            risk_class = f"risk-{vuln.get('Risco', 'baixo').lower()}"
+            raw_risk = _normalize_risk(vuln.get('Risco', ''))
+            risk_class = f"risk-{raw_risk.lower()}"
+            safe_risk = html.escape(raw_risk or 'N/A')
+            safe_tipo = html.escape(str(vuln.get('Tipo', 'N/A')))
+            safe_detalhe = html.escape(str(vuln.get('Detalhe', 'N/A')))
+            safe_rec = html.escape(str(vuln.get('Recomendação', 'N/A')))
             html_content += f"""
                     <tr>
-                        <td><span class="risk-badge {risk_class}">{vuln.get('Risco', 'N/A')}</span></td>
-                        <td>{vuln.get('Tipo', 'N/A')}</td>
-                        <td>{vuln.get('Detalhe', 'N/A')}</td>
-                        <td>{vuln.get('Recomendação', 'N/A')}</td>
+                        <td><span class="risk-badge {risk_class}">{safe_risk}</span></td>
+                        <td>{safe_tipo}</td>
+                        <td>{safe_detalhe}</td>
+                        <td>{safe_rec}</td>
                     </tr>
             """
 

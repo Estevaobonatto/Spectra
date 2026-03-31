@@ -10,25 +10,40 @@ import time
 import os
 from datetime import datetime
 from collections import defaultdict
-from typing import List
+from typing import List, Dict
 import json
 
 try:
     from scapy.all import (
-        sniff, get_if_list, Ether, IP, IPv6, TCP, UDP, ICMP, 
+        sniff, get_if_list, Ether, IP, IPv6, TCP, UDP, ICMP,
         ICMPv6EchoRequest, ICMPv6EchoReply, ICMPv6DestUnreach,
         ARP, DNS, conf
     )
     SCAPY_AVAILABLE = True
 except ImportError:
     SCAPY_AVAILABLE = False
-    print("Aviso: Scapy não está disponível. Instale com: pip install scapy")
+
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
 
 try:
     import curses
     CURSES_AVAILABLE = True
 except ImportError:
     CURSES_AVAILABLE = False
+
+try:
+    from rich.live import Live
+    from rich.table import Table
+    from rich.columns import Columns
+    from rich.panel import Panel
+    from rich.text import Text
+    RICH_LIVE_AVAILABLE = True
+except ImportError:
+    RICH_LIVE_AVAILABLE = False
 
 from ..core.console import console
 from ..core.logger import get_logger
@@ -3125,79 +3140,204 @@ class NetworkMonitorTUI:
                         self.start_capture(self.interface, "")
     
     def _run_simple_interface(self):
-        """Interface simples sem curses"""
+        """Interface simples com Rich Live (curses indisponível).
+
+        Se scapy estiver acessível, captura pacotes e exibe via Rich Live.
+        Caso contrário, usa psutil para mostrar estatísticas de interface em tempo real.
+        """
         console.print("\n[bold cyan]Spectra Network Monitor[/bold cyan]")
-        console.print("[yellow]Interface simples (curses não disponível)[/yellow]")
-        
+
+        if SCAPY_AVAILABLE:
+            self._run_rich_live_capture()
+        elif PSUTIL_AVAILABLE:
+            self._run_psutil_monitor()
+        else:
+            console.print(
+                "[red]Nem scapy nem psutil estão disponíveis.\n"
+                "Instale um deles:\n"
+                "  pip install scapy\n"
+                "  pip install psutil[/red]"
+            )
+
+    # ------------------------------------------------------------------
+    # Rich Live + Scapy capture
+    # ------------------------------------------------------------------
+
+    def _run_rich_live_capture(self) -> None:
+        """Captura pacotes com scapy e exibe dashboard Rich Live."""
         interfaces = self.get_available_interfaces()
-        console.print(f"\n[bold]Interfaces disponíveis:[/bold] {', '.join(interfaces)}")
-        
         if not interfaces:
-            console.print("[red]Nenhuma interface encontrada[/red]")
+            console.print("[red]Nenhuma interface encontrada.[/red]")
             return
-        
-        # Usa primeira interface disponível
+
         interface = interfaces[0]
-        console.print(f"[green]Usando interface:[/green] {interface}")
-        
-        # Verifica privilégios
+        console.print(f"[green]Interface:[/green] {interface}  [dim](Ctrl+C para parar)[/dim]\n")
+
         try:
             if os.geteuid() != 0:
-                console.print("[yellow]⚠️  Aviso: Sem privilégios de root - captura pode ser limitada[/yellow]")
+                console.print("[yellow]Aviso: sem root — captura pode ser limitada.[/yellow]")
         except AttributeError:
-            console.print("[yellow]⚠️  Aviso: Execute como administrador para captura completa[/yellow]")
-        
+            pass  # Windows — sem geteuid
+
+        self.start_capture(interface)
+
+        def _build_live_table() -> Table:
+            tbl = Table(
+                title=f"[bold cyan]Pacotes capturados: {len(self.packets)}[/bold cyan]",
+                show_header=True,
+                header_style="bold magenta",
+                expand=True,
+            )
+            tbl.add_column("Hora", style="dim", width=12)
+            tbl.add_column("Origem", width=18)
+            tbl.add_column("Destino", width=18)
+            tbl.add_column("Proto", width=7)
+            tbl.add_column("Tamanho", justify="right", width=8)
+            tbl.add_column("Info")
+
+            for pkt in self.packets[-30:]:  # últimas 30 linhas
+                ts = pkt.timestamp.strftime('%H:%M:%S.%f')[:-3]
+                proto_color = {
+                    "TCP": "green", "UDP": "yellow",
+                    "ICMP": "red", "ARP": "cyan",
+                }.get(pkt.protocol, "white")
+                tbl.add_row(
+                    ts,
+                    pkt.src_ip or "-",
+                    pkt.dst_ip or "-",
+                    f"[{proto_color}]{pkt.protocol}[/{proto_color}]",
+                    str(pkt.size),
+                    pkt.info or "",
+                )
+            return tbl
+
         try:
-            console.print("\n[cyan]Iniciando captura...[/cyan]")
-            self.start_capture(interface)
-            console.print("[green]✓ Captura iniciada com sucesso![/green]")
-            console.print("[dim]Pressione Ctrl+C para parar...[/dim]\n")
-            
-            packet_count = 0
-            while self.is_capturing:
-                time.sleep(0.5)  # Reduz intervalo para mais responsividade
-                
-                # Mostra novos pacotes
-                if len(self.packets) > packet_count:
-                    for i in range(packet_count, len(self.packets)):
-                        packet = self.packets[i]
-                        timestamp = packet.timestamp.strftime('%H:%M:%S.%f')[:-3]
-                        console.print(f"[{timestamp}] {packet.src_ip:<15} → {packet.dst_ip:<15} "
-                                    f"[cyan]{packet.protocol}[/cyan] {packet.info}")
-                    packet_count = len(self.packets)
-                
-                # Mostra estatísticas periodicamente
-                if packet_count > 0 and packet_count % 50 == 0:
-                    console.print(f"\n[dim]--- {packet_count} pacotes capturados ---[/dim]\n")
-                
-        except KeyboardInterrupt:
-            console.print("\n[yellow]Parando captura...[/yellow]")
-            self.stop_capture()
-            
-            if self.packets:
-                console.print(f"\n[green]✓ Capturados {len(self.packets)} pacotes[/green]")
-                
-                # Mostra estatísticas finais
-                protocol_counts = {}
-                for packet in self.packets:
-                    protocol_counts[packet.protocol] = protocol_counts.get(packet.protocol, 0) + 1
-                
-                console.print("\n[bold]Estatísticas por protocolo:[/bold]")
-                for proto, count in sorted(protocol_counts.items(), key=lambda x: x[1], reverse=True):
-                    percentage = (count / len(self.packets)) * 100
-                    console.print(f"  {proto}: {count} ({percentage:.1f}%)")
-                
-                # Exporta automaticamente
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f"network_capture_{timestamp}.json"
-                self.export_packets(filename)
-                console.print(f"\n[cyan]Pacotes exportados para {filename}[/cyan]")
+            if RICH_LIVE_AVAILABLE:
+                with Live(console=console, refresh_per_second=4) as live:
+                    while self.is_capturing:
+                        live.update(_build_live_table())
+                        time.sleep(0.25)
             else:
-                console.print("\n[yellow]Nenhum pacote foi capturado[/yellow]")
-                console.print("[dim]Verifique se você tem privilégios suficientes e se há tráfego na interface[/dim]")
-        
-        except Exception as e:
-            console.print(f"\n[red]Erro durante captura: {e}[/red]")
+                # Fallback sem Live
+                packet_count = 0
+                while self.is_capturing:
+                    time.sleep(0.5)
+                    for i in range(packet_count, len(self.packets)):
+                        pkt = self.packets[i]
+                        ts = pkt.timestamp.strftime('%H:%M:%S.%f')[:-3]
+                        console.print(
+                            f"[{ts}] {pkt.src_ip:<15} → {pkt.dst_ip:<15} "
+                            f"[cyan]{pkt.protocol}[/cyan] {pkt.info}"
+                        )
+                    packet_count = len(self.packets)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            self.stop_capture()
+            console.print(f"\n[green]Capturados {len(self.packets)} pacotes.[/green]")
+            self._print_final_stats()
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            fname = f"network_capture_{timestamp}.json"
+            self.export_packets(fname)
+            console.print(f"[cyan]Exportado para {fname}[/cyan]")
+
+    # ------------------------------------------------------------------
+    # psutil-based fallback (no scapy)
+    # ------------------------------------------------------------------
+
+    def _run_psutil_monitor(self) -> None:
+        """Exibe estatísticas de rede ao vivo via psutil quando scapy está indisponível."""
+        console.print(
+            "[yellow]Scapy indisponível — modo psutil (estatísticas de interface).[/yellow]\n"
+            "[dim]Pressione Ctrl+C para parar.[/dim]\n"
+        )
+
+        def _fmt_bytes(n: int) -> str:
+            for unit in ("B", "KB", "MB", "GB"):
+                if n < 1024:
+                    return f"{n:.1f} {unit}"
+                n /= 1024
+            return f"{n:.1f} TB"
+
+        prev: Dict[str, psutil._common.snetio] = psutil.net_io_counters(pernic=True)  # type: ignore
+        prev_ts = time.time()
+
+        def _build_psutil_table() -> Table:
+            nonlocal prev, prev_ts
+            now = psutil.net_io_counters(pernic=True)  # type: ignore
+            ts = time.time()
+            delta = max(ts - prev_ts, 0.001)
+
+            tbl = Table(
+                title="[bold cyan]Spectra — Monitoramento de Rede (psutil)[/bold cyan]",
+                show_header=True,
+                header_style="bold magenta",
+            )
+            tbl.add_column("Interface", width=14)
+            tbl.add_column("↓ RX/s", justify="right", width=12)
+            tbl.add_column("↑ TX/s", justify="right", width=12)
+            tbl.add_column("Pkts RX/s", justify="right", width=10)
+            tbl.add_column("Pkts TX/s", justify="right", width=10)
+            tbl.add_column("Total RX", justify="right", width=12)
+            tbl.add_column("Total TX", justify="right", width=12)
+            tbl.add_column("Erros/Drops", justify="right", width=12)
+
+            for iface, cur in sorted(now.items()):
+                old = prev.get(iface)
+                if old is None:
+                    continue
+                rx_rate = (cur.bytes_recv - old.bytes_recv) / delta
+                tx_rate = (cur.bytes_sent - old.bytes_sent) / delta
+                pkts_rx = (cur.packets_recv - old.packets_recv) / delta
+                pkts_tx = (cur.packets_sent - old.packets_sent) / delta
+                errors = cur.errin + cur.errout + cur.dropin + cur.dropout
+
+                tbl.add_row(
+                    f"[bold]{iface}[/bold]",
+                    f"[green]{_fmt_bytes(rx_rate)}/s[/green]",
+                    f"[yellow]{_fmt_bytes(tx_rate)}/s[/yellow]",
+                    f"{pkts_rx:.0f}",
+                    f"{pkts_tx:.0f}",
+                    _fmt_bytes(cur.bytes_recv),
+                    _fmt_bytes(cur.bytes_sent),
+                    f"[red]{errors}[/red]" if errors else "0",
+                )
+
+            prev = now
+            prev_ts = ts
+            return tbl
+
+        try:
+            if RICH_LIVE_AVAILABLE:
+                with Live(console=console, refresh_per_second=2) as live:
+                    while True:
+                        live.update(_build_psutil_table())
+                        time.sleep(0.5)
+            else:
+                while True:
+                    console.print(_build_psutil_table())
+                    time.sleep(2)
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Monitor parado.[/yellow]")
+
+    # ------------------------------------------------------------------
+    # Helper: final stats summary
+    # ------------------------------------------------------------------
+
+    def _print_final_stats(self) -> None:
+        """Imprime sumário de protocolos ao final da captura."""
+        if not self.packets:
+            return
+        protocol_counts: Dict[str, int] = {}
+        for pkt in self.packets:
+            protocol_counts[pkt.protocol] = protocol_counts.get(pkt.protocol, 0) + 1
+
+        console.print("\n[bold]Estatísticas por protocolo:[/bold]")
+        for proto, count in sorted(protocol_counts.items(), key=lambda x: x[1], reverse=True):
+            pct = (count / len(self.packets)) * 100
+            console.print(f"  {proto}: {count} ({pct:.1f}%)")
+
+
             console.print("[dim]Tente executar como root/administrador[/dim]")
 
 def network_monitor_interface(interface=None):

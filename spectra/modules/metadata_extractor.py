@@ -45,7 +45,9 @@ class MetadataExtractor:
                 response = self.session.get(image_url, timeout=self.timeout, verify=False)
                 response.raise_for_status()
                 img = Image.open(BytesIO(response.content))
-                exif_data = img._getexif()
+                # getexif() é a API pública desde Pillow 6+ e única desde Pillow 10+
+                # _getexif() foi removida em Pillow 10
+                exif_data = img.getexif() if hasattr(img, 'getexif') else img._getexif()  # type: ignore[attr-defined]
 
             if not exif_data:
                 console.print("[bold yellow][-] Não foram encontrados metadados EXIF nesta imagem.[/bold yellow]")

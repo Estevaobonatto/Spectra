@@ -2,6 +2,7 @@
 Módulo de análise e consulta DNS avançada.
 """
 import socket
+import base64
 import dns.resolver
 import dns.zone
 import dns.query
@@ -89,10 +90,11 @@ class DNSAnalyzer:
         with console.status("[bold green]Consultando registros DNS...[/bold green]") as status:
             for r_type in record_types:
                 status.update(f"[bold green]Consultando registro {r_type}...[/bold green]")
+                # Captura timeout original ANTES do try para garantir disponibilidade no finally
+                old_timeout = self.resolver.lifetime
                 try:
                     # Configura timeout específico para cada tipo de consulta
                     resolver_timeout = 8 if r_type in ['TXT', 'CAA', 'SRV'] else 5
-                    old_timeout = self.resolver.lifetime
                     self.resolver.lifetime = resolver_timeout
                     
                     answers = self.resolver.resolve(domain, r_type)
@@ -142,7 +144,7 @@ class DNSAnalyzer:
                     # Garante que o timeout seja restaurado
                     try:
                         self.resolver.lifetime = old_timeout
-                    except:
+                    except AttributeError:
                         pass
                 
                 console.print()
@@ -453,7 +455,27 @@ class DNSAnalyzer:
             console.print(f"[green]✅ DNSSEC: {dnssec_status}[/green]")
         else:
             console.print("[bold yellow]⚠️  DNSSEC: Não configurado[/bold yellow]")
-        
+
+        # Verifica DMARC policy
+        dmarc = self._analyze_dmarc_policy(domain)
+        if dmarc['present']:
+            risk_color = 'green' if dmarc['risk'] == 'LOW' else 'yellow' if dmarc['risk'] == 'MEDIUM' else 'red'
+            console.print(
+                f"[{risk_color}]✉  DMARC: p={dmarc['policy']} | sp={dmarc['subdomain_policy']} "
+                f"| pct={dmarc['pct']} | risco={dmarc['risk']}[/{risk_color}]"
+            )
+        else:
+            console.print("[bold red]⚠️  DMARC: Ausente — domínio suscetível a spoofing de email[/bold red]")
+
+        # Verifica DKIM
+        dkim = self._check_dkim_selector(domain)
+        if dkim['present']:
+            key_info = f" ({dkim['key_bits']} bits)" if dkim['key_bits'] else ""
+            issues_str = " | " + "; ".join(dkim['issues']) if dkim['issues'] else ""
+            console.print(f"[green]✅ DKIM: seletor={dkim['selector']}{key_info}{issues_str}[/green]")
+        else:
+            console.print("[bold yellow]⚠️  DKIM: Nenhum seletor padrão encontrado[/bold yellow]")
+
         console.print("-" * 60)
     
     def _analyze_mx_record(self, mx_server):
@@ -631,19 +653,145 @@ class DNSAnalyzer:
             if len(answers) > 5:  # Muitos registros A podem indicar round-robin vulnerável
                 return "Possível round-robin vulnerável"
             return None
-        except:
+        except Exception:
             return None
-    
+
     def _check_dnssec(self, domain):
-        """Verifica se DNSSEC está configurado."""
+        """Verifica DNSSEC: presença de DNSKEY, DS e RRSIG no domínio."""
         try:
-            # Tenta resolver registro DNSKEY
-            answers = self.resolver.resolve(domain, 'DNSKEY')
-            if answers:
-                return "Ativo"
+            dnskey_answers = self.resolver.resolve(domain, 'DNSKEY')
+            if not dnskey_answers:
+                return None
+
+            # Verifica DS no domínio pai (ex: example.com → com)
+            parts = domain.split('.')
+            ds_present = False
+            if len(parts) >= 2:
+                parent = '.'.join(parts[1:])
+                try:
+                    self.resolver.resolve(domain, 'DS')
+                    ds_present = True
+                except Exception:
+                    pass
+
+            # Verifica a existência de RRSIG para confirmar que está assinado
+            rrsig_present = False
+            try:
+                self.resolver.resolve(domain, 'RRSIG')
+                rrsig_present = True
+            except Exception:
+                pass
+
+            if ds_present and rrsig_present:
+                return "Ativo (DNSKEY + DS + RRSIG)"
+            elif ds_present:
+                return "Parcial (DNSKEY + DS, sem RRSIG)"
+            elif rrsig_present:
+                return "Parcial (DNSKEY + RRSIG, DS ausente)"
+            else:
+                return "Incompleto (somente DNSKEY)"
+        except Exception:
             return None
-        except:
-            return None
+
+    def _analyze_dmarc_policy(self, domain):
+        """Analisa a política DMARC do domínio com profundidade.
+
+        Returns:
+            dict com keys: present, policy, subdomain_policy, pct, rua, ruf, risk
+        """
+        result = {
+            'present': False,
+            'policy': None,
+            'subdomain_policy': None,
+            'pct': 100,
+            'rua': None,
+            'ruf': None,
+            'risk': 'HIGH',  # Sem DMARC = alto risco de spoofing
+        }
+
+        try:
+            dmarc_domain = f'_dmarc.{domain}'
+            answers = self.resolver.resolve(dmarc_domain, 'TXT')
+            for rdata in answers:
+                txt = b''.join(rdata.strings).decode('utf-8', errors='ignore')
+                if not txt.lower().startswith('v=dmarc1'):
+                    continue
+
+                result['present'] = True
+                tags = dict(
+                    tag.strip().split('=', 1)
+                    for tag in txt.split(';')
+                    if '=' in tag
+                )
+                policy = tags.get('p', 'none').strip().lower()
+                sp = tags.get('sp', policy).strip().lower()
+                pct = int(tags.get('pct', '100').strip())
+
+                result['policy'] = policy
+                result['subdomain_policy'] = sp
+                result['pct'] = pct
+                result['rua'] = tags.get('rua', '').strip()
+                result['ruf'] = tags.get('ruf', '').strip()
+
+                # Avalia risco
+                if policy == 'reject' and pct == 100:
+                    result['risk'] = 'LOW'
+                elif policy == 'quarantine' and pct >= 50:
+                    result['risk'] = 'MEDIUM'
+                elif policy == 'none':
+                    result['risk'] = 'HIGH'  # p=none = monitor only, emails not blocked
+                else:
+                    result['risk'] = 'MEDIUM'
+                break
+        except Exception:
+            pass
+
+        return result
+
+    def _check_dkim_selector(self, domain, selector: str = 'default') -> dict:
+        """Verifica se o seletor DKIM existe e retorna resumo.
+
+        Args:
+            domain: Domínio alvo.
+            selector: Nome do seletor DKIM (padrão: 'default').
+
+        Returns:
+            dict com keys: present, selector, algorithm, key_bits, issues
+        """
+        result = {'present': False, 'selector': selector, 'algorithm': None, 'key_bits': None, 'issues': []}
+        common_selectors = [selector, 'google', 'k1', 'mail', 's1', 's2', 'smtp', 'dkim']
+
+        for sel in common_selectors:
+            try:
+                dkim_domain = f'{sel}._domainkey.{domain}'
+                answers = self.resolver.resolve(dkim_domain, 'TXT')
+                for rdata in answers:
+                    txt = b''.join(rdata.strings).decode('utf-8', errors='ignore')
+                    if 'v=DKIM1' not in txt and 'k=rsa' not in txt and 'p=' not in txt:
+                        continue
+                    result['present'] = True
+                    result['selector'] = sel
+                    tags = dict(
+                        t.strip().split('=', 1)
+                        for t in txt.split(';')
+                        if '=' in t
+                    )
+                    result['algorithm'] = tags.get('k', 'rsa')
+                    key_b64 = tags.get('p', '')
+                    if key_b64:
+                        import binascii
+                        try:
+                            key_bytes = len(base64.b64decode(key_b64 + '=='))
+                            result['key_bits'] = key_bytes * 8
+                            if key_bytes * 8 < 2048:
+                                result['issues'].append(f'Chave curta: {key_bytes * 8} bits (recomendado ≥ 2048)')
+                        except Exception:
+                            pass
+                    return result
+            except Exception:
+                continue
+
+        return result
 
 
 # Função para compatibilidade com versão anterior

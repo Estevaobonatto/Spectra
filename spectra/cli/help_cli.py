@@ -7,6 +7,15 @@ import sys
 import argparse
 from typing import List, Optional
 
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.columns import Columns
+from rich.text import Text
+from rich.rule import Rule
+from rich.padding import Padding
+from rich import box
+
 from ..core.help_system import get_help_manager, initialize_help_system
 from ..core.help_system.help_formatter import OutputFormat
 from ..core.logger import get_logger
@@ -291,6 +300,116 @@ class HelpCLI:
         except Exception as e:
             logger.error(f"Error getting suggestions: {e}")
             return []
+
+
+def show_rich_help() -> None:
+    """Displays a modern Rich-formatted help screen organized by category."""
+    _con = Console()
+
+    # ── Header ──────────────────────────────────────────────────────────────
+    header = Text(justify="center")
+    header.append("SPECTRA", style="bold white")
+    header.append("  v3.4.0", style="bold cyan")
+    header.append("\n")
+    header.append("Web Security Suite · Ethical Hacking Toolkit", style="dim white")
+    header.append("\n")
+    header.append("Usage: ", style="dim")
+    header.append("spectra", style="bold cyan")
+    header.append(" <command> [options]", style="white")
+    _con.print(Panel(header, border_style="cyan", padding=(0, 4)))
+
+    # ── Helper to build command tables ──────────────────────────────────────
+    def _table(title: str, color: str, rows: list[tuple[str, str, str]]) -> Table:
+        t = Table(
+            title=title,
+            title_style=f"bold {color}",
+            box=box.SIMPLE_HEAD,
+            border_style="dim",
+            show_header=True,
+            header_style="bold dim",
+            padding=(0, 1),
+            expand=True,
+        )
+        t.add_column("Command", style=color, no_wrap=True, min_width=22)
+        t.add_column("Description", style="white")
+        t.add_column("Key option", style="dim cyan", no_wrap=True)
+        for cmd, desc, opt in rows:
+            t.add_row(cmd, desc, opt)
+        return t
+
+    # ── Recon ────────────────────────────────────────────────────────────────
+    recon = _table("RECON & ENUMERATION", "green", [
+        ("-ps  <target>",     "Port scan + OS fingerprinting",           "--top-ports / --scan-type"),
+        ("-ds  <url>",        "Directory bruteforce (Dirsearch-level)",   "--recursive --stealth"),
+        ("-ss  <domain>",     "Subdomain enum (passive + active)",        "--advanced --passive-only"),
+        ("-dns <domain>",     "DNS analysis — DNSSEC / DMARC / AXFR",    "--record-type"),
+        ("-whois <domain>",   "WHOIS + threat-intel",                     "--threat-intel"),
+        ("-bg  <host> <port>","Banner grabbing (29 protocol probes)",     "--banner-ports"),
+        ("-nm",               "Network monitor (Wireshark-like TUI)",     "--network-interface"),
+    ])
+
+    # ── Web Vulns ────────────────────────────────────────────────────────────
+    vulns = _table("WEB VULNERABILITIES", "red", [
+        ("-sqli <url>",  "SQL Injection — UNION / Blind / OOB",     "--sqli-level --sqli-oast"),
+        ("-xss  <url>",  "XSS — reflected / stored / DOM / mXSS",   "--xss-dom --xss-oast"),
+        ("-cmdi <url>",  "Command Injection — timing / OOB DNS",     "--cmdi-level --cmdi-oast"),
+        ("-lfi  <url>",  "LFI + PHP filter chain + log poison",      "--lfi-depth"),
+        ("-xxe  <url>",  "XXE + Blind OOB via collaborator",         "--xxe-collaborator"),
+        ("-idor <url>",  "IDOR + JWT sub/id manipulation",           "--idor-range --test-uuid"),
+        ("-bvs  <url>",  "Basic Vulnerability Scanner",              "--bvs-workers"),
+    ])
+
+    # ── Analysis ─────────────────────────────────────────────────────────────
+    analysis = _table("SECURITY ANALYSIS", "yellow", [
+        ("-waf     <url>",  "WAF detection + bypass strategies",    "--test-bypasses"),
+        ("-ssl     <host>", "TLS / OCSP / Certificate Transparency",""),
+        ("-headers <url>",  "HTTP headers — CSP / CORS / HSTS",     ""),
+        ("-tech    <url>",  "Technology detection (500+ techs)",     "--tech-deep --tech-quick"),
+        ("-md      <url>",  "Metadata extraction (EXIF/XMP)",        ""),
+        ("-hc      <hash>", "Hash cracker — 27 algos / 11 modes",   "--attack-mode --use-gpu"),
+    ])
+
+    # ── CVE ──────────────────────────────────────────────────────────────────
+    cve = _table("CVE & INTELLIGENCE", "magenta", [
+        ("--cve-search  <kw>", "Search NVD CVE database",         ""),
+        ("--cve-details <id>", "Full CVE details + CVSS vectors",  ""),
+        ("--cve-epss    <id>", "EPSS exploitability probability",  ""),
+        ("--cve-kev     <id>", "CISA Known Exploited Vulns check", ""),
+        ("--trending-cves N",  "Recent high-severity CVEs",        ""),
+    ])
+
+    # ── Render two-column grid ────────────────────────────────────────────────
+    _con.print(Columns([recon, vulns], equal=True, expand=True))
+    _con.print(Columns([analysis, cve], equal=True, expand=True))
+
+    # ── Global flags ─────────────────────────────────────────────────────────
+    flags_t = Table(box=box.SIMPLE_HEAD, show_header=True, padding=(0, 2), expand=True,
+                    header_style="bold dim")
+    flags_t.add_column("Flag", style="cyan", no_wrap=True, min_width=28)
+    flags_t.add_column("Description", style="white")
+    flags_t.add_row("--timeout <s>",          "Request timeout in seconds (default: 1.0)")
+    flags_t.add_row("--workers <n>",           "Thread count (default: auto-tuned by scanner)")
+    flags_t.add_row("--verbose / -v",          "Verbose output with debug details")
+    flags_t.add_row("--no-banner",             "Skip banner and legal warning display")
+    flags_t.add_row("--generate-report <fmt>", "Export report: json | xml | html | all")
+    flags_t.add_row("--output-format <fmt>",   "Display format: table | json | xml")
+    flags_t.add_row("--help-module <name>",    "Show detailed help for a specific module")
+    _con.print(Panel(flags_t, title="[dim]GLOBAL FLAGS[/dim]", border_style="dim", padding=(0, 1)))
+
+    # ── Quick examples ────────────────────────────────────────────────────────
+    ex = Text()
+    ex.append("  spectra ", style="bold cyan"); ex.append("-ps example.com ", style="white"); ex.append("-p 1-65535 --top-ports 1000\n", style="dim")
+    ex.append("  spectra ", style="bold cyan"); ex.append("-ds https://site.com ", style="white"); ex.append("-w common.txt --recursive --stealth --workers 50\n", style="dim")
+    ex.append("  spectra ", style="bold cyan"); ex.append("-sqli http://site.com/page?id=1 ", style="white"); ex.append("--sqli-level 2 --sqli-oast http://oast.pro\n", style="dim")
+    ex.append("  spectra ", style="bold cyan"); ex.append("-xss http://app.com/search ", style="white"); ex.append("--xss-dom --xss-oast http://oast.pro\n", style="dim")
+    ex.append("  spectra ", style="bold cyan"); ex.append("-ssl example.com ", style="white"); ex.append("--verbose\n", style="dim")
+    ex.append("  spectra ", style="bold cyan"); ex.append("--cve-kev ", style="white"); ex.append("CVE-2021-44228 ", style="dim"); ex.append("· "); ex.append("spectra ", style="bold cyan"); ex.append("--cve-epss CVE-2024-3094", style="dim")
+    _con.print(Panel(ex, title="[dim]QUICK EXAMPLES[/dim]", border_style="dim", padding=(0, 0)))
+
+    _con.print(
+        "[dim]  Full docs:[/dim] [cyan]spectra --help-module <name>[/cyan]"
+        "  [dim]·  Report issues:[/dim] [cyan]github.com/spectra[/cyan]\n"
+    )
 
 
 # Global CLI instance

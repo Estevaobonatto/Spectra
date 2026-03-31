@@ -7,7 +7,7 @@ import sys
 import argparse
 from ..core import display_banner, display_legal_warning, console, print_error, print_info, print_success
 from ..core.report_generator import ReportGenerator
-from .help_cli import get_help_cli, handle_help_request, show_quick_help
+from .help_cli import get_help_cli, handle_help_request, show_quick_help, show_rich_help
 from ..modules.port_scanner import scan_ports
 from ..modules.banner_grabber import BannerGrabber
 from ..modules.directory_scanner import advanced_directory_scan
@@ -317,6 +317,10 @@ Exemplos de uso:
                        nargs=2,
                        metavar=('HOST', 'PORT'),
                        help='Captura banner do serviço (host porta)')
+
+    parser.add_argument('--banner-ports',
+                       metavar='PORTS',
+                       help='Captura banners em múltiplas portas (ex: 21,22,25,80,443) — requer -bg <host>')
     
     # === EXTRATOR DE METADADOS ===
     parser.add_argument('-md', '--metadata',
@@ -404,7 +408,11 @@ Exemplos de uso:
     parser.add_argument('--sqli-collaborator',
                        metavar='URL',
                        help='URL do servidor OAST para testes out-of-band')
-    
+
+    parser.add_argument('--sqli-oast',
+                       metavar='URL',
+                       help='URL OAST para detecção de SQL Injection out-of-band (alias para --sqli-collaborator)')
+
     # === XSS SCANNER ===
     parser.add_argument('-xss', '--xss-scan',
                        metavar='URL',
@@ -421,7 +429,11 @@ Exemplos de uso:
     parser.add_argument('--xss-dom',
                        action='store_true',
                        help='Ativar fuzzing de DOM XSS')
-    
+
+    parser.add_argument('--xss-oast',
+                       metavar='URL',
+                       help='URL OAST para detecção de Blind XSS out-of-band')
+
     # === COMMAND INJECTION SCANNER ===
     parser.add_argument('-cmdi', '--command-injection',
                        metavar='URL',
@@ -442,7 +454,11 @@ Exemplos de uso:
                        type=float,
                        default=5.0,
                        help='Delay em segundos para técnicas time-based (padrão: 5.0)')
-    
+
+    parser.add_argument('--cmdi-oast',
+                       metavar='URL',
+                       help='URL OAST para detecção de Command Injection out-of-band (OOB DNS)')
+
     # === LFI/RFI SCANNER ===
     parser.add_argument('-lfi', '--lfi-scan',
                        metavar='URL',
@@ -660,7 +676,15 @@ Exemplos de uso:
     parser.add_argument('--cve-details',
                        metavar='CVE_ID',
                        help='Obter detalhes específicos de um CVE')
-    
+
+    parser.add_argument('--cve-epss',
+                       metavar='CVE_ID',
+                       help='Obter EPSS score (probabilidade de exploração) de um CVE')
+
+    parser.add_argument('--cve-kev',
+                       metavar='CVE_ID',
+                       help='Verificar se um CVE está no catálogo CISA Known Exploited Vulnerabilities')
+
     parser.add_argument('--trending-cves',
                        type=int,
                        metavar='DAYS',
@@ -679,8 +703,8 @@ Exemplos de uso:
     
     parser.add_argument('--workers',
                        type=int,
-                       default=50,
-                       help='Número de threads (padrão: 50)')
+                       default=None,
+                       help='Número de threads (padrão: auto)')
     
     parser.add_argument('--host-discovery',
                        action='store_true',
@@ -706,10 +730,14 @@ Exemplos de uso:
     parser.add_argument('--no-banner',
                        action='store_true',
                        help='Não exibe o banner')
+
+    parser.add_argument('--help-module',
+                       metavar='NAME',
+                       help='Exibe ajuda detalhada de um módulo (ex: --help-module sqli)')
     
     parser.add_argument('--version',
                        action='version',
-                       version='Spectra v3.3.0 - Advanced Directory Scanner Edition')
+                       version='Spectra v3.4.0 - Full Exploit Suite')
     
     return parser
 
@@ -753,15 +781,21 @@ def main():
     """Função principal do CLI."""
     parser = create_parser()
     
-    # Se nenhum argumento, mostra ajuda
+    # Se nenhum argumento, mostra ajuda Rich moderna
     if len(sys.argv) == 1:
         display_banner()
         display_legal_warning()
-        parser.print_help()
+        show_rich_help()
         return
-    
+
     args = parser.parse_args()
-    
+
+    # --help-module: ajuda detalhada de módulo específico
+    if args.help_module:
+        from .help_cli import show_quick_help
+        show_quick_help(args.help_module)
+        return
+
     # Exibe banner se não desabilitado
     if not args.no_banner:
         display_banner()
@@ -837,6 +871,38 @@ def main():
             else:
                 print_error(f"CVE {args.cve_details} não encontrado.")
             
+            return
+
+        elif args.cve_epss:
+            print_info(f"Obtendo EPSS score para: {args.cve_epss}")
+            integrator = CVEIntegrator()
+            epss = integrator.get_epss_score(args.cve_epss)
+            if epss:
+                from rich.table import Table as RichTable
+                t = RichTable(title=f"EPSS Score — {args.cve_epss}", box=None)
+                t.add_column("Metric", style="cyan")
+                t.add_column("Value", style="white")
+                score = epss.get('epss_score', 0)
+                pct   = epss.get('percentile', 0)
+                color = "red" if score >= 0.7 else ("yellow" if score >= 0.3 else "green")
+                t.add_row("EPSS Score",  f"[{color}]{score:.4f}[/{color}]")
+                t.add_row("Percentile",  f"{pct:.1%}")
+                t.add_row("Date",        epss.get('date', 'N/A'))
+                t.add_row("Interpretation", "High exploit probability" if score >= 0.7 else ("Moderate" if score >= 0.3 else "Low"))
+                console.print(t)
+            else:
+                print_error(f"EPSS data não encontrado para {args.cve_epss}")
+            return
+
+        elif args.cve_kev:
+            print_info(f"Verificando CISA KEV para: {args.cve_kev}")
+            integrator = CVEIntegrator()
+            in_kev = integrator.check_cisa_kev(args.cve_kev)
+            if in_kev:
+                console.print(f"\n[bold red][⚠️  CISA KEV][/bold red] [red]{args.cve_kev} está no catálogo de Vulnerabilidades Ativamente Exploradas![/red]")
+                console.print("[dim]Fonte: https://www.cisa.gov/known-exploited-vulnerabilities-catalog[/dim]")
+            else:
+                console.print(f"\n[green][✓][/green] {args.cve_kev} [dim]não encontrado no CISA KEV catalog.[/dim]")
             return
         
         elif args.trending_cves:
@@ -1058,10 +1124,24 @@ def main():
         # === BANNER GRABBER ===
         elif args.banner_grab:
             host, port = args.banner_grab
-            print_info(f"Capturando banner de {host}:{port}")
-            
-            grabber = BannerGrabber(timeout=args.timeout)
-            banner = grabber.grab_banner(host, int(port))
+            if args.banner_ports:
+                # Multi-port grab
+                print_info(f"Capturando banners de {host} nas portas {args.banner_ports}")
+                ports = [int(p.strip()) for p in args.banner_ports.split(',') if p.strip().isdigit()]
+                ports = sorted(set(ports + [int(port)]))
+                grabber = BannerGrabber(timeout=args.timeout)
+                results_map = grabber.grab_multiple_banners(host, ports)
+                from rich.table import Table as RichTable
+                tbl = RichTable(title=f"Banners — {host}", box=None)
+                tbl.add_column("Port", style="cyan", no_wrap=True)
+                tbl.add_column("Banner / Service", style="white")
+                for p, banner in sorted(results_map.items()):
+                    tbl.add_row(str(p), (banner or "[dim]no response[/dim]")[:120])
+                console.print(tbl)
+            else:
+                print_info(f"Capturando banner de {host}:{port}")
+                grabber = BannerGrabber(timeout=args.timeout)
+                grabber.grab_banner(host, int(port))
         
         # === EXTRATOR DE METADADOS ===
         elif args.metadata:
@@ -1188,17 +1268,30 @@ def main():
         elif args.sql_injection:
             print_info(f"Executando scan de SQL Injection em: {args.sql_injection}")
             
+            oast_url = args.sqli_oast or args.sqli_collaborator
             results = sql_injection_scan(
                 url=args.sql_injection,
                 level=args.sqli_level,
                 dbms=args.sqli_dbms,
-                collaborator_url=args.sqli_collaborator
+                collaborator_url=oast_url
             )
         
         # === SCANNER DE XSS ===
         elif args.xss_scan:
             print_info(f"Executando scan de XSS em: {args.xss_scan}")
-            
+
+            from ..utils.oast import OASTClient
+            scanner_xss = __import__('spectra.modules.xss_scanner', fromlist=['XSSScanner'])
+            _xss_mod = None
+            try:
+                from ..modules.xss_scanner import XSSScanner
+                _xss_mod = XSSScanner(args.xss_scan)
+                if args.xss_oast:
+                    oast_c = OASTClient(server_url=args.xss_oast)
+                    _xss_mod.set_oast_client(oast_c)
+            except Exception:
+                pass
+
             results = xss_scan(
                 url=args.xss_scan,
                 custom_payloads_file=args.xss_payloads,
@@ -1210,7 +1303,16 @@ def main():
         # === COMMAND INJECTION SCANNER ===
         elif args.command_injection:
             print_info(f"Executando scan de Command Injection em: {args.command_injection}")
-            
+
+            if args.cmdi_oast:
+                try:
+                    from ..utils.oast import OASTClient
+                    from ..modules.command_injection_scanner import CommandInjectionScanner
+                    _cmdi_scanner = CommandInjectionScanner(args.command_injection)
+                    _cmdi_scanner.set_oast_client(OASTClient(server_url=args.cmdi_oast))
+                except Exception:
+                    pass
+
             results = command_injection_scan(
                 url=args.command_injection,
                 level=args.cmdi_level,

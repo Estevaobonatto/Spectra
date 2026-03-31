@@ -700,6 +700,15 @@ class AdvancedHeadersAnalyzer:
                     'description': "HSTS não inclui subdomínios",
                     'recommendation': "Adicione 'includeSubDomains' para proteger subdomínios"
                 })
+
+            if "preload" not in header_value:
+                findings.append({
+                    'type': 'HSTS_PRELOAD_MISSING',
+                    'severity': 'INFO',
+                    'header': header_name,
+                    'description': "HSTS sem diretiva 'preload' — domínio não pode ser enviado ao preload list",
+                    'recommendation': "Adicione 'preload' e submeta o domínio em https://hstspreload.org"
+                })
         
         elif header_name == "X-Frame-Options":
             if header_value.upper() not in ["DENY", "SAMEORIGIN"]:
@@ -997,7 +1006,62 @@ class AdvancedHeadersAnalyzer:
                 })
         
         return cors_findings
-    
+
+    def _test_cors_origin_reflection(self, session=None) -> list:
+        """Teste ativo: envia vários valores de Origin e verifica se são refletidos.
+
+        Detecta dois padrões críticos:
+        1. O servidor reflete QUALQUER Origin → CORS misconfiguration
+        2. O servidor reflete ``null`` com ``credentials: true`` → exploitable
+
+        Returns:
+            Lista de findings de CORS.
+        """
+        findings = []
+        if not hasattr(self, 'url') or not self.url:
+            return findings
+
+        import requests as _req
+        _session = session or _req.Session()
+
+        test_origins = [
+            'https://evil.com',
+            'null',
+            f'https://evil.{self.url.split("//")[-1].split("/")[0]}',  # subdomain of target
+        ]
+
+        for origin in test_origins:
+            try:
+                resp = _session.get(
+                    self.url,
+                    headers={'Origin': origin},
+                    timeout=8,
+                    verify=False,
+                )
+                acao = resp.headers.get('Access-Control-Allow-Origin', '')
+                acac = resp.headers.get('Access-Control-Allow-Credentials', '')
+                if acao == origin or acao == '*':
+                    cred_risk = acac.lower() == 'true'
+                    findings.append({
+                        'type': 'CORS_ORIGIN_REFLECTED' if acao == origin else 'CORS_WILDCARD',
+                        'severity': 'CRITICAL' if cred_risk else 'HIGH',
+                        'origin_sent': origin,
+                        'acao_received': acao,
+                        'credentials': cred_risk,
+                        'description': (
+                            f"Servidor reflete Origin '{origin}' com credentials={cred_risk}"
+                            if acao == origin else
+                            f"Servidor aceita wildcard Origin com credentials={cred_risk}"
+                        ),
+                        'recommendation': (
+                            "Valide o Origin em uma whitelist e nunca use credentials=true com origens dinâmicas"
+                        ),
+                    })
+            except Exception:
+                pass
+
+        return findings
+
     def analyze_headers(self, verbose=False, include_advanced=True):
         """Executa análise completa dos cabeçalhos."""
         try:

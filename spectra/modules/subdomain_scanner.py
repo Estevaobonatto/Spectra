@@ -264,7 +264,7 @@ class CertificateTransparencySource:
         self.session = None
     
     async def discover_from_ct_logs(self, domain: str) -> Set[str]:
-        """Descobre subdomínios via Certificate Transparency logs."""
+        """Descobre subdomínios via Certificate Transparency logs e passive DNS."""
         all_subdomains = set()
         
         timeout = aiohttp.ClientTimeout(total=30)
@@ -281,6 +281,24 @@ class CertificateTransparencySource:
                 all_subdomains.update(certspotter_subdomains)
             except Exception as e:
                 logger.debug(f"CertSpotter query failed: {e}")
+
+            # Passive DNS: HackerTarget
+            try:
+                ht_subdomains = await self._query_hackertarget(domain)
+                all_subdomains.update(ht_subdomains)
+                if ht_subdomains:
+                    logger.info(f"HackerTarget retornou {len(ht_subdomains)} subdomínios")
+            except Exception as exc:
+                logger.debug(f"HackerTarget falhou: {exc}")
+
+            # Passive DNS: RapidDNS
+            try:
+                rdns_subdomains = await self._query_rapiddns(domain)
+                all_subdomains.update(rdns_subdomains)
+                if rdns_subdomains:
+                    logger.info(f"RapidDNS retornou {len(rdns_subdomains)} subdomínios")
+            except Exception as exc:
+                logger.debug(f"RapidDNS falhou: {exc}")
         
         return all_subdomains
     
@@ -334,6 +352,44 @@ class CertificateTransparencySource:
         except Exception as e:
             logger.error(f"Erro ao consultar CertSpotter: {e}")
         
+        return subdomains
+
+    async def _query_hackertarget(self, domain: str) -> Set[str]:
+        """Query HackerTarget hostsearch API (passive DNS gratuito)."""
+        subdomains: Set[str] = set()
+        url = f"https://api.hackertarget.com/hostsearch/?q={domain}"
+        try:
+            async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=20)) as resp:
+                if resp.status == 200:
+                    text = await resp.text()
+                    for line in text.splitlines():
+                        parts = line.strip().split(',')
+                        if parts:
+                            name = parts[0].strip().lower()
+                            if name and self._is_valid_subdomain(name, domain):
+                                subdomains.add(name)
+        except Exception as exc:
+            logger.debug(f"HackerTarget query falhou: {exc}")
+        return subdomains
+
+    async def _query_rapiddns(self, domain: str) -> Set[str]:
+        """Query RapidDNS sublist API (passive enumeration)."""
+        subdomains: Set[str] = set()
+        url = f"https://rapiddns.io/subdomain/{domain}?full=1&down=1"
+        headers = {'User-Agent': 'Mozilla/5.0 (compatible; Spectra-Scanner/1.0)'}
+        try:
+            async with self.session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=20)) as resp:
+                if resp.status == 200:
+                    text = await resp.text()
+                    # Extrai subdomínios da resposta HTML/CSV
+                    for match in __import__('re').findall(
+                        r'([a-zA-Z0-9._-]+\.' + __import__('re').escape(domain) + r')', text
+                    ):
+                        name = match.strip().lower()
+                        if self._is_valid_subdomain(name, domain):
+                            subdomains.add(name)
+        except Exception as exc:
+            logger.debug(f"RapidDNS query falhou: {exc}")
         return subdomains
     
     def _is_valid_subdomain(self, name: str, domain: str) -> bool:

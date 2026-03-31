@@ -21,7 +21,7 @@ from ..utils.network import create_session
 class AdvancedDirectoryScanner:
     """Scanner avançado de diretórios web com detecção de false positives."""
     
-    def __init__(self, base_url, wordlist_path, workers=30, timeout=10, retries=3):
+    def __init__(self, base_url, wordlist_path, workers=None, timeout=10, retries=3):
         """
         Inicializa o scanner de diretórios.
         
@@ -82,18 +82,23 @@ class AdvancedDirectoryScanner:
         self.performance_mode = 'balanced'  # balanced, fast, aggressive
         self.gpu_accelerated = False  # Placeholder para futuro suporte GPU
         
-        # Auto-ajuste de workers baseado em hardware se não especificado
-        if workers == 30 and not hasattr(self, '_workers_manually_set'):
+        # Auto-ajuste de workers baseado em hardware quando não especificado pelo usuário
+        if workers is None:
             import multiprocessing
             cpu_count = multiprocessing.cpu_count()
             # Fórmula otimizada: 4-6x CPUs para I/O bound tasks
             optimal_workers = min(max(cpu_count * 5, 50), 200)
             self.workers = optimal_workers
             self.max_workers_auto = True
+            self._auto_cpu_count = cpu_count
+        else:
+            self.workers = workers
+            self.max_workers_auto = False
+            self._auto_cpu_count = None
             
         logger.info(f"Scanner de diretórios inicializado para {base_url}")
         if self.max_workers_auto:
-            logger.info(f"Auto-ajuste de workers: {self.workers} (baseado em {cpu_count} CPUs)")
+            logger.info(f"Auto-ajuste de workers: {self.workers} (baseado em {self._auto_cpu_count} CPUs)")
         
     def _setup_session(self):
         """Configura sessão HTTP otimizada para directory discovery com connection pooling."""
@@ -320,9 +325,9 @@ class AdvancedDirectoryScanner:
             if result.returncode == 0:
                 gpu_info = "NVIDIA GPU detectada (uso limitado para HTTP I/O)"
                 gpu_available = True
-        except:
-            pass
-        
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as _exc:
+            logger.debug(f"nvidia-smi indisponível: {_exc}")
+
         try:
             # Verifica OpenCL (AMD/Intel)
             import pyopencl as cl
@@ -330,8 +335,8 @@ class AdvancedDirectoryScanner:
             if platforms:
                 gpu_info += " | OpenCL disponível"
                 gpu_available = True
-        except:
-            pass
+        except (ImportError, Exception) as _exc:  # pyopencl é opcional
+            logger.debug(f"pyopencl indisponível: {_exc}")
         
         # HTTP requests são I/O bound - GPU não oferece vantagens significativas
         # Melhor focar em: connection pooling, async requests, threading otimizado
@@ -1092,7 +1097,7 @@ if METADATA:
     except ImportError:
         pass
 
-def advanced_directory_scan(base_url, wordlist_path, workers=30, timeout=10, 
+def advanced_directory_scan(base_url, wordlist_path, workers=None, timeout=10, 
                           recursive=False, max_depth=3, stealth=False, 
                           extension_fuzzing=True, output_format='table'):
     """

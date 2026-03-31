@@ -107,7 +107,7 @@ class AdvancedPortScanner:
                         if self.verbose:
                             console.print(f"  [dim green]✓[/dim green] [dim]Conectou na porta {port}[/dim]")
                         return True
-            except:
+            except (socket.error, OSError):
                 continue
         
         if self.verbose:
@@ -258,14 +258,14 @@ class AdvancedPortScanner:
                                     service_info['detected_service'] = sig_info['name']
                                     break
                             break
-                        except:
+                        except (socket.error, OSError):
                             continue
                 else:
                     # Banner grab genérico
                     try:
                         data = s.recv(1024)
                         banner = data.decode('utf-8', errors='ignore')
-                    except:
+                    except (socket.error, OSError):
                         pass
                 
                 # Detecção de serviço por análise de banner
@@ -335,8 +335,163 @@ class AdvancedPortScanner:
         """Retorna serviço padrão baseado na porta."""
         try:
             return socket.getservbyport(port, 'tcp')
-        except:
+        except (OSError, OverflowError):
             return self.service_signatures.get(port, {}).get('name', 'Unknown')
+
+    def fingerprint_os(self) -> dict:
+        """Tenta identificar o SO do alvo usando múltiplas heurísticas passivas.
+
+        Técnicas utilizadas (sem raw sockets, por compatibilidade):
+        1. **TTL do ICMP ping** — Linux ≈ 64, Windows ≈ 128, Cisco/BSD ≈ 255
+        2. **Detecção por portas abertas** — porta 3389 = Windows, 22 sem samba = Linux
+        3. **Banner de serviços** — SSH banner, SMB, HTTP Server header
+
+        Returns:
+            dict com: os_guess, confidence, ttl, method, evidence.
+        """
+        result = {
+            'os_guess': 'Unknown',
+            'confidence': 0,
+            'ttl': None,
+            'method': [],
+            'evidence': [],
+        }
+
+        # --- Heurística 1: TTL via ping ICMP (plataforma-independente) ---
+        ttl = self._get_icmp_ttl()
+        if ttl is not None:
+            result['ttl'] = ttl
+            result['method'].append('ttl')
+            if 55 <= ttl <= 70:
+                result['os_guess'] = 'Linux / Android'
+                result['confidence'] = 70
+                result['evidence'].append(f'TTL={ttl} (Linux típico: 64)')
+            elif 120 <= ttl <= 138:
+                result['os_guess'] = 'Windows'
+                result['confidence'] = 75
+                result['evidence'].append(f'TTL={ttl} (Windows típico: 128)')
+            elif 240 <= ttl <= 255:
+                result['os_guess'] = 'Cisco IOS / BSD / macOS'
+                result['confidence'] = 65
+                result['evidence'].append(f'TTL={ttl} (Cisco/BSD típico: 255)')
+            elif 30 <= ttl <= 55:
+                result['os_guess'] = 'Solaris / AIX'
+                result['confidence'] = 55
+                result['evidence'].append(f'TTL={ttl} (Solaris/AIX típico: 32-60)')
+
+        # --- Heurística 2: Detecção por portas abertas conhecidas ---
+        open_ports = {
+            port
+            for port, data in self.results.items()
+            if data.get('status') == 'open'
+        }
+        if open_ports:
+            result['method'].append('open_ports')
+            if 3389 in open_ports:
+                result['evidence'].append('RDP (3389) aberta → Windows')
+                if result['confidence'] < 80:
+                    result['os_guess'] = 'Windows'
+                    result['confidence'] = 80
+            if 445 in open_ports and 139 in open_ports:
+                result['evidence'].append('SMB/NetBIOS (445+139) → Windows ou Samba')
+                if result['os_guess'] == 'Unknown':
+                    result['os_guess'] = 'Windows (ou Linux com Samba)'
+                    result['confidence'] = 60
+            if 22 in open_ports and 3389 not in open_ports:
+                result['evidence'].append('SSH (22) sem RDP → Linux/Unix')
+                if result['confidence'] < 70:
+                    result['os_guess'] = 'Linux / Unix'
+                    result['confidence'] = 65
+            if {8140, 2375, 2376, 4243}.intersection(open_ports):
+                result['evidence'].append('Puppet/Docker ports → Linux')
+                if result['confidence'] < 70:
+                    result['os_guess'] = 'Linux'
+                    result['confidence'] = 70
+
+        # --- Heurística 3: Banner fingerprinting ---
+        banner_os = self._os_from_banners()
+        if banner_os:
+            result['method'].append('banner')
+            result['evidence'].extend(banner_os['evidence'])
+            if banner_os['confidence'] > result['confidence']:
+                result['os_guess'] = banner_os['os_guess']
+                result['confidence'] = banner_os['confidence']
+
+        return result
+
+    def _get_icmp_ttl(self) -> int | None:
+        """Tenta obter o TTL de resposta ICMP usando ``ping`` (sem raw sockets)."""
+        import subprocess
+        import re as _re
+        import platform
+
+        try:
+            if platform.system().lower() == 'windows':
+                cmd = ['ping', '-n', '1', '-w', '2000', self.target_ip]
+            else:
+                cmd = ['ping', '-c', '1', '-W', '2', self.target_ip]
+
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=5
+            )
+            output = proc.stdout + proc.stderr
+            # TTL padrão aparece como "TTL=64" ou "ttl=64"
+            m = _re.search(r'[Tt][Tt][Ll]=(\d+)', output)
+            if m:
+                return int(m.group(1))
+        except Exception:
+            pass
+        return None
+
+    def _os_from_banners(self) -> dict | None:
+        """Infere SO a partir dos banners já capturados durante o scan."""
+        evidence = []
+        os_guess = None
+        confidence = 0
+
+        for port, data in self.results.items():
+            banner = (data.get('banner') or '').lower()
+            if not banner:
+                continue
+
+            if 'windows' in banner or 'microsoft' in banner or 'win32' in banner:
+                evidence.append(f'Banner porta {port}: Windows detectado')
+                os_guess = 'Windows'
+                confidence = max(confidence, 85)
+            elif 'ubuntu' in banner or 'debian' in banner or 'centos' in banner or 'rhel' in banner:
+                os_name = next(
+                    n for n in ('Ubuntu', 'Debian', 'CentOS', 'RHEL')
+                    if n.lower() in banner
+                )
+                evidence.append(f'Banner porta {port}: {os_name} detectado')
+                os_guess = f'Linux ({os_name})'
+                confidence = max(confidence, 90)
+            elif 'linux' in banner:
+                evidence.append(f'Banner porta {port}: Linux detectado')
+                if not os_guess:
+                    os_guess = 'Linux'
+                confidence = max(confidence, 75)
+            elif 'openssh' in banner:
+                evidence.append(f'SSH porta {port}: OpenSSH → Linux/Unix')
+                if not os_guess:
+                    os_guess = 'Linux / Unix'
+                confidence = max(confidence, 65)
+            elif 'cisco' in banner or 'ios' in banner:
+                evidence.append(f'Banner porta {port}: Cisco IOS detectado')
+                os_guess = 'Cisco IOS'
+                confidence = max(confidence, 85)
+            elif 'freebsd' in banner or 'openbsd' in banner or 'netbsd' in banner:
+                bsd_name = next(
+                    n for n in ('FreeBSD', 'OpenBSD', 'NetBSD')
+                    if n.lower() in banner
+                )
+                evidence.append(f'Banner porta {port}: {bsd_name} detectado')
+                os_guess = bsd_name
+                confidence = max(confidence, 88)
+
+        if os_guess:
+            return {'os_guess': os_guess, 'confidence': confidence, 'evidence': evidence}
+        return None
     
     def scan_single_port(self, port):
         """Scan de uma única porta."""
