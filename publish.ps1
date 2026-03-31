@@ -18,7 +18,7 @@ if (-not (Test-Path "dist")) {
     exit 1
 }
 
-$files = Get-ChildItem "dist" -Filter "spectra_suite-1.0.0*"
+$files = Get-ChildItem "dist" -Filter "spectra_suite-2.0.0*"
 if ($files.Count -eq 0) {
     Write-Host "❌ Arquivos de distribuição não encontrados em dist/" -ForegroundColor Red
     exit 1
@@ -29,7 +29,7 @@ $files | ForEach-Object { Write-Host "  - $($_.Name)" }
 
 # Verificar integridade
 Write-Host "`n🔍 Verificando integridade dos arquivos..." -ForegroundColor Yellow
-twine check dist/spectra_suite-1.0.0*
+twine check dist/spectra_suite-2.0.0*
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "❌ Verificação de integridade falhou!" -ForegroundColor Red
@@ -42,7 +42,7 @@ Write-Host "✅ Verificação de integridade passou!" -ForegroundColor Green
 Write-Host "`n🚀 Fazendo upload para PyPI..." -ForegroundColor Yellow
 Write-Host "💡 Use '__token__' como username e seu token de API como password" -ForegroundColor Cyan
 
-twine upload dist/spectra_suite-1.0.0*
+twine upload dist/spectra_suite-2.0.0*
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host "`n🎉 Publicação no PyPI concluída com sucesso!" -ForegroundColor Green

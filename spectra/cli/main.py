@@ -737,7 +737,7 @@ Exemplos de uso:
     
     parser.add_argument('--version',
                        action='version',
-                       version='Spectra v3.4.0 - Full Exploit Suite')
+                       version='Spectra v2.0.0 - Full Exploit Suite')
     
     return parser
 
