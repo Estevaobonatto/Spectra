@@ -5,8 +5,16 @@ param(
     [string]$Action = "help"
 )
 
+$PackageInit = Join-Path $PSScriptRoot "spectra\__init__.py"
+$VersionLine = Select-String -Path $PackageInit -Pattern '^__version__ = "(?<version>[0-9]+\.[0-9]+\.[0-9]+)"$'
+$ProjectVersion = if ($VersionLine -and $VersionLine.Matches.Count -gt 0) {
+    $VersionLine.Matches[0].Groups['version'].Value
+} else {
+    "desconhecida"
+}
+
 function Show-Help {
-    Write-Host "🔧 Scripts de Build - Spectra v2.0.1" -ForegroundColor Green
+    Write-Host "🔧 Scripts de Build - Spectra v$ProjectVersion" -ForegroundColor Green
     Write-Host "Uso: .\build.ps1 <ação>"
     Write-Host ""
     Write-Host "Ações disponíveis:" -ForegroundColor Yellow
@@ -19,8 +27,8 @@ function Show-Help {
     Write-Host "  build    - Constrói pacote wheel + sdist"
     Write-Host "  clean    - Limpa artefatos temporários"
     Write-Host ""
-    Write-Host "Para releases: crie uma tag git e o CI/CD cuida do resto." -ForegroundColor DarkGray
-    Write-Host "  git tag v2.0.1 && git push origin main --tags" -ForegroundColor Cyan
+    Write-Host "Releases sao geradas automaticamente para qualquer push na branch main." -ForegroundColor DarkGray
+    Write-Host "O CI cria o bump de versao, faz commit em pyproject.toml/setup.py/spectra/__init__.py e publica a release pela tag gerada." -ForegroundColor Cyan
 }
 
 function Install-Dependencies {

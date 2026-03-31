@@ -1,11 +1,20 @@
 name: Release
 
-# Disparado por push de qualquer tag v*.*.*  (ex: v2.0.1  v3.0.0-rc1)
+# Disparado pelas tags geradas automaticamente a partir de pushes na main
+# ou por tags criadas manualmente no formato v*.*.*.
 on:
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
       - 'v[0-9]+.[0-9]+.[0-9]+-*'
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      ref:
+        required: true
+        type: string
 
 permissions:
   contents: write   # criar GitHub Release
@@ -22,6 +31,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
 
       - uses: actions/setup-python@v5
         with:
@@ -30,7 +41,10 @@ jobs:
       - name: Check version consistency
         id: check
         run: |
-          TAG="${GITHUB_REF#refs/tags/v}"
+          TAG="${{ inputs.version }}"
+          if [ -z "$TAG" ]; then
+            TAG="${GITHUB_REF#refs/tags/v}"
+          fi
           PYPROJECT=$(python - <<'EOF'
           import tomllib
           with open("pyproject.toml", "rb") as f:
@@ -42,7 +56,7 @@ jobs:
 
           if [ "$TAG" != "$PYPROJECT" ]; then
             echo "::error title=Version Mismatch::tag=v$TAG não bate com pyproject.toml=$PYPROJECT"
-            echo "Atualize a versão em pyproject.toml, setup.py e CHANGELOG.md antes de tagear."
+            echo "Ajuste os arquivos de versao antes de criar uma tag manual ou deixe o workflow auto-release gerar a tag para voce."
             exit 1
           fi
 
@@ -62,6 +76,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
 
       - uses: actions/setup-python@v5
         with:
@@ -85,6 +101,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
           fetch-depth: 0  # histórico completo (necessário p/ setuptools_scm se usado)
 
       - uses: actions/setup-python@v5
@@ -128,6 +145,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
 
       - uses: actions/setup-python@v5
         with:
@@ -183,6 +202,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
 
       - name: Download dist artifacts (wheel + sdist)
         uses: actions/download-artifact@v4
@@ -223,7 +244,7 @@ jobs:
           VERSION="${{ needs.validate.outputs.version }}"
           NOTES=$(awk "/^## \[$VERSION\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md | sed '/^$/d')
           if [ -z "$NOTES" ]; then
-            NOTES="Veja [CHANGELOG.md](CHANGELOG.md) para detalhes."
+            NOTES="Release automatica gerada a partir de push na main. Veja [CHANGELOG.md](CHANGELOG.md) e o historico de commits para detalhes."
           fi
           {
             echo "notes<<NOTES_EOF"
@@ -267,9 +288,7 @@ jobs:
     name: Publish to PyPI
     needs: [validate, build, build-installers, github-release]
     runs-on: ubuntu-latest
-    environment:
-      name: release
-      url: https://pypi.org/project/spectra-suite/${{ needs.validate.outputs.version }}/
+    environment: release
 
     steps:
       - name: Download dist artifacts
