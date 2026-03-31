@@ -18,7 +18,6 @@ on:
 
 permissions:
   contents: write   # criar GitHub Release
-  id-token: write   # Trusted Publisher OIDC → PyPI (sem senha!)
 
 jobs:
   # ── 1. Garante que a tag bate com a versão declarada no pyproject.toml ───────
@@ -286,25 +285,6 @@ jobs:
           prerelease: ${{ needs.validate.outputs.prerelease }}
           make_latest: ${{ needs.validate.outputs.prerelease == 'false' }}
 
-  # ── 6. Publica no PyPI via Trusted Publisher (OIDC — sem senha armazenada) ──
-  pypi-publish:
-    name: Publish to PyPI
-    needs: [validate, build, build-installers, github-release]
-    runs-on: ubuntu-latest
-    environment: release
-
-    steps:
-      - name: Download dist artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: dist-${{ needs.validate.outputs.version }}
-          path: dist/
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        # Usa Trusted Publisher (OIDC) — nenhum token necessário
-        # Configure em: pypi.org → Manage → Publishing → Add Publisher
-        #   Owner:    <seu-usuario-github>
-        #   Repo:     Spectra
-        #   Workflow: release.yml
-        #   Env:      release
+  # Publicação no PyPI é feita pelo workflow chamador (auto-release.yml)
+  # para garantir compatibilidade com o Trusted Publisher OIDC do PyPI,
+  # que não suporta reusable workflows como ponto de publicação.
