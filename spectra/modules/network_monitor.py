@@ -8,7 +8,7 @@ Versão TUI com captura e análise de pacotes em tempo real
 import threading
 import time
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import defaultdict
 from typing import List, Dict
 import json
