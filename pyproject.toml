@@ -7,7 +7,7 @@ name = "spectra-suite"
 version = "2.0.2"
 description = "Spectra - Web Security Suite - Uma ferramenta de hacking ético para análise de segurança web"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
 authors = [
     {name = "Spectra Team", email = "team@spectra-security.com"}
 ]
@@ -19,7 +19,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Information Technology",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",

@@ -1,10 +1,6 @@
 # setup.py
 from setuptools import setup, find_packages
 
-# Lê as dependências do requirements.txt
-with open('requirements.txt') as f:
-    required = f.read().splitlines()
-
 # Lê o conteúdo do README.md para a descrição longa
 with open('README.md', 'r', encoding='utf-8') as f:
     long_description = f.read()
@@ -30,9 +26,6 @@ setup(
     # Usa find_packages para descobrir automaticamente os módulos
     packages=find_packages(),
 
-    # Lista de dependências necessárias
-    install_requires=required,
-
     # O entry_point agora aponta para a estrutura modular
     entry_points={
         'console_scripts': [
@@ -45,7 +38,6 @@ setup(
         'Programming Language :: Python :: 3',
         'Programming Language :: Python :: 3.11',
         'Programming Language :: Python :: 3.12',
-        'License :: OSI Approved :: MIT License',
         'Operating System :: OS Independent',
         'Environment :: Console',
         'Topic :: Security',
