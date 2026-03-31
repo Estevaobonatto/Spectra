@@ -11,6 +11,7 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Reorganização da estrutura do projeto: payloads movidos para `spectra/data/payloads/`, wordlists soltas para `spectra/data/wordlists/`
 - `build.ps1` atualizado para v2.0.1; `safety` substituído por `pip-audit`; referência ao `release-check.ps1` removida
 - `.gitignore` expandido para cobrir `.spectra_cache/`, novos paths de wordlists e artefatos de release locais
+- Suporte oficial reduzido para Python 3.11 e 3.12; matriz do CI atualizada para remover Python 3.9 e 3.10
 
 ### Removed
 - Scripts legados `publish.ps1` e `release-check.ps1` (substituídos pelo workflow CI/CD `.github/workflows/release.yml`)

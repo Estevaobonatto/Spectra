@@ -9,6 +9,7 @@ import re
 import time
 import json
 import threading
+from typing import Optional
 from datetime import datetime
 from urllib.parse import urljoin, urlparse, urlunparse, parse_qs
 from bs4 import BeautifulSoup
@@ -210,7 +211,7 @@ class LFIScanner:
         ]
 
     def test_log_poisoning(self, url: str, method: str, param: str,
-                            form_data: dict | None = None) -> list[dict]:
+                            form_data: Optional[dict] = None) -> list[dict]:
         """
         Testa log poisoning: injeta código PHP no User-Agent e depois
         faz LFI nos arquivos de log para executá-lo.

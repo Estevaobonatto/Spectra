@@ -7,6 +7,7 @@ import socket
 import time
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Optional
 
 from ..core import console, print_info, print_success, print_error
 from ..core.logger import logger
@@ -419,7 +420,7 @@ class AdvancedPortScanner:
 
         return result
 
-    def _get_icmp_ttl(self) -> int | None:
+    def _get_icmp_ttl(self) -> Optional[int]:
         """Tenta obter o TTL de resposta ICMP usando ``ping`` (sem raw sockets)."""
         import subprocess
         import re as _re
@@ -443,7 +444,7 @@ class AdvancedPortScanner:
             pass
         return None
 
-    def _os_from_banners(self) -> dict | None:
+    def _os_from_banners(self) -> Optional[dict]:
         """Infere SO a partir dos banners já capturados durante o scan."""
         evidence = []
         os_guess = None

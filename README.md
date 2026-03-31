@@ -13,11 +13,13 @@
 ```
 
 [![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/spectra-team/spectra)
-[![Python](https://img.shields.io/badge/python-3.6+-green.svg)](https://python.org)
+[![Python](https://img.shields.io/badge/python-3.11%2B-green.svg)](https://python.org)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Security](https://img.shields.io/badge/security-ethical%20hacking-red.svg)](SECURITY.md)
 
 Uma ferramenta completa de hacking ético para análise de segurança web com mais de 15 módulos especializados.
+
+Requer Python 3.11 ou 3.12.
 
 ## **Características Principais**
 

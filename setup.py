@@ -43,6 +43,8 @@ setup(
     # Classificadores para ajudar a descrever seu pacote
     classifiers=[
         'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.11',
+        'Programming Language :: Python :: 3.12',
         'License :: OSI Approved :: MIT License',
         'Operating System :: OS Independent',
         'Environment :: Console',
@@ -52,7 +54,7 @@ setup(
         'Topic :: Security :: Cryptography',
         'Topic :: Internet :: WWW/HTTP',
     ],
-    python_requires='>=3.6',
+    python_requires='>=3.11',
     
     # Inclui arquivos adicionais
     include_package_data=True,

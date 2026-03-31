@@ -9,6 +9,7 @@ import re
 import time
 import random
 import string
+from typing import Optional
 from urllib.parse import urljoin, urlparse, urlunparse, parse_qs
 from difflib import SequenceMatcher
 from bs4 import BeautifulSoup
@@ -253,7 +254,7 @@ class SQLiScanner:
                 return col_count
         return 0
 
-    def _get_dbms_error_payloads(self, dbms: str | None = None) -> list[str]:
+    def _get_dbms_error_payloads(self, dbms: Optional[str] = None) -> list[str]:
         """
         Retorna payloads de extração de erro específicos por DBMS.
 
