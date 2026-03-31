@@ -25,19 +25,6 @@ pyOpenSSL>=22.0.0
 cryptography>=37.0.0
 python-whois>=0.7.3
 
-# GPU computing (optional)
-pyopencl>=2022.1
-pycuda>=2022.1
-
-# Web automation (optional)
-selenium>=4.0.0
-
-# XML processing
-lxml>=4.9.0
-
-# Data processing
-pandas>=1.5.0
-
 # Async utilities
 asyncio-throttle>=1.0.2
 
@@ -48,6 +35,7 @@ certifi>=2022.0.0
 charset-normalizer>=2.0.0
 idna>=3.0.0
 
-# Development and testing (moved to optional dependencies)
-# pytest>=7.0.0
-# pytest-asyncio>=0.21.0
+# Optional extras — install separately when needed:
+# GPU:        pip install spectra-suite[gpu]   (requires CUDA/OpenCL toolkit)
+# Selenium:   pip install spectra-suite[web]
+# Data:       pip install spectra-suite[data]

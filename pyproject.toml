@@ -47,7 +47,6 @@ dependencies = [
     "pyOpenSSL>=22.0.0",
     "cryptography>=37.0.0",
     "python-whois>=0.7.3",
-    "pandas>=1.5.0",
     "asyncio-throttle>=1.0.2",
     "python-dateutil>=2.8.0",
     "urllib3>=1.26.0",
@@ -63,6 +62,9 @@ gpu = [
 ]
 web = [
     "selenium>=4.0.0",
+]
+data = [
+    "pandas>=1.5.0",
 ]
 dev = [
     "pytest>=7.0.0",
