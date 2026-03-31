@@ -141,7 +141,7 @@ report.html
 *_results.json
 
 # -----------------------------------------------------------------------------
-# Spectra — wordlists grandes (>1 MB)
+# Spectra — wordlists grandes (>1 MB) — nunca commitar
 # -----------------------------------------------------------------------------
 wordlists/rockyou.txt
 wordlists/bt4-password.txt
@@ -149,6 +149,8 @@ wordlists/darkc0de.txt
 spectra/data/wordlists/rockyou.txt
 spectra/data/wordlists/bt4-password.txt
 spectra/data/wordlists/darkc0de.txt
+spectra/data/wordlists/bruteforce.txt
+spectra/data/wordlists/generic.txt
 
 # -----------------------------------------------------------------------------
 # Spectra — arquivos de debug / testes temporários
@@ -161,3 +163,12 @@ test_scapy.py
 # Spectra — cache local (~/.spectra/)
 # -----------------------------------------------------------------------------
 .spectra/
+.spectra_cache/
+
+# -----------------------------------------------------------------------------
+# Release artifacts gerados localmente
+# -----------------------------------------------------------------------------
+publish.ps1
+release-check.ps1
+.pypirc-example
+xxe_scan_results.json

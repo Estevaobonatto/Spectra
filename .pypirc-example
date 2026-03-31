@@ -1,6 +1,0 @@
-[distutils]
-index-servers = pypi
-
-[pypi]
-username = __token__
-password = pypi-SEU_TOKEN_AQUI

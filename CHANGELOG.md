@@ -5,6 +5,52 @@ Todas as mudanças notáveis neste projeto serão documentadas neste arquivo.
 O formato é baseado em [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 e este projeto adere ao [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-03-31
+
+### Changed
+- Reorganização da estrutura do projeto: payloads movidos para `spectra/data/payloads/`, wordlists soltas para `spectra/data/wordlists/`
+- `build.ps1` atualizado para v2.0.1; `safety` substituído por `pip-audit`; referência ao `release-check.ps1` removida
+- `.gitignore` expandido para cobrir `.spectra_cache/`, novos paths de wordlists e artefatos de release locais
+
+### Removed
+- Scripts legados `publish.ps1` e `release-check.ps1` (substituídos pelo workflow CI/CD `.github/workflows/release.yml`)
+- `.pypirc-example` (autenticação agora via OIDC Trusted Publisher)
+- Arquivos de saída de scan comprometidos na raiz (`xxe_scan_results.json`, `report.html`)
+- `release.md` temporário
+
+### Fixed
+- CI/CD (`release.yml`) agora é o único ponto de publicação no PyPI — sem tokens em disco
+
+## [2.0.0] - 2026-03-31
+
+### Added
+- **CI/CD completo**: `.github/workflows/ci.yml` (lint + tests + pip-audit em Python 3.9–3.12) e `.github/workflows/release.yml` (build → GitHub Release → PyPI via OIDC Trusted Publisher)
+- **OAST client** (`spectra/utils/oast.py`): suporte ao protocolo Interactsh para detecção blind de XXE, SSRF, XSS e Command Injection
+- **Blind XSS** via OAST no `xss_scanner.py` + mXSS/DOM clobbering payloads
+- **SSRF blind** via OAST + DNS rebinding (`nip.io`) no `ssrf_scanner.py`
+- **Command Injection OOB DNS** via OAST + timing adaptativo no `command_injection_scanner.py`
+- **PHP filter chain** + log poisoning no `lfi_scanner.py`
+- **SQLi UNION fingerprinting** automático (ORDER BY N), baseline anti-FP, payloads por DBMS no `sql_injection_scanner.py`
+- **Passive subdomain enumeration** via `crt.sh` + HackerTarget + RapidDNS
+- **DNSSEC validation**, AXFR zone transfer attempt e DMARC deep analysis no `dns_analyzer.py`
+- **WAF bypass strategies** por produto (Cloudflare, ModSecurity, AWS WAF) no `waf_detector.py`
+- **CSP directive-level parsing** e CORS misconfiguration no `headers_analyzer.py`
+- **OCSP validation** em tempo real via AIA extension no `ssl_analyzer.py`
+- **Favicon hash fingerprinting** + JS globals detection no `technology_detector.py`
+- **OS fingerprinting por TTL** no `port_scanner.py`
+- **Protocol-specific probes** (29 portas) + `grab_multiple_banners()` paralelo no `banner_grabber.py`
+- **Rich Live dashboard** + psutil fallback (Windows) no `network_monitor.py`
+- **EPSS scoring** (FIRST.org), **CISA KEV** check e **SQLite cache** no `cve_integrator.py`
+- **NVD API key** via env `SPECTRA_NVD_API_KEY` (50 req/30s)
+- **CLI modernizada**: `show_rich_help()` com tabelas categorizadas; novos flags `--xss-oast`, `--cmdi-oast`, `--cve-epss`, `--cve-kev`, `--banner-ports`
+
+### Fixed
+- Bug crítico de indentação no `command_injection_scanner.py` (variantes de evasão geradas apenas 1× em vez de por-payload)
+- `metadata_extractor.py`: `img._getexif()` → `img.getexif()` (Pillow 10+)
+- `ssrf_scanner.py`: remoção de indicadores genéricos de falso-positivo (`Server:`, `HTTP/1.`, etc.)
+- `xxe_scanner.py`: `asyncio.run()` falhava em event loops já ativos
+- `directory_scanner.py` e `port_scanner.py`: `pass` nu em excepts substituído por `logger.debug()`
+
 ## [1.0.0] - 2024-12-XX - 🎉 PRIMEIRO LANÇAMENTO OFICIAL
 
 ### 🚀 Funcionalidades Principais

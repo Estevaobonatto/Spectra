@@ -6,31 +6,28 @@ param(
 )
 
 function Show-Help {
-    Write-Host "🔧 Scripts de Build - Spectra v1.0.0" -ForegroundColor Green
+    Write-Host "🔧 Scripts de Build - Spectra v2.0.1" -ForegroundColor Green
     Write-Host "Uso: .\build.ps1 <ação>"
     Write-Host ""
     Write-Host "Ações disponíveis:" -ForegroundColor Yellow
-    Write-Host "  help          - Mostra esta ajuda"
-    Write-Host "  install       - Instala dependências"
-    Write-Host "  test          - Executa testes"
-    Write-Host "  format        - Formata código"
-    Write-Host "  lint          - Verifica linting"
-    Write-Host "  security      - Verifica segurança"
-    Write-Host "  build         - Constrói pacote"
-    Write-Host "  clean         - Limpa arquivos temporários"
-    Write-Host "  release-check - Verificação completa para release"
+    Write-Host "  help     - Mostra esta ajuda"
+    Write-Host "  install  - Instala dependências de dev"
+    Write-Host "  test     - Executa testes"
+    Write-Host "  format   - Formata código (black + isort)"
+    Write-Host "  lint     - Verifica linting (flake8)"
+    Write-Host "  security - Auditoria de segurança (bandit + pip-audit)"
+    Write-Host "  build    - Constrói pacote wheel + sdist"
+    Write-Host "  clean    - Limpa artefatos temporários"
     Write-Host ""
-    Write-Host "Exemplos:" -ForegroundColor Cyan
-    Write-Host "  .\build.ps1 install"
-    Write-Host "  .\build.ps1 test"
-    Write-Host "  .\build.ps1 release-check"
+    Write-Host "Para releases: crie uma tag git e o CI/CD cuida do resto." -ForegroundColor DarkGray
+    Write-Host "  git tag v2.0.1 && git push origin main --tags" -ForegroundColor Cyan
 }
 
 function Install-Dependencies {
     Write-Host "📦 Instalando dependências..." -ForegroundColor Yellow
     pip install -r requirements.txt
     pip install -e .
-    pip install pytest pytest-cov black isort flake8 bandit safety build twine
+    pip install pytest pytest-cov black isort flake8 bandit pip-audit build twine
 }
 
 function Run-Tests {
@@ -51,8 +48,8 @@ function Run-Lint {
 
 function Run-Security {
     Write-Host "🔒 Verificando segurança..." -ForegroundColor Yellow
-    bandit -r spectra/
-    safety check
+    bandit -r spectra/ -c .bandit
+    pip-audit
 }
 
 function Build-Package {
@@ -96,11 +93,6 @@ function Clean-Files {
     Write-Host "✅ Limpeza concluída" -ForegroundColor Green
 }
 
-function Run-ReleaseCheck {
-    Write-Host "🚀 Executando verificação completa..." -ForegroundColor Yellow
-    & ".\release-check.ps1"
-}
-
 # Executar ação baseada no parâmetro
 switch ($Action.ToLower()) {
     "help" { 
@@ -126,9 +118,6 @@ switch ($Action.ToLower()) {
     }
     "clean" { 
         Clean-Files 
-    }
-    "release-check" { 
-        Run-ReleaseCheck 
     }
     default { 
         Write-Host "❌ Ação desconhecida: $Action" -ForegroundColor Red
