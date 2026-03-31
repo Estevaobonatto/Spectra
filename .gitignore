@@ -50,7 +50,7 @@ MANIFEST
 # PyInstaller
 # -----------------------------------------------------------------------------
 *.manifest
-*.spec
+# *.spec — removido: spectra.spec é o spec do PyInstaller, deve ser commitado
 
 # -----------------------------------------------------------------------------
 # Installer logs
