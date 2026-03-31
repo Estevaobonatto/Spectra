@@ -84,6 +84,8 @@ class Example:
             raise ValueError("Example description cannot be empty")
         if not self.command:
             raise ValueError("Example command cannot be empty")
+        if isinstance(self.level, str):
+            self.level = ExampleLevel(self.level.lower())
 
 
 @dataclass
