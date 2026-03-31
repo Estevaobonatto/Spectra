@@ -14,7 +14,7 @@ setup(
     name='spectra-suite',
 
     # Versão do seu pacote
-    version='2.0.1',
+    version='2.0.2',
 
     # Autor e email
     author='Spectra Team',

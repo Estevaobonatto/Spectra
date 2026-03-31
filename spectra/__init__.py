@@ -3,11 +3,11 @@
 Spectra - Web Security Suite
 Uma ferramenta de hacking ético para análise de segurança web.
 
-Version: 2.0.1
+Version: 2.0.2
 Author: Spectra Team
 """
 
-__version__ = "2.0.1"
+__version__ = "2.0.2"
 __author__ = "Spectra Team"
 __description__ = "Uma ferramenta de hacking ético para análise de segurança web"
 
