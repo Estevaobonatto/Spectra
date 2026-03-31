@@ -6,10 +6,10 @@ Unit tests for HelpManager
 import pytest
 from spectra.core.help_system.help_manager import HelpManager, HelpSystemError
 from spectra.core.help_system.module_registry import ModuleRegistry, ModuleNotFoundError
-from spectra.core.help_system.help_formatter import HelpFormatter
+from spectra.core.help_system.help_formatter import HelpFormatter, OutputFormat
 from spectra.core.module_metadata import (
-    ModuleMetadata, Parameter, Example, ModuleCategory, 
-    ParameterType, OutputFormat
+    ModuleMetadata, Parameter, Example, ModuleCategory,
+    ParameterType
 )
 
 

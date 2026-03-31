@@ -54,6 +54,7 @@ class Parameter:
     min_value: Optional[float] = None   # Minimum value (for numeric types)
     max_value: Optional[float] = None   # Maximum value (for numeric types)
     help_text: str = ""                 # Extended help text
+    help_group: str = ""                # Group name for grouping parameters in help output
     
     def __post_init__(self):
         """Validate parameter after initialization"""
@@ -125,6 +126,7 @@ class ModuleMetadata:
     # CLI integration
     cli_command: str = ""               # Primary CLI command (-ps)
     cli_aliases: List[str] = field(default_factory=list)  # Alternative commands
+    cli_flags: List[str] = field(default_factory=list)    # All flags (--long, -s)
     
     # Documentation
     documentation_url: str = ""         # Link to detailed docs
@@ -136,8 +138,6 @@ class ModuleMetadata:
             raise ValueError("Module name cannot be empty")
         if not self.display_name:
             raise ValueError("Module display name cannot be empty")
-        if not self.description:
-            raise ValueError("Module description cannot be empty")
         if not isinstance(self.category, ModuleCategory):
             raise ValueError("Module category must be a ModuleCategory enum")
     
@@ -189,7 +189,7 @@ class ModuleMetadata:
                     'title': ex.title,
                     'description': ex.description,
                     'command': ex.command,
-                    'level': ex.level.value,
+                    'level': ex.level.value if hasattr(ex.level, 'value') else ex.level,
                     'category': ex.category,
                     'expected_output': ex.expected_output,
                     'notes': ex.notes

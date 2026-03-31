@@ -24,9 +24,12 @@ class OutputFormat(Enum):
 class HelpFormatter:
     """Formats help information in various output formats"""
     
-    def __init__(self):
-        self.console_width = 80
-        self.indent_size = 2
+    def __init__(self, width: int = 80, indent: int = 2):
+        self.width = width
+        self.console_width = width
+        self.indent = indent
+        self.indent_size = indent
+        self.indent_str = " " * indent
         self.validator = JSONSchemaValidator()
         self.validate_json = True
         
@@ -53,20 +56,28 @@ class HelpFormatter:
         else:
             return self._format_general_help_text(modules_by_category)
     
-    def format_module_help(self, metadata: ModuleMetadata, 
-                          format_type: OutputFormat = OutputFormat.TEXT) -> str:
+    def format_module_help(self, metadata: ModuleMetadata,
+                          format_type: OutputFormat = OutputFormat.TEXT,
+                          include_examples: bool = True,
+                          include_parameters: bool = True) -> str:
         """
         Format detailed help for a specific module
-        
+
         Args:
             metadata: Module metadata
             format_type: Output format
-            
+            include_examples: Whether to include examples section
+            include_parameters: Whether to include parameters section
+
         Returns:
             Formatted help string
         """
+        if not isinstance(format_type, OutputFormat):
+            raise ValueError(f"Unsupported format: {format_type!r}")
         if format_type == OutputFormat.TEXT:
-            return self._format_module_help_text(metadata)
+            return self._format_module_help_text(metadata,
+                                                  include_examples=include_examples,
+                                                  include_parameters=include_parameters)
         elif format_type == OutputFormat.JSON:
             return self._format_module_help_json(metadata)
         elif format_type == OutputFormat.MARKDOWN:
@@ -74,8 +85,170 @@ class HelpFormatter:
         elif format_type == OutputFormat.HTML:
             return self._format_module_help_html(metadata)
         else:
-            return self._format_module_help_text(metadata)
+            return self._format_module_help_text(metadata,
+                                                  include_examples=include_examples,
+                                                  include_parameters=include_parameters)
+
+    def format_parameters(self, parameters: List[Parameter],
+                          format_type: OutputFormat = OutputFormat.TEXT,
+                          group_by: str = None) -> str:
+        """
+        Format a list of parameters.
+
+        Args:
+            parameters: List of Parameter objects
+            format_type: Output format
+            group_by: Optional grouping ('required' or 'help_group')
+
+        Returns:
+            Formatted parameters string
+        """
+        if not isinstance(format_type, OutputFormat):
+            raise ValueError(f"Unsupported format: {format_type!r}")
+
+        if not parameters:
+            return "No parameters available"
+
+        if format_type == OutputFormat.JSON:
+            return json.dumps({"parameters": [self._param_to_dict(p) for p in parameters]}, indent=2)
+
+        lines = []
+        if group_by == "required":
+            required = [p for p in parameters if p.required]
+            optional = [p for p in parameters if not p.required]
+            if required:
+                lines.append("Required:")
+                for p in required:
+                    lines.append(self._format_single_param(p))
+            if optional:
+                lines.append("Optional:")
+                for p in optional:
+                    lines.append(self._format_single_param(p))
+        elif group_by == "help_group":
+            groups: Dict[str, List[Parameter]] = {}
+            for p in parameters:
+                group = getattr(p, "help_group", "") or "General"
+                groups.setdefault(group, []).append(p)
+            # Named groups first, then General
+            ordered = {k: v for k, v in groups.items() if k != "General"}
+            if "General" in groups:
+                ordered["General"] = groups["General"]
+            for group_name, params in ordered.items():
+                lines.append(f"{group_name}:")
+                for p in params:
+                    lines.append(self._format_single_param(p))
+        else:
+            for p in parameters:
+                lines.append(self._format_single_param(p))
+
+        return "\n".join(lines)
+
+    def _param_to_dict(self, p: Parameter) -> dict:
+        """Convert a Parameter to a dict for JSON serialisation."""
+        _TYPE_MAP = {
+            "string": "str",
+            "integer": "int",
+            "boolean": "bool",
+            "float": "float",
+            "port": "port",
+            "url": "url",
+            "path": "path",
+            "ip": "ip",
+        }
+        raw = p.param_type.value if hasattr(p.param_type, "value") else str(p.param_type)
+        type_str = _TYPE_MAP.get(raw, raw)
+        return {
+            "name": p.name,
+            "description": p.description,
+            "type": type_str,
+            "required": p.required,
+            "default": p.default_value,
+            "examples": p.examples,
+        }
+
+    def _format_single_param(self, p: Parameter) -> str:
+        """Format a single parameter for text output."""
+        flag = f"--{p.name}"
+        if hasattr(p, "short_name") and p.short_name:
+            flag = f"--{p.name}, -{p.short_name}"
+        required_str = "  [Required]" if p.required else ""
+        type_str = p.param_type.value if hasattr(p.param_type, "value") else str(p.param_type)
+        lines = [f"  {flag}{required_str}"]
+        lines.append(f"    {p.description}")
+        lines.append(f"    Type: {type_str}")
+        if not p.required and p.default_value is not None:
+            lines.append(f"    Default: {p.default_value}")
+        if p.examples:
+            lines.append(f"    Examples: {', '.join(str(e) for e in p.examples)}")
+        return "\n".join(lines)
     
+    def format_examples(self, examples: list,
+                        format_type: OutputFormat = OutputFormat.TEXT,
+                        level_filter: str = None) -> str:
+        """
+        Format a list of examples.
+
+        Args:
+            examples: List of Example objects
+            format_type: Output format
+            level_filter: Optional level to filter by (e.g. 'basic')
+
+        Returns:
+            Formatted examples string
+        """
+        if not isinstance(format_type, OutputFormat):
+            raise ValueError(f"Unsupported format: {format_type!r}")
+
+        if level_filter:
+            examples = [
+                ex for ex in examples
+                if (ex.level.value if hasattr(ex.level, 'value') else ex.level) == level_filter.lower()
+            ]
+
+        if not examples:
+            return "No examples available"
+
+        if format_type == OutputFormat.JSON:
+            return json.dumps({"examples": [
+                {
+                    "title": ex.title,
+                    "level": ex.level.value if hasattr(ex.level, 'value') else ex.level,
+                    "command": ex.command,
+                    "description": ex.description,
+                }
+                for ex in examples
+            ]}, indent=2)
+
+        # TEXT format — group by level
+        lines = []
+        _LEVELS = [ExampleLevel.BASIC, ExampleLevel.INTERMEDIATE, ExampleLevel.ADVANCED]
+        levels_present = {(ex.level.value if hasattr(ex.level, 'value') else ex.level) for ex in examples}
+
+        for lvl in _LEVELS:
+            if lvl.value not in levels_present:
+                continue
+            lines.append(f"{lvl.value.title()} Examples:")
+            for ex in examples:
+                ex_level = ex.level.value if hasattr(ex.level, 'value') else ex.level
+                if ex_level != lvl.value:
+                    continue
+                lines.append(f"  {ex.title}:")
+                if ex.description:
+                    lines.append(f"    {ex.description}")
+                lines.append(f"    $ {ex.command}")
+                if ex.prerequisites:
+                    prereq_str = ", ".join(ex.prerequisites) if isinstance(ex.prerequisites, list) else ex.prerequisites
+                    lines.append(f"    Prerequisites: {prereq_str}")
+                if ex.notes:
+                    if isinstance(ex.notes, list):
+                        note_str = ", ".join(ex.notes)
+                    else:
+                        note_str = ex.notes
+                    lines.append(f"    Note: {note_str}")
+            lines.append("")
+
+        return "\n".join(lines)
+
     def format_category_help(self, category: ModuleCategory, modules: List[ModuleMetadata],
                            format_type: OutputFormat = OutputFormat.TEXT) -> str:
         """
@@ -120,148 +293,182 @@ class HelpFormatter:
     
     def _format_general_help_text(self, modules_by_category: Dict[ModuleCategory, List[ModuleMetadata]]) -> str:
         """Format general help in text format"""
+        w = self.width
         lines = []
-        
+
         # Header
-        lines.append("=" * self.console_width)
-        lines.append("SPECTRA - Web Security Suite")
+        lines.append("=" * w)
+        lines.append("Spectra - Web Security Suite")
         lines.append("Comprehensive security testing and analysis toolkit")
-        lines.append("=" * self.console_width)
+        lines.append("=" * w)
         lines.append("")
-        
+
         # Usage
-        lines.append("USAGE:")
-        lines.append("  spectra [OPTIONS] <command> [ARGS...]")
-        lines.append("  spectra --help <module>     # Get help for specific module")
-        lines.append("  spectra --search <query>    # Search modules")
+        lines.append("Usage:")
+        lines.append("  spectra <module> [options]")
+        lines.append("  spectra --help <module>")
+        lines.append("  spectra --search <query>")
         lines.append("")
-        
-        # Categories
+
+        # Categories and modules
         for category in ModuleCategory:
             modules = modules_by_category.get(category, [])
             if not modules:
                 continue
-                
-            lines.append(f"{self._get_category_display_name(category).upper()}:")
-            lines.append("")
-            
+
+            cat_name = self._format_category_name(category)
+            lines.append(f"[{cat_name}]")
             for module in sorted(modules, key=lambda m: m.name):
-                cli_cmd = module.cli_command or f"--{module.name.replace('_', '-')}"
-                lines.append(f"  {cli_cmd:<15} {module.description}")
-            
+                flags = getattr(module, "cli_flags", [])
+                if flags:
+                    flag_str = ", ".join(flags)
+                elif module.cli_command:
+                    flag_str = module.cli_command
+                else:
+                    flag_str = f"--{module.name.replace('_', '-')}"
+                lines.append(f"  {flag_str:<25} {module.description}")
             lines.append("")
-        
-        # Footer
-        lines.append("EXAMPLES:")
-        lines.append("  spectra -ps example.com                    # Port scan")
-        lines.append("  spectra -ds https://example.com -w dirs.txt # Directory scan")
-        lines.append("  spectra -hc 5d41402abc4b2a76b9719d911017c592 # Hash crack")
-        lines.append("  spectra --help port_scanner                # Module help")
-        lines.append("")
-        lines.append("For detailed help on any module, use: spectra --help <module_name>")
-        lines.append("For more information, visit: https://github.com/spectra-team/spectra")
-        
+
         return "\n".join(lines)
     
-    def _format_module_help_text(self, metadata: ModuleMetadata) -> str:
+    def _format_module_help_text(self, metadata: ModuleMetadata,
+                                 include_examples: bool = True,
+                                 include_parameters: bool = True) -> str:
         """Format module help in text format"""
         lines = []
-        
+        w = self.width
+
         # Header
-        lines.append("=" * self.console_width)
-        lines.append(f"{metadata.display_name.upper()} - {metadata.description}")
-        lines.append("=" * self.console_width)
+        lines.append(metadata.display_name)
+        lines.append("=" * w)
         lines.append("")
-        
-        # Basic info
-        lines.append("MODULE INFORMATION:")
-        lines.append(f"  Name:        {metadata.name}")
-        lines.append(f"  Category:    {self._get_category_display_name(metadata.category)}")
-        lines.append(f"  Version:     {metadata.version}")
-        if metadata.cli_command:
-            lines.append(f"  CLI Command: {metadata.cli_command}")
+
+        # Basic info block
+        lines.append(f"Module: {metadata.name}")
+        lines.append(f"Category: {self._get_category_display_name(metadata.category)}")
+        if metadata.tags:
+            lines.append(f"Tags: {', '.join(metadata.tags)}")
+        if metadata.cli_flags:
+            lines.append(f"CLI: {', '.join(metadata.cli_flags)}")
         lines.append("")
-        
-        # Detailed description
-        if metadata.detailed_description:
-            lines.append("DESCRIPTION:")
-            lines.extend(self._wrap_text(metadata.detailed_description, indent=2))
+
+        # Description
+        if metadata.detailed_description or metadata.description:
+            lines.append("Description:")
+            desc = metadata.detailed_description or metadata.description
+            lines.extend(self._wrap_text(desc, indent=2))
             lines.append("")
-        
+
+        # Usage
+        primary_flag = None
+        aliases = []
+        if hasattr(metadata, "cli_flags") and metadata.cli_flags:
+            for f in metadata.cli_flags:
+                if f.startswith("--"):
+                    if primary_flag is None:
+                        primary_flag = f
+                    else:
+                        aliases.append(f)
+                else:
+                    aliases.append(f)
+        if primary_flag is None and metadata.cli_command:
+            primary_flag = metadata.cli_command
+
+        if primary_flag:
+            lines.append("Usage:")
+            lines.append(f"  spectra {primary_flag} [options]")
+            if aliases:
+                lines.append(f"  Aliases: {', '.join(aliases)}")
+            lines.append("")
+
         # Parameters
-        if metadata.parameters:
-            lines.append("PARAMETERS:")
-            lines.append("")
-            
-            # Required parameters first
-            required_params = metadata.get_required_parameters()
-            if required_params:
-                lines.append("  Required:")
-                for param in required_params:
-                    lines.extend(self._format_parameter_text(param, indent=4))
+        if include_parameters:
+            if metadata.parameters:
+                lines.append("Parameters:")
                 lines.append("")
-            
-            # Optional parameters
-            optional_params = metadata.get_optional_parameters()
-            if optional_params:
-                lines.append("  Optional:")
-                for param in optional_params:
-                    lines.extend(self._format_parameter_text(param, indent=4))
+                required_params = metadata.get_required_parameters()
+                optional_params = metadata.get_optional_parameters()
+                if required_params:
+                    for param in required_params:
+                        lines.extend(self._format_parameter_text(param, indent=2))
+                if optional_params:
+                    for param in optional_params:
+                        lines.extend(self._format_parameter_text(param, indent=2))
                 lines.append("")
-        
+            else:
+                lines.append("No parameters available")
+                lines.append("")
+
         # Examples
-        if metadata.examples:
-            lines.append("EXAMPLES:")
-            lines.append("")
-            
-            # Group by level
-            for level in [ExampleLevel.BASIC, ExampleLevel.INTERMEDIATE, ExampleLevel.ADVANCED]:
-                level_examples = metadata.get_examples_by_level(level)
-                if level_examples:
-                    lines.append(f"  {level.value.title()} Usage:")
-                    for example in level_examples:
-                        lines.extend(self._format_example_text(example, indent=4))
-                    lines.append("")
-        
+        if include_examples:
+            if metadata.examples:
+                lines.append("Examples:")
+                lines.append("")
+                for level in [ExampleLevel.BASIC, ExampleLevel.INTERMEDIATE, ExampleLevel.ADVANCED]:
+                    level_examples = [
+                        ex for ex in metadata.examples
+                        if (ex.level.value if hasattr(ex.level, 'value') else ex.level) == level.value
+                    ]
+                    if level_examples:
+                        lines.append(f"  {level.value.title()} Examples:")
+                        for example in level_examples:
+                            lines.extend(self._format_example_text(example, indent=4))
+                        lines.append("")
+            else:
+                lines.append("No examples available")
+                lines.append("")
+
         # Use cases
         if metadata.use_cases:
-            lines.append("USE CASES:")
+            lines.append("Common Use Cases:")
             lines.append("")
             for use_case in metadata.use_cases:
                 lines.extend(self._format_use_case_text(use_case, indent=2))
             lines.append("")
-        
+
         # Related modules
         if metadata.related_modules:
-            lines.append("RELATED MODULES:")
+            lines.append("Related Modules:")
             related_list = ", ".join(metadata.related_modules)
             lines.extend(self._wrap_text(related_list, indent=2))
             lines.append("")
-        
+
         return "\n".join(lines)
     
     def _format_category_help_text(self, category: ModuleCategory, modules: List[ModuleMetadata]) -> str:
         """Format category help in text format"""
+        w = self.width
+        cat_name = self._format_category_name(category)
+        _CATEGORY_DESCRIPTIONS = {
+            ModuleCategory.RECONNAISSANCE: "Modules for information gathering and reconnaissance against targets.",
+            ModuleCategory.VULNERABILITY_DETECTION: "Modules for detecting vulnerabilities and security weaknesses.",
+            ModuleCategory.SECURITY_ANALYSIS: "Modules for security analysis and assessment.",
+            ModuleCategory.CRYPTOGRAPHY: "Modules for cryptographic operations and analysis.",
+            ModuleCategory.MONITORING: "Modules for monitoring and observability.",
+            ModuleCategory.INTEGRATION: "Modules for integration with external services.",
+        }
         lines = []
-        
-        category_name = self._get_category_display_name(category)
-        lines.append("=" * self.console_width)
-        lines.append(f"{category_name.upper()} MODULES")
-        lines.append("=" * self.console_width)
+        lines.append(f"{cat_name} Modules")
+        lines.append("=" * w)
         lines.append("")
-        
-        lines.append(f"Category: {category_name}")
-        lines.append(f"Modules:  {len(modules)}")
+        lines.append(f"Category: {cat_name}")
+        lines.append(f"Modules: {len(modules)}")
         lines.append("")
-        
+        lines.append("Description:")
+        desc = _CATEGORY_DESCRIPTIONS.get(category, f"{cat_name} modules.")
+        lines.extend(self._wrap_text(desc, indent=2))
+        lines.append("")
+        lines.append("Available Modules:")
         for module in sorted(modules, key=lambda m: m.name):
-            lines.append(f"{module.display_name}:")
-            lines.append(f"  Command:     {module.cli_command or 'N/A'}")
-            lines.append(f"  Description: {module.description}")
-            if module.tags:
-                lines.append(f"  Tags:        {', '.join(module.tags)}")
-            lines.append("")
-        
+            flags = getattr(module, "cli_flags", [])
+            if flags:
+                flag_str = ", ".join(flags)
+            elif module.cli_command:
+                flag_str = module.cli_command
+            else:
+                flag_str = f"--{module.name.replace('_', '-')}"
+            lines.append(f"  {flag_str:<25} {module.description}")
+        lines.append("")
         return "\n".join(lines)
     
     def _format_search_results_text(self, query: str, results: List[ModuleMetadata]) -> str:
@@ -299,38 +506,35 @@ class HelpFormatter:
         """Format a parameter in text format"""
         lines = []
         prefix = " " * indent
-        
-        # Parameter name and type
-        param_line = f"{prefix}{param.name}"
+
+        # Parameter name: --name or --name, -s
+        flag = f"--{param.name}"
         if param.short_name:
-            param_line += f", -{param.short_name}"
-        
-        if param.param_type.value != "string":
-            param_line += f" ({param.param_type.value})"
-        
-        if param.required:
-            param_line += " [REQUIRED]"
-        
-        lines.append(param_line)
-        
+            flag += f", -{param.short_name}"
+
+        required_str = "  [Required]" if param.required else ""
+        lines.append(f"{prefix}{flag}{required_str}")
+
         # Description
         if param.description:
             lines.extend(self._wrap_text(param.description, indent=indent + 2))
-        
+
+        # Type
+        type_str = param.param_type.value if hasattr(param.param_type, "value") else str(param.param_type)
+        lines.append(f"{prefix}  Type: {type_str}")
+
         # Default value
         if param.default_value is not None:
             lines.append(f"{prefix}  Default: {param.default_value}")
-        
+
         # Choices
         if param.choices:
-            choices_str = ", ".join(param.choices)
-            lines.append(f"{prefix}  Choices: {choices_str}")
-        
+            lines.append(f"{prefix}  Choices: {', '.join(param.choices)}")
+
         # Examples
         if param.examples:
-            examples_str = ", ".join(param.examples)
-            lines.append(f"{prefix}  Examples: {examples_str}")
-        
+            lines.append(f"{prefix}  Examples: {', '.join(str(e) for e in param.examples)}")
+
         lines.append("")
         return lines
     
@@ -378,29 +582,25 @@ class HelpFormatter:
     def _format_general_help_json(self, modules_by_category: Dict[ModuleCategory, List[ModuleMetadata]]) -> str:
         """Format general help in JSON format"""
         data = {
-            "spectra_help": {
-                "version": "3.3.0",
-                "description": "Spectra Web Security Suite",
-                "categories": {}
-            }
+            "title": "Spectra - Web Security Suite",
+            "categories": {}
         }
-        
+
         for category, modules in modules_by_category.items():
             if modules:
-                data["spectra_help"]["categories"][category.value] = {
-                    "name": self._get_category_display_name(category),
+                data["categories"][category.value] = {
+                    "name": self._format_category_name(category),
                     "modules": [
                         {
                             "name": module.name,
                             "display_name": module.display_name,
                             "description": module.description,
-                            "cli_command": module.cli_command,
-                            "version": module.version
+                            "cli_flags": getattr(module, "cli_flags", []),
                         }
                         for module in modules
                     ]
                 }
-        
+
         return json.dumps(data, indent=2)
     
     def _format_module_help_json(self, metadata: ModuleMetadata) -> str:
@@ -410,10 +610,12 @@ class HelpFormatter:
     def _format_category_help_json(self, category: ModuleCategory, modules: List[ModuleMetadata]) -> str:
         """Format category help in JSON format"""
         data = {
-            "category": category.value,
-            "display_name": self._get_category_display_name(category),
-            "module_count": len(modules),
-            "modules": [module.to_dict() for module in modules]
+            "category": {
+                "name": category.value,
+                "display_name": self._format_category_name(category),
+                "module_count": len(modules),
+                "modules": [module.to_dict() for module in modules],
+            }
         }
         return json.dumps(data, indent=2)
     
@@ -670,17 +872,19 @@ class HelpFormatter:
     
     # UTILITY METHODS
     
+    def _format_category_name(self, category: ModuleCategory) -> str:
+        """Return human-readable category name."""
+        return category.value.replace('_', ' ').title()
+
+    def _format_parameter_name(self, param: Parameter) -> str:
+        """Return formatted CLI flag string for a parameter."""
+        if getattr(param, 'short_name', None):
+            return f"--{param.name}, -{param.short_name}"
+        return f"--{param.name}"
+
     def _get_category_display_name(self, category: ModuleCategory) -> str:
-        """Get display name for category"""
-        display_names = {
-            ModuleCategory.RECONNAISSANCE: "Reconnaissance & Enumeration",
-            ModuleCategory.SECURITY_ANALYSIS: "Security Analysis",
-            ModuleCategory.VULNERABILITY_DETECTION: "Vulnerability Detection",
-            ModuleCategory.CRYPTOGRAPHY: "Cryptography & Password Cracking",
-            ModuleCategory.MONITORING: "Monitoring & Analysis",
-            ModuleCategory.INTEGRATION: "Integration & Reporting"
-        }
-        return display_names.get(category, category.value.replace('_', ' ').title())
+        """Get display name for category (legacy helper)."""
+        return self._format_category_name(category)
     
     def _wrap_text(self, text: str, width: int = None, indent: int = 0) -> List[str]:
         """Wrap text to specified width with indentation"""

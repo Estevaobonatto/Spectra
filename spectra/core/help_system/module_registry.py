@@ -15,6 +15,11 @@ from ..logger import get_logger
 logger = get_logger(__name__)
 
 
+class ModuleNotFoundError(Exception):
+    """Raised when a requested module is not found in the registry"""
+    pass
+
+
 class ModuleRegistry:
     """Central registry for managing module metadata"""
     
@@ -22,6 +27,7 @@ class ModuleRegistry:
         self.modules: Dict[str, ModuleMetadata] = {}
         self.categories: Dict[ModuleCategory, List[str]] = defaultdict(list)
         self.cli_commands: Dict[str, str] = {}  # CLI command -> module name mapping
+        self.cli_flags_index: Dict[str, str] = {}  # any cli_flag -> module name
         self.tags_index: Dict[str, Set[str]] = defaultdict(set)  # tag -> module names
         self._initialized = False
     
@@ -55,14 +61,18 @@ class ModuleRegistry:
             
             # Register the module
             self.modules[metadata.name] = metadata
-            
+
             # Update category index
             if metadata.name not in self.categories[metadata.category]:
                 self.categories[metadata.category].append(metadata.name)
-            
+
             # Update tags index
             for tag in metadata.tags:
                 self.tags_index[tag.lower()].add(metadata.name)
+
+            # Index cli_flags list
+            for flag in getattr(metadata, "cli_flags", []):
+                self.cli_flags_index[flag] = metadata.name
             
             logger.info(f"Successfully registered module: {metadata.name}")
             return True
@@ -98,7 +108,11 @@ class ModuleRegistry:
             # Remove from CLI commands
             if metadata.cli_command in self.cli_commands:
                 del self.cli_commands[metadata.cli_command]
-            
+
+            # Remove from cli_flags index
+            for flag in getattr(metadata, "cli_flags", []):
+                self.cli_flags_index.pop(flag, None)
+
             # Remove from tags index
             for tag in metadata.tags:
                 self.tags_index[tag.lower()].discard(module_name)
@@ -123,12 +137,17 @@ class ModuleRegistry:
         # Try direct module name lookup
         if name in self.modules:
             return self.modules[name]
-        
+
         # Try CLI command lookup
         if name in self.cli_commands:
             module_name = self.cli_commands[name]
             return self.modules.get(module_name)
-        
+
+        # Try cli_flags index
+        if name in self.cli_flags_index:
+            module_name = self.cli_flags_index[name]
+            return self.modules.get(module_name)
+
         return None
     
     def get_modules_by_category(self, category: ModuleCategory) -> List[ModuleMetadata]:
@@ -223,17 +242,21 @@ class ModuleRegistry:
     def suggest_similar_modules(self, query: str, limit: int = 5) -> List[str]:
         """
         Suggest similar module names using fuzzy matching
-        
-        Args:
-            query: Query that didn't match any modules
-            limit: Maximum number of suggestions
-            
-        Returns:
-            List of similar module names
         """
         all_names = list(self.modules.keys()) + list(self.cli_commands.keys())
-        suggestions = difflib.get_close_matches(query, all_names, n=limit, cutoff=0.6)
-        return suggestions
+        # Try substring match first (lower threshold)
+        substring_matches = [n for n in all_names if query.lower() in n.lower()]
+        fuzzy_matches = difflib.get_close_matches(query, all_names, n=limit, cutoff=0.4)
+        # Combine and deduplicate maintaining order
+        seen = set()
+        result = []
+        for name in substring_matches + fuzzy_matches:
+            if name not in seen:
+                seen.add(name)
+                result.append(name)
+            if len(result) >= limit:
+                break
+        return result
     
     def get_modules_by_tag(self, tag: str) -> List[ModuleMetadata]:
         """

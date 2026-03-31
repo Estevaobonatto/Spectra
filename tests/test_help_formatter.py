@@ -5,10 +5,10 @@ Unit tests for HelpFormatter
 
 import pytest
 import json
-from spectra.core.help_system.help_formatter import HelpFormatter
+from spectra.core.help_system.help_formatter import HelpFormatter, OutputFormat
 from spectra.core.module_metadata import (
     ModuleMetadata, Parameter, Example, UseCase,
-    ModuleCategory, ParameterType, OutputFormat
+    ModuleCategory, ParameterType
 )
 
 
